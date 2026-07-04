@@ -82,3 +82,70 @@
 
 ### Definition of done (S1)
 A–D green, `npm run test:api` passing, D2 smoke passes end-to-end. If B6 trails, the SMART honest-staging note is recorded in `plan.md` §3.
+
+---
+
+## Iteration 2 — S2 Single-agent analysis with citation enforcement — 2026-07-04
+
+**Spec:** `prd.md` · **Slice:** S2 (`issues.md`) · **Decisions:** `plan.md` GD11 (citation enforcement is real, core P3/P4), GD13 (agents on Claude Sonnet 5), GD2 (cache/replay — *deferred to S4*).
+
+**Goal:** On Maria's detail view, "Run Analysis" dispatches one live **Risk agent** (Claude Sonnet 5, structured output) over her retrieved FHIR bundle; findings stream to a single feed box over SSE, and every `fhirResourceId` the agent emits is validated against the IDs actually present in the bundle — fabricated citations are dropped before they reach the UI.
+
+**Architecture:** New `apps/api/src/agents/` module: a pure **citation validator** (Seam 2), a `getPatientBundle` read on the existing audited `FhirReadService` (backed by HAPI `$everything`), and a single `runRiskAgent` function. A new SSE route streams findings and runs each through the validator before emit. Frontend adds the "Run Analysis" control and one streaming Risk feed box to `PatientDetail` (W03), consuming SSE via `fetch` streaming. **This slice deliberately stays at one agent** — S3 adds the other three + Action Planner Tasks (and extracts the shared agent interface then), S4 adds the agent-graph canvas + cache. No DB schema change (S2 persists nothing beyond the existing audit spine).
+
+**Tech Stack (delta):** `@anthropic-ai/sdk` (Claude Sonnet 5, `claude-sonnet-5`, streaming + tool-based structured output) · HAPI `Patient/$everything` · SSE over Express `text/event-stream` · `fetch` ReadableStream on the client.
+
+**Ponytail pass applied:** one agent, as a plain function — no `Agent` interface until S3 has four real agents to generalize from; `$everything` instead of a per-type read fan-out, with `validIds` derived from the returned bundle (single source of truth); no client-factory module (the SDK client is the abstraction); no cache/persistence, no canvas (S4); no shared `packages/types` yet (agent output type lives in `apps/api`, imported by the client until S3 needs sharing); reuse the existing `buildApp`/defaulted-param test pattern, no new harness.
+
+### Phase A — Agent foundation & contracts (backend, test-first)
+
+- [ ] **A1. Anthropic SDK + config.** Add `@anthropic-ai/sdk`; `ANTHROPIC_API_KEY` in `apps/api/.env.example`; a module-level `anthropic = new Anthropic()` (reads the key from env) + `MODEL = 'claude-sonnet-5'` const in `riskAgent.ts`.
+  - *Domain rule:* agent model is Claude Sonnet 5 (GD13).
+  - *ponytail:* no `anthropic.ts` factory module — the SDK client *is* the abstraction; one `new Anthropic()` covers it. *skipped:* Haiku fallback (GD13 note — only if latency/cost pressure appears).
+
+- [ ] **A2. Citation validator — Seam 2 (pure module, TDD).** `src/agents/citationValidator.ts`: `validateCitations(flags, validIds) → { valid, dropped }`, no I/O. Given agent flags each carrying a `fhirResourceId` and the set of valid `ResourceType/id` strings, partition into passed vs dropped/flagged.
+  - *Domain rule:* backend validates every citation against the bundle and drops/flags hallucinated IDs (GD11) — the non-negotiable innovation.
+  - *Test (Vitest/Jest, first):* one in-bundle citation + one fabricated → valid passed, fabricated dropped; empty flags → empty result; case/whitespace normalization defined by the test.
+
+- [ ] **A3. Patient bundle retrieval (extend audited `FhirReadService`).** Add `getPatientBundle(actor, patientId)` → `{ resources, validIds }`, backed by a **single** `GET /Patient/{id}/$everything` (native HAPI operation — returns the whole record in one Bundle) through the existing audited `fhirFetch` + role `guard`. `validIds` is **derived from `resources`** (`new Set(resources.map(r => \`${r.resourceType}/${r.id}\`))`) — never assembled separately, so the agent's input and the citation-check set cannot drift.
+  - *Domain terms:* FHIR R4 `$everything`; "bundle" = the retrieved resource set citations are checked against (GD11).
+  - *ponytail:* `$everything` replaces a per-type fan-out (getPatient + getConditions + getObservations…) — one call, one audit row, and citation validity = "was in the record we read," which is exactly GD11.
+  - *Test (Supertest vs test HAPI):* Maria's bundle contains her known conditions + labs; `validIds` matches the returned resource ids 1:1; a Social-Worker-scoped read still denies (`guard` on `clinical`).
+
+### Phase B — Risk agent service + SSE (backend, test-first)
+
+- [ ] **B1. Risk agent (`runRiskAgent`).** `src/agents/riskAgent.ts`: a plain `runRiskAgent(bundle): AsyncIterable<AgentEvent>` on Claude Sonnet 5 with **structured output** (tool schema): `{ riskScore, riskLevel, flags: [{ text, fhirResourceId }], readmissionProbability }`.
+  - *Domain rule:* structured output; every flag cites a FHIR resource ID (GD11).
+  - *ponytail:* **no `Agent` interface yet** — one implementation. S3 extracts the shared interface from the four real agents (generalize from variation you can see, not from one guess).
+  - *Test:* prompt-build + response-parse against a **mocked Anthropic client** (no live call in CI); the live call is proven in D3, labeled *live* vs the *local-mock* unit evidence.
+
+- [ ] **B2. Analysis SSE route + validation gate.** `createAnalysisRouter(fhirService, runAgent = runRiskAgent)` — the agent fn is a defaulted param so tests pass a stub without a live call. `POST /api/patients/:id/analysis` responds `text/event-stream`: streams the agent's findings incrementally (`finding` events for the live feed) then a `complete` event. **Each flag's `fhirResourceId` passes through the A2 validator against the A3 bundle IDs before emit** — dropped citations never reach the client. `requireAuth` applies; wire into `index.ts`.
+  - *Domain rule:* no finding reaches the UI citing a resource absent from the retrieved bundle (GD11); the analysis read is audited.
+  - *Test (Supertest, boundary — S2 acceptance):* stub agent yields one in-bundle + one fabricated citation → the streamed result contains **only** the valid citation, and *all* returned citations resolve in the bundle; an audit row is written for the analysis read.
+  - *Decision (streaming mechanics):* stream the agent's text output token-wise into the feed for the live effect, and emit validated structured flags as discrete `finding` events; exact delta handling is TDD-driven. *skipped:* GET/`EventSource` variant — client uses `fetch` streaming so it can send the `Authorization` header (no token-in-query hack).
+
+### Phase C — Frontend: Run Analysis + streaming Risk feed
+
+- [ ] **C1. API client streaming.** `streamAnalysis(patientId, handlers)` in `src/api/client.ts` using `fetch` + `ReadableStream`, attaching the auth header and parsing SSE `finding`/`complete` events.
+
+- [ ] **C2. `PatientDetail` "Run Analysis" + Risk feed box (W03, mockup fidelity).** Add the **Run Analysis** control (`#runLabel` in `reference-materials/caresync-ai.html`) and one **Risk Agent feed box** (`.feed` red accent, `.feed-text.streaming` blinking cursor) that renders streamed text incrementally and validated flags as citation chips (`Condition/…`, `Observation/…` in mono, matching the existing `Task/{id}` treatment).
+  - *Mockup-fidelity deviations (recorded per CLAUDE.md UI rules):* the other three feed boxes (Care Gap/SDOH/Action Planner) render as honest **idle placeholders** ("Awaiting analysis run…", as in the mockup) — wired in **S3**; the agent-graph canvas is **omitted** — built in **S4**. Structural fidelity for the Risk feed itself targets ≥80%.
+  - *Test (Vitest, mocked stream):* text renders incrementally; a validated finding with its FHIR citation chip appears; the idle placeholders stay idle.
+
+### Phase D — Verification (Seam 2 + E2E)
+
+- [ ] **D1. Unit + API suites green.** `npm run test:api` (validator Seam 2 + analysis-route boundary + bundle read) and `npm run test:web` pass.
+
+- [ ] **D2. Frontend E2E (`frontend-e2e-verification`).** Playwright: log in as Coordinator → open Maria → **Run Analysis** → feed streams incrementally → a validated finding with its FHIR citation renders. Add alongside the S1 specs in `apps/web/e2e/`.
+
+- [ ] **D3. Live-call evidence.** One live run against real Claude Sonnet 5 confirming structured output + genuine streaming; record it in the slice's verification notes labeled *live* (vs *local-mock* for CI). Confirm a deliberately fabricated citation is dropped end-to-end.
+
+### Rollback / safety
+Additive only — no DB migration (no persistence until S4's cache). Disposable HAPI + local SQLite reset as in S1 (`docker compose down -v`). Unset `ANTHROPIC_API_KEY` to disable live analysis; the route degrades to an explicit error, not a fake result (honest staging).
+
+### Definition of done (S2) — maps to `issues.md` acceptance
+- Run Analysis triggers a live Claude call producing structured Risk output (B1, D3).
+- Findings stream over SSE and render incrementally in one feed box (B2, C2, D2).
+- Citation validator passes an in-bundle citation and drops a fabricated one (A2 Seam 2).
+- No finding citing an out-of-bundle ID reaches the UI (B2 gate; D2/D3 end-to-end).
+- Citation-validator unit tests + API-boundary test asserting all returned citations resolve in the bundle (A2, B2; `npm run test:api` green).

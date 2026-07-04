@@ -1,12 +1,42 @@
 # Active Plan — CareSync AI
 
-**Feature:** `caresync-ai` · **Current slice:** S1 — Walking Skeleton
-**Full plan:** `docs/plans/caresync-ai/implementation-plan.md` (Iteration 1, ponytail-simplified)
+**Feature:** `caresync-ai` · **Current slice:** S2 — Single-agent analysis with citation enforcement
+**Full plan:** `docs/plans/caresync-ai/implementation-plan.md` (Iteration 2)
 **Spec:** `docs/plans/caresync-ai/prd.md` · **Slice def:** `docs/plans/caresync-ai/issues.md`
+
+---
+
+## S2 — Single-agent analysis with citation enforcement (GD11, GD13)
+
+> **Approved: yes (2026-07-04)** — ponytail pass applied. Implementing via `subagent-driven-development` on `feature/caresync-s2-single-agent-analysis`.
+
+### Phase A — Agent foundation & contracts (backend, test-first)
+- [ ] A1. Add `@anthropic-ai/sdk` + `ANTHROPIC_API_KEY` (.env.example); module-level `new Anthropic()` + `MODEL='claude-sonnet-5'` (GD13) — no factory module
+- [ ] A2. Citation validator — **Seam 2**, pure module (TDD): in-bundle citation passes, fabricated dropped/flagged (GD11)
+- [ ] A3. `FhirReadService.getPatientBundle()` → `{resources, validIds}` via one audited `Patient/$everything`; `validIds` derived from resources (test vs HAPI)
+
+### Phase B — Risk agent service + SSE (backend, test-first)
+- [ ] B1. `runRiskAgent(bundle)` (plain fn — no interface until S3): Claude Sonnet 5 structured output `{riskScore, riskLevel, flags[{text,fhirResourceId}], readmissionProbability}`; parse tested with a mocked client
+- [ ] B2. `POST /api/patients/:id/analysis` SSE route (`runAgent` defaulted param, stubbable): stream findings, **validate every fhirResourceId against the bundle before emit**, audit the read; wire into index.ts
+  - *Boundary test (S2 acceptance):* stub agent → 1 in-bundle + 1 fabricated citation → only the valid one returned; all returned citations resolve in the bundle
+
+### Phase C — Frontend: Run Analysis + streaming Risk feed
+- [ ] C1. `streamAnalysis()` in api/client.ts via `fetch` ReadableStream (auth header), parse SSE events
+- [ ] C2. PatientDetail: **Run Analysis** button + one Risk feed box (mockup `#runLabel`/`.feed`), streamed text + validated citation chips
+  - *Deviations recorded:* other 3 feed boxes idle placeholders (S3); agent-graph canvas omitted (S4)
+
+### Phase D — Verification (Seam 2 + E2E)
+- [ ] D1. `npm run test:api` + `npm run test:web` green
+- [ ] D2. Playwright E2E (`frontend-e2e-verification`): Coordinator → Maria → Run Analysis → feed streams → validated finding + citation renders
+- [ ] D3. Live-call evidence vs real Claude Sonnet 5 (structured output + real streaming; fabricated citation dropped end-to-end) — recorded, labeled *live*
+
+**Rollback (S2):** additive, no DB migration; unset `ANTHROPIC_API_KEY` disables analysis (explicit error, not a fake result). Full reset as S1.
+
+---
 
 ## Approved: yes (2026-07-04)
 
-## S1 — Walking Skeleton (stories 17, 33, 34, 36)
+## S1 — Walking Skeleton (stories 17, 33, 34, 36) — ✅ complete
 
 ### Phase A — Scaffold & infra
 - [x] A1. Monorepo scaffold: apps/web (Vite+React+TS+Tailwind), apps/api (Express+TS); Vitest + Jest/Supertest
