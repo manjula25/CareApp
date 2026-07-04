@@ -78,12 +78,12 @@ Task cards render in the queue with their citations. Citation enforcement applie
 all four agents.
 
 ### Acceptance criteria
-- [ ] All four agents run in parallel from the Orchestrator; each streams to its own feed.
-- [ ] Action Planner output becomes FHIR Task resources persisted in HAPI.
-- [ ] Each Task card cites the FHIR resource(s) behind it; citations are validated (none fabricated).
-- [ ] SDOH agent reads the AHC-HRSN QuestionnaireResponse; Care Gap reads CarePlan/Encounter.
-- [ ] Re-running an analysis replaces prior findings and Tasks cleanly.
-- [ ] API-boundary tests: analysis run yields findings from all four agents and creates the expected Tasks with resolvable citations.
+- [x] All four agents run in parallel from the Orchestrator; each streams to its own feed.
+- [x] Action Planner output becomes FHIR Task resources persisted in HAPI.
+- [x] Each Task card cites the FHIR resource(s) behind it; citations are validated (none fabricated).
+- [x] SDOH agent reads the AHC-HRSN screening (seeded as an `Observation`, per S1's data model — not a `QuestionnaireResponse`); Care Gap reads Condition/Encounter/Observation (no `CarePlan` resource is seeded).
+- [x] Re-running an analysis replaces prior findings and Tasks cleanly.
+- [x] API-boundary tests: analysis run yields findings from all four agents and creates the expected Tasks with resolvable citations.
 
 ### Blocked by
 - S2
@@ -98,12 +98,13 @@ agent graph (`requestAnimationFrame`, 5-node radial layout, bezier edges, partic
 flow, per-agent color, state machine IDLE→INIT→DISPATCH→ANALYZING→SYNTHESIZING→COMPLETE)
 visualizes the orchestration from S3. The last successful analysis per patient is
 cached; demo mode replays it instantly and deterministically, while an explicit
-"live" trigger forces a fresh Claude run and re-caches.
+"live" trigger forces a fresh model run (OpenAI `gpt-5.5` per GD13, revised
+2026-07-04) and re-caches.
 
 ### Acceptance criteria
 - [ ] Canvas graph animates through the state machine in sync with the streaming analysis; no chart library used.
 - [ ] Per-agent color identity is consistent from graph node → feed box → task card citation.
-- [ ] A cached analysis replays deterministically without a Claude call; the explicit live trigger forces a fresh run and updates the cache.
+- [ ] A cached analysis replays deterministically without a live model call; the explicit live trigger forces a fresh run and updates the cache.
 - [ ] Cached and live runs produce the same UI treatment (cache is real prior output, not a script).
 
 ### Blocked by
@@ -279,7 +280,7 @@ shipped and the honest-staging matrix).
 
 ### Acceptance criteria
 - [ ] Playwright E2E suite covers all three demo flows end-to-end against the running stack and passes green.
-- [ ] The three flows are demoable both live (fresh Claude run) and via cached replay (GD2).
+- [ ] The three flows are demoable both live (fresh model run) and via cached replay (GD2).
 - [ ] A pre-recorded 90-second demo video exists as the fallback and matches the live flow.
 - [ ] The judge deck reflects shipped functionality and the built/prototyped/envisioned staging (gate G4), not the original pitch claims.
 - [ ] The submission bundles the eval report (from S9) and the standards-conformance matrix.

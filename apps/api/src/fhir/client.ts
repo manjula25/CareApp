@@ -41,6 +41,33 @@ const FHIR_PRIORITY_TO_DISPLAY: Record<string, TaskPriority> = {
   routine: 'medium',
 };
 
+// Maps an Action Planner priority string to the FHIR Task priority code —
+// mirrors TASK_PRIORITY_TO_FHIR in scripts/import-fhir.ts (seed data), kept
+// separate because the Action Planner's input strings are not guaranteed to
+// be the same closed set as the seed data's SeedPatient['tasks'] type.
+const ACTION_PLANNER_PRIORITY_TO_FHIR: Record<string, string> = {
+  critical: 'stat',
+  high: 'urgent',
+  medium: 'routine',
+};
+
+// Every CareSync-authored Task carries this tag so replacePatientTasks can
+// scope deletes to exactly the Tasks it created, never a seed/Synthea Task.
+const CARESYNC_TASK_TAG = { system: 'https://caresync.demo/fhir/tags', code: 'ai-generated-task' } as const;
+
+export interface ActionPlannerTaskInput {
+  title: string;
+  description: string;
+  priority: string;
+  assignTo?: string;
+  dueInDays?: number;
+  fhirResources: string[];
+}
+
+export interface CreatedTask {
+  id: string;
+}
+
 const FHIR_STATUS_TO_DISPLAY: Record<string, string> = {
   requested: 'Open',
   accepted: 'Open',
@@ -84,21 +111,21 @@ export class FhirReadService {
     private readonly tokenClient?: AccessTokenProvider
   ) {}
 
-  private async fhirFetch<T>(path: string): Promise<T> {
-    const headers: Record<string, string> = {};
+  private async fhirFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const headers: Record<string, string> = { ...(init.headers as Record<string, string> | undefined) };
     if (this.tokenClient) {
       headers.Authorization = `Bearer ${await this.tokenClient.getAccessToken()}`;
     }
-    const res = await fetch(`${this.baseUrl}${path}`, { headers });
+    const res = await fetch(`${this.baseUrl}${path}`, { ...init, headers });
     if (!res.ok) {
-      throw new Error(`FHIR request failed: GET ${path} -> ${res.status}`);
+      throw new Error(`FHIR request failed: ${init.method ?? 'GET'} ${path} -> ${res.status}`);
     }
     return (await res.json()) as T;
   }
 
-  private guard(actor: AuthTokenPayload, domain: ResourceDomain, resource: string): void {
+  private guard(actor: AuthTokenPayload, domain: ResourceDomain, resource: string, action = 'read'): void {
     if (!hasScope(actor.role, domain)) {
-      writeAudit(this.db, { actor: actor.id, action: 'read', fhirResource: resource, outcome: 'denied' });
+      writeAudit(this.db, { actor: actor.id, action, fhirResource: resource, outcome: 'denied' });
       throw new ScopeDeniedError(actor.role, domain);
     }
   }
@@ -188,5 +215,97 @@ export class FhirReadService {
         };
       })
     );
+  }
+
+  /**
+   * Creates one CareSync-authored FHIR Task, tagged with CARESYNC_TASK_TAG so
+   * a later replacePatientTasks run can find and replace it without ever
+   * touching a seed/Synthea Task (which carries no such tag).
+   *
+   * Citation storage: `task.fhirResources` (the Action Planner's citations for
+   * this task) is intentionally NOT persisted onto the FHIR Task. HAPI's Task
+   * resource has no native "citations" field, and bolting one on via a custom
+   * extension would invent a non-standard shape only this app understands —
+   * for a POC that's more machinery than the problem needs. The caller (the
+   * analysis route, wired in a later task) already holds the
+   * ActionPlannerOutput in memory and can carry `fhirResources` alongside the
+   * created Task id in its own SSE `task` event, so nothing is lost — it's
+   * just kept out of the FHIR resource itself.
+   */
+  async createTask(actor: AuthTokenPayload, patientId: string, task: ActionPlannerTaskInput): Promise<CreatedTask> {
+    const resource = `Task/${patientId}`;
+    this.guard(actor, 'clinical', resource, 'create');
+
+    const body: Record<string, unknown> = {
+      resourceType: 'Task',
+      status: 'requested',
+      intent: 'order',
+      priority: ACTION_PLANNER_PRIORITY_TO_FHIR[task.priority] ?? 'routine',
+      description: `${task.title} — ${task.description}`,
+      for: { reference: `Patient/${patientId}` },
+      authoredOn: new Date().toISOString(),
+      meta: { tag: [CARESYNC_TASK_TAG] },
+    };
+    if (task.dueInDays != null) {
+      body.restriction = {
+        period: { end: new Date(Date.now() + task.dueInDays * 24 * 60 * 60 * 1000).toISOString() },
+      };
+    }
+
+    const created = await this.fhirFetch<{ id: string }>('/Task', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/fhir+json' },
+      body: JSON.stringify(body),
+    });
+    writeAudit(this.db, { actor: actor.id, action: 'create', fhirResource: `Task/${created.id}`, outcome: 'success' });
+    return { id: created.id };
+  }
+
+  /**
+   * Replaces all CareSync-authored Tasks for a patient: deletes every
+   * existing Task tagged ai-generated-task for this patient, then creates one
+   * Task per entry in `tasks`. A Task from the seed data (or any other
+   * source) that lacks the tag is never a delete candidate, no matter how
+   * re-runs pile up.
+   *
+   * Query note: existing owned Tasks are found via `Patient/{id}/$everything`
+   * (filtered client-side for resourceType Task + CARESYNC_TASK_TAG), NOT via
+   * a `Task?search` endpoint. Verified against the real local HAPI (7.2.0):
+   * both `Task?patient=...&_tag=...` and even a bare `Task?patient=...`
+   * lagged well behind writes under a create→delete→create burst (still
+   * missing a just-created Task after 6+ seconds of polling), while
+   * `$everything` reflected the same burst's end state immediately and
+   * correctly every time. `$everything` reads the patient compartment
+   * directly rather than through the (evidently backlogged) search index on
+   * this instance, so it's the reliable choice for the read-before-delete
+   * step here.
+   */
+  async replacePatientTasks(
+    actor: AuthTokenPayload,
+    patientId: string,
+    tasks: ActionPlannerTaskInput[]
+  ): Promise<CreatedTask[]> {
+    const resource = `Task/${patientId}`;
+    this.guard(actor, 'clinical', resource, 'delete');
+
+    const bundle = await this.fhirFetch<FhirBundle<any>>(`/Patient/${patientId}/$everything`);
+    const ownedTasks = (bundle.entry ?? []).filter(
+      (e) =>
+        e.resource.resourceType === 'Task' &&
+        (e.resource.meta?.tag ?? []).some(
+          (t: any) => t.system === CARESYNC_TASK_TAG.system && t.code === CARESYNC_TASK_TAG.code
+        )
+    );
+    for (const entry of ownedTasks) {
+      const id = entry.resource.id;
+      await this.fhirFetch(`/Task/${id}`, { method: 'DELETE' });
+      writeAudit(this.db, { actor: actor.id, action: 'delete', fhirResource: `Task/${id}`, outcome: 'success' });
+    }
+
+    const created: CreatedTask[] = [];
+    for (const task of tasks) {
+      created.push(await this.createTask(actor, patientId, task));
+    }
+    return created;
   }
 }

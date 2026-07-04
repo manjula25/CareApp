@@ -133,9 +133,9 @@ originally Claude Sonnet 5). The agent I/O contracts:
 
 - Risk: bundle (Condition, Observation, MedicationRequest, Encounter) →
   `{ riskScore, riskLevel, flags: [{type, finding, fhirResourceId, severity}], readmissionProbability }`
-- Care Gap: bundle (CarePlan, Condition, Encounter, Observation) →
+- Care Gap: bundle (Condition, Encounter, Observation — no `CarePlan` is seeded, **revised 2026-07-05** per S1's actual data model) →
   `{ gaps: [{gapType, description, lastDone, dueDate, urgency, fhirResourceId}] }`
-- SDOH: (QuestionnaireResponse AHC-HRSN, Observation, demographics) →
+- SDOH: (AHC-HRSN screening, seeded as an `Observation` rather than a `QuestionnaireResponse` — **revised 2026-07-05**; plus demographics) →
   `{ barriers: [{domain, finding, severity, fhirResourceId}], referralsNeeded: string[] }`
 - Action Planner: all three agent outputs →
   `{ tasks: [{title, description, priority, assignTo, dueInDays, fhirResources}] }`

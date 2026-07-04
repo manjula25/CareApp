@@ -1,59 +1,149 @@
-# Code Review — CareSync AI, S2 (Single-agent analysis with citation enforcement)
+# Code Review — CareSync AI, S3 (Four-agent orchestration + FHIR Task creation)
 
-> **PLAN_ID:** `caresync-ai` · **Slice:** S2 · **Date:** 2026-07-04
-> **Fixed point:** `main` (merge-base `30d7c0e`). Only one commit exists on this branch ahead of
-> `main` (`f6e7198`, docs-only); everything else reviewed here is uncommitted working-tree state
-> (tracked modifications + untracked new files per `git status`) — nothing below has landed yet.
+> **PLAN_ID:** `caresync-ai` · **Slice:** S3 · **Date:** 2026-07-05
+> **Fixed point:** `feature/caresync-s2-single-agent-analysis` (merge-base `344157a`) → `HEAD` (`a7bc0e3`),
+> plus the uncommitted working-tree changes on top (`git diff` — the D2 E2E-test extension in
+> `apps/web/e2e/patient-analysis.spec.ts` and a `data-testid` addition in `apps/web/src/pages/PatientDetail.tsx`).
+> `git diff feature/caresync-s2-single-agent-analysis...HEAD` + `git status`/`git diff` for the working tree.
+> Commits reviewed: `be3510c..a7bc0e3` (13 commits). Prior S2 review preserved at `review-s2.md`.
 
-Two axes reviewed in parallel, independently, per the repo's `code-review` skill. Not merged or reranked — see that skill's "why two axes" note.
+Two axes reviewed in parallel, independently, per the repo's `code-review` skill. Not merged or reranked —
+see that skill's "why two axes" note. Extra scrutiny was directed at the code that landed **after** the
+documented E1/E2 post-review fixes (B1 orchestrator, B2 Task write/replace, B3 route wiring, C1/C2 four-feed
+frontend) and at this session's own not-yet-reviewed D2 additions. The two already-fixed issues (streamed
+narration misattribution; three-of-four-feeds-never-visibly-streamed) were confirmed genuinely fixed and are
+not re-litigated.
 
 ## Standards
 
-**Hard violation — Duplicated Code / Data Clump: `PatientBundle` shape defined 3x independently.**
-`apps/api/src/fhir/client.ts:141-144` returns an inline anonymous type instead of an exported interface, unlike every other method in that file (`getPatient`/`getConditions`/`getTasks`/`getAssignedPanel`, which all return exported named interfaces reused by callers). `riskAgent.ts:24` and `analysis.ts:7` each hand-redeclare the identical shape. A future bundle-shape change means editing three files (Shotgun Surgery risk).
+**No HARD violations of documented standards found.** CLAUDE.md's Code-style section is unfilled placeholders,
+so the standards in force are its UI-fidelity/verification/evidence rules plus the conventions established in
+S1/S2 code. Against those:
 
-**Hard violation — Duplicated Code: `AgentFlag` defined twice**, identically, in `riskAgent.ts:10-13` and `citationValidator.ts:1-4`, with no import between them — breaks the file's own single-source-of-truth pattern for domain types.
+**Conventions correctly followed (not findings).** The two S2 hard duplications stayed fixed — `PatientBundle`
+is now imported once from `fhir/client.ts` by every agent and the route; `AgentFlag` lives once in
+`citationValidator.ts` and is re-used via `agent.ts`. New FHIR-client additions (`ActionPlannerTaskInput`,
+`CreatedTask`, `PanelEntry`) are exported named interfaces — matches the file's convention. Default-param DI is
+applied consistently (`orchestrate(bundle, agents = DEFAULT_AGENTS)`, `runAnalysis = orchestrate`,
+`client = getOpenAiClient()`). The shared discriminated `AgentEvent` union in `agent.ts` is clean. The
+agent-graph-canvas UI-fidelity deviation is explicitly recorded at `PatientDetail.tsx:267-270`, satisfying
+CLAUDE.md's "record intentional deviations" rule.
 
-**Judgement call — Primitive Obsession / loosened typing.** `resources: any[]` (`client.ts:144`, `riskAgent.ts:25`, `analysis.ts:7`) and an `as any` stream cast (`riskAgent.ts:104`) widen typing beyond the surrounding file's style. Reasonable given the OpenAI Responses API's untyped event stream; worth a follow-up type once the SDK's discriminated unions are confirmed usable.
+Everything below is a JUDGEMENT CALL (baseline smell). A documented repo standard would override any of these;
+none does.
 
-**Correctly matches existing convention (not a finding):** `analysis.ts`'s scope-guard try/catch mirrors `patients.ts` exactly; default-param DI (`runAgent`, `client`) matches `FhirReadService`'s constructor-injection style; web-side type exports follow the established pattern.
+1. **Duplicated Code / Shotgun Surgery (largest).** The lazy-client block
+   (`let cachedClient…; function getOpenAiClient() { if (!cachedClient) cachedClient = new OpenAI(); … }`) is
+   copy-pasted verbatim across all four agents, as is the stream-drain loop
+   (`for await (const event of stream as any) { … output_text.delta / response.completed … }` → `if (!toolCall) throw`
+   → `JSON.parse(toolCall.arguments)`), differing only in `agentId`/tool name, and `buildPrompt`'s `resourceLines`
+   line (3×). Since `agent.ts` was created as the shared-contract home, a `runToolAgent(client, input, tool, agentId)`
+   helper belongs there. Today a change to OpenAI event handling is a 4-file edit.
 
-**Minor:** `data-testid="risk-summary"` (`PatientDetail.tsx:161`) is the only `data-testid` in the web app (other tests query by role/text) — inconsistency, not a hard violation.
+2. **Speculative Generality / dead export + re-declared types.** `agent.ts:64` exports
+   `export type Agent = (bundle: PatientBundle) => AsyncIterable<AgentEvent>` — never imported anywhere.
+   `orchestrator.ts:8` re-declares the same shape as `BundleAgent`; `analysis.ts:8` re-declares it as `RunAnalysis`.
+   Delete `Agent` or use it in both places.
+
+3. **Primitive Obsession (propagated from S2, now 3 more sites).** `resources: any[]`, `stream as any`, `(item: any)`
+   now appear in careGap/sdoh/actionPlanner too — the same judgement call the S2 review accepted, just wider.
+
+4. **Primitive Obsession — frontend finding type.** `AnalysisFinding` (`client.ts:65-76`) is a bag of 8 optionals
+   plus `[key: string]: unknown`, discarding the backend's clean discriminated union. A per-`agentId` union would
+   restore the type-narrowing that `AgentEvent` already models server-side.
+
+5. **Repeated Switches (mild, inherent).** The `agentId` set is switched on in the orchestrator (78-80), the analysis
+   route (82-116), and PatientDetail (`FEED_DEFS`/`SUMMARY_TESTID`). Design-inherent; noted for awareness, not action.
+
+**D2 working-tree changes** are test-only plus one `data-testid={task.key}` addition — clean, and the new
+per-summary testids resolve the S2 "lone testid" inconsistency note.
 
 ## Spec
 
-**(a) Missing/partial:** All five `issues.md` S2 acceptance criteria are implemented and tested. One partial: GD13 (`plan.md`) calls for "structured outputs via `text.format`/tool calling," but `riskAgent.ts:39` sets `strict: false` on the `report_risk` tool — OpenAI won't schema-enforce the call, so a malformed `RiskOutput` could reach the unguarded `JSON.parse` (`riskAgent.ts:116`) with no fallback.
+Reviewed against `issues.md` S3 (6 ACs), `implementation-plan.md` Iteration 3, GD11 (citation enforcement), and
+the seed data. **Overall the six ACs are substantively met:** the orchestrator truly interleaves
+risk/careGap/sdoh (`orchestrate`, race-merged `.next()` promises) then runs Action Planner over their collected
+outputs; Tasks persist via `replacePatientTasks`; GD11 holds on all four agents' structured citations **and**
+narration (per-`agentId` `NarrationBuffer` flushed on each `result`, including `actionPlanner`); the replace is
+correctly scoped to `CARESYNC_TASK_TAG` so seed/Synthea Tasks are never deleted; and a Task whose citations all
+drop is excluded from `valid` and never reaches HAPI. E1/E2 are genuinely fixed. No scope creep found.
 
-**(b) Scope creep:** None significant. The `dotenv` → native `process.loadEnvFile` swap is necessary supporting infra for A1, not overreach.
+### (c) Implemented but WRONG — agent prompts contradict corrected AC #4  *[CONFIRMED, verified against source]*
+AC #4 (revised in `a7bc0e3`): *"SDOH agent reads the AHC-HRSN screening (seeded as an `Observation`, not a
+`QuestionnaireResponse`); Care Gap reads Condition/Encounter/Observation (no `CarePlan` resource is seeded)."*
+Seed data confirms this: `import-fhir.ts` emits the AHC-HRSN as a LOINC-coded (`71802-3`) `Observation`; no
+`QuestionnaireResponse` and no `CarePlan` is seeded anywhere.
 
-**(c) Implemented but wrong — two findings:**
+But the **agent prompts still use the old resource model**:
+- `sdohAgent.ts:79` — "Focus on the AHC-HRSN **QuestionnaireResponse**…" and `:84` — "Barriers drawn from the
+  AHC-HRSN screening **must cite that QuestionnaireResponse id**." Since no QuestionnaireResponse exists in the
+  bundle, this instruction steers the model toward a citation the GD11 validator will drop — risking loss of the
+  housing/food SDOH barrier, which is the SDOH agent's entire purpose. It only survived the D3 live run because
+  the model overrode its own instructions.
+- `careGapAgent.ts:73` — "Focus on **CarePlan**, Condition, Encounter, and Observation…" names a resource type
+  that isn't seeded (lower impact; the other three exist).
 
-1. **Citation enforcement doesn't cover the narrated token stream.** GD11 (`plan.md`): "the backend validates every citation against the bundle and drops/flags any hallucinated ID before it reaches the UI" — described in the plan as the slice's non-negotiable core guarantee. `analysis.ts:47-49` streams `token` events (the model's free-text narration) straight to the client with **zero validation** — only the structured `flags` array passes through `validateCitations`. The prompt (`riskAgent.ts` `buildPrompt`) never constrains the model from mentioning a `ResourceType/id` in its prose narration. A hallucinated ID spoken in the narration reaches the UI untouched. The literal `issues.md` acceptance criteria ("no *finding* reaches the UI citing an absent ID") are satisfied — this gap is in the broader GD11 guarantee the plan documents, not the narrower literal wording.
+This is also a **documentation-vs-code drift**: `verification.md` §2 #4 claims `sdohAgent.ts`/`careGapAgent.ts`
+were "revised 2026-07-05 … not the original `QuestionnaireResponse`/`CarePlan` wording." The code was **not**
+revised — the prompts still say exactly that. Recommend correcting both prompts to the seeded Observation model
+and correcting the verification.md claim.
 
-2. **The documented "unset key → graceful per-request error" claim is false.** `implementation-plan.md` Iteration 2 Rollback note: "Unset `OPENAI_API_KEY` to disable live analysis; the route degrades to an explicit error, not a fake result." In practice `export const openai = new OpenAI()` (`riskAgent.ts:5`) runs at **module import time** and throws synchronously with no key present. Since `index.ts` imports `createAnalysisRouter` (→ `riskAgent.ts`) unconditionally at startup, an unset key crashes the **whole API process at boot**, not just the analysis route per-request. `jest.setup.ts`'s placeholder-key workaround shows the authors were aware of the throw but didn't reconcile it with the rollback story.
+### (a) PARTIAL — Task citations not durable across reload
+AC #3: *"Each Task card cites the FHIR resource(s) behind it."* Citations ride only the SSE `task` payload;
+`createTask` deliberately does not persist `fhirResources` onto the FHIR Task (documented at `client.ts:220-234`).
+On page reload, `getTasks` returns cards **without** citation chips. Acceptable-for-POC and documented, but the AC
+is met only at creation time, not on reload.
 
-## Summary
+### Minor
+AC #1 says "all four agents run in parallel." Action Planner is necessarily downstream (it synthesizes the other
+three) — consistent with the PRD contract; only the three bundle agents are truly concurrent. Wording, not a defect.
 
-- **Standards:** 2 hard findings (duplicated `PatientBundle`/`AgentFlag` types), 1 judgement call (loosened typing), 1 minor (test-id inconsistency). Worst: the 3-way `PatientBundle` duplication — genuine Shotgun Surgery risk on the next bundle-shape change.
-- **Spec:** 2 "implemented but wrong" findings, 1 partial (unenforced schema strictness). Worst: **narrated-text citations bypass GD11's validation gate entirely** — this is the closest thing to a defect in the feature's actual safety guarantee, not just its literal test coverage.
+### (b) Scope creep
+None — the diff stays within S3.
 
-## Cross-reference with `verification.md`
+## Summary / outcome
 
-`verification.md` (written earlier this pass) independently found a third real gap not duplicated here: `analysis.ts`'s SSE streaming loop has no error handling around `runAgent`'s `for await` — an agent failure mid-stream hangs the client and, absent any process-level unhandled-rejection handler, can crash the API process. Combined with this review's finding (2) above (import-time crash on a missing key), `analysis.ts`/`riskAgent.ts` have two distinct process-crash risk vectors, both unexercised by current tests.
+- **Standards:** 0 hard violations, 5 judgement calls. Worst: the 4×-duplicated OpenAI client/stream-drain block
+  (Duplicated Code / Shotgun Surgery) — a `runToolAgent` helper in `agent.ts` would collapse it.
+- **Spec:** 3 findings (1 wrong, 1 partial, 1 wording). Worst: the SDOH/Care Gap prompts still cite
+  `QuestionnaireResponse`/`CarePlan` — resource types that don't exist in the seed — directly contradicting the
+  corrected AC #4 and the verification.md claim that the prompts were revised.
 
-## Post-review update — 2026-07-04
+**Fix before this branch ships:**
+- **Spec (c) — SDOH/Care Gap prompt drift.** Change `sdohAgent.ts:79,84` from "QuestionnaireResponse" to the
+  AHC-HRSN `Observation`, and drop "CarePlan" from `careGapAgent.ts:73`. Low-effort, and it removes a live risk of
+  the SDOH barrier's citation being validator-dropped. Also correct the false "revised 2026-07-05" claim in
+  `verification.md` §2 #4 (a small doc edit) so the verification record matches the code.
 
-**User decision: fix all three defects plus both Standards duplications before commit.** All fixed, test-first — see `implementation-plan.md` Iteration 2, "Post-review fixes" (E1–E4) for the detail per finding:
+**Minor / deferrable (follow-up, not ship-blocking):**
+- Standards #1 (4× OpenAI-client/stream-drain duplication) — worth a `runToolAgent` refactor before S4/S5 add more
+  agents, but the code is correct as-is.
+- Standards #2 (dead `Agent` export + `BundleAgent`/`RunAnalysis` re-declares) — trivial cleanup.
+- Standards #3/#4 (`any` typing; loose frontend `AnalysisFinding`) — tighten once the OpenAI SDK's stream unions
+  are confirmed usable; carried over from S2.
+- Spec (a) (Task citations not durable on reload) — already documented as an accepted POC limitation; revisit if a
+  persisted-citation requirement appears (candidate for the S4 analysis-cache work, which stores Task payloads).
+- Spec "minor" AC #1 wording — no code change; note in issues.md if desired.
 
-- Standards duplication #1 (`PatientBundle` 3x) → fixed (E4): now exported once from `fhir/client.ts`.
-- Standards duplication #2 (`AgentFlag` 2x) → fixed (E4): now exported once from `citationValidator.ts`.
-- Spec finding "implemented but wrong" #1 (narration citations unvalidated) → fixed (E2): `redactUnvalidatedCitations` + `createNarrationBuffer`.
-- Spec finding "implemented but wrong" #2 (boot-time crash on missing key) → fixed (E3): lazy client construction.
-- Cross-referenced verification.md gap (SSE loop has no error handling) → fixed (E1): try/catch + `error` SSE event.
-- Not addressed (out of scope, low severity, no action needed): the `strict: false` tool-schema partial finding (Spec §a) and the loosened-typing/`data-testid` judgement calls (Standards) — left as-is, no functional risk.
+No defect blocks the four-agent orchestration, Task write/replace, or GD11 enforcement paths — those are sound.
+The single recommended pre-ship fix is the prompt/verification drift, which is cheap and reduces a real
+citation-drop risk.
 
-Re-verified: `npm run test:api` → 15 suites / 61 tests passing (12 new, covering all four fixes); build + lint clean.
+## Post-review fix — done 2026-07-05
 
-## Next step
+**Spec (c) fixed.** `sdohAgent.ts:79,84` now says "the AHC-HRSN screening … seeded as an Observation" /
+"must cite that Observation id" (was "QuestionnaireResponse"); `careGapAgent.ts:73` now lists only
+"Condition, Encounter, and Observation" (dropped "CarePlan"). Both prompts now match the AC #4-corrected
+data model, closing the citation-drop risk the review flagged.
 
-Run `finishing-a-development-branch` — both this review and `verification.md` are now resolved.
+Verified, not just edited: `npx jest sdohAgent careGapAgent` — 2 suites / 6 tests still passing (mocked-client
+tests were unaffected, as expected — they exercise parse/validation logic, not prompt text). Then re-ran a full
+live orchestrated call against Maria Chen (same method as D3) to confirm the corrected prompt still produces
+good output: all four agents completed with **0 dropped citations** (risk 9, careGap 9, sdoh 2, actionPlanner
+10 findings), and the SDOH agent correctly cited `Observation/maria-chen-sdoh` twice — the real seeded resource,
+not the fabricated `QuestionnaireResponse` type the old prompt asked for.
+
+The `verification.md` §2 #4 false "revised 2026-07-05" claim (this review's other finding under Spec (c)) is
+also corrected — see that file.
+
+**Remaining minor/deferrable items are unchanged and not addressed in this pass** — user can decide priority/timing.

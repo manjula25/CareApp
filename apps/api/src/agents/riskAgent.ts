@@ -1,6 +1,10 @@
 import OpenAI from 'openai';
 import { PatientBundle } from '../fhir/client';
-import { AgentFlag } from './citationValidator';
+import { AgentEvent, RiskOutput } from './agent';
+
+// Re-exported for existing importers (routes/analysis.ts, tests) — the shared
+// Agent contract now owns these types (see ./agent.ts).
+export type { AgentEvent, RiskOutput } from './agent';
 
 // Agent model is OpenAI gpt-5.5 (GD13, revised 2026-07-04 — see plan.md).
 export const MODEL = 'gpt-5.5';
@@ -21,15 +25,6 @@ function getOpenAiClient(): OpenAI {
   }
   return cachedClient;
 }
-
-export interface RiskOutput {
-  riskScore: number;
-  riskLevel: 'low' | 'moderate' | 'high' | 'critical';
-  flags: AgentFlag[];
-  readmissionProbability: number;
-}
-
-export type AgentEvent = { type: 'token'; text: string } | { type: 'result'; output: RiskOutput };
 
 // Structured-output contract (GD11): the agent must report through this tool
 // rather than free text, and every flag must cite a `ResourceType/id` that
@@ -109,7 +104,7 @@ export async function* runRiskAgent(bundle: PatientBundle, client = getOpenAiCli
 
   for await (const event of stream as any) {
     if (event.type === 'response.output_text.delta') {
-      yield { type: 'token', text: event.delta };
+      yield { type: 'token', agentId: 'risk', text: event.delta };
     } else if (event.type === 'response.completed') {
       toolCall = event.response.output.find((item: any) => item.type === 'function_call' && item.name === 'report_risk');
     }
@@ -119,5 +114,5 @@ export async function* runRiskAgent(bundle: PatientBundle, client = getOpenAiCli
     throw new Error('Risk agent did not call report_risk with a structured result');
   }
 
-  yield { type: 'result', output: JSON.parse(toolCall.arguments) };
+  yield { type: 'result', agentId: 'risk', output: JSON.parse(toolCall.arguments) };
 }

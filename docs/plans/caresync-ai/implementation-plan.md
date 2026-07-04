@@ -181,60 +181,69 @@ Fresh evidence after all four fixes: `npm run test:api` — **15 suites / 61 tes
 
 ### Phase A — Agent interface + three new agents (backend, test-first)
 
-- [ ] **A1. Extract the `Agent` contract.** Define `Agent<TOutput>` (or a discriminated `AgentEvent` per agent) generalizing `runRiskAgent`'s shape: `(bundle) => AsyncIterable<AgentEvent>` where the terminal `result` carries the agent's structured output and each flag/gap/barrier/task carries a `fhirResourceId`/`fhirResources`. Refactor `riskAgent.ts` to implement it — **no behavior change**, existing S2 tests stay green.
+- [x] **A1. Extract the `Agent` contract.** Define `Agent<TOutput>` (or a discriminated `AgentEvent` per agent) generalizing `runRiskAgent`'s shape: `(bundle) => AsyncIterable<AgentEvent>` where the terminal `result` carries the agent's structured output and each flag/gap/barrier/task carries a `fhirResourceId`/`fhirResources`. Refactor `riskAgent.ts` to implement it — **no behavior change**, existing S2 tests stay green.
   - *ponytail:* interface extracted from four real implementations, not invented; keep it the minimum the orchestrator + validator need.
 
-- [ ] **A2. Care Gap agent (`runCareGapAgent`).** Structured output per `prd.md`: `{ gaps: [{gapType, description, lastDone, dueDate, urgency, fhirResourceId}] }`; reads CarePlan/Condition/Encounter/Observation from the bundle.
-  - *Domain rule:* Care Gap reads CarePlan/Encounter (S3 acceptance); every gap cites a FHIR resource id (GD11).
+- [x] **A2. Care Gap agent (`runCareGapAgent`).** Structured output per `prd.md`: `{ gaps: [{gapType, description, lastDone, dueDate, urgency, fhirResourceId}] }`; reads Condition/Encounter/Observation from the bundle (no `CarePlan` is seeded — **revised 2026-07-05**, see prd.md).
+  - *Domain rule:* Care Gap reads Condition/Encounter/Observation (S3 acceptance, revised); every gap cites a FHIR resource id (GD11).
   - *Test:* prompt-build + tool-result parse against a **mocked OpenAI client**; live call proven in D3.
 
-- [ ] **A3. SDOH agent (`runSdohAgent`).** Structured output `{ barriers: [{domain, finding, severity, fhirResourceId}], referralsNeeded: string[] }`; reads the **AHC-HRSN QuestionnaireResponse** + demographics from the bundle.
-  - *Domain rule:* SDOH agent reads the AHC-HRSN QuestionnaireResponse (S3 acceptance); barriers cite resource ids (GD11).
-  - *Test:* mocked-client parse; asserts a QuestionnaireResponse-derived barrier cites the QR id.
+- [x] **A3. SDOH agent (`runSdohAgent`).** Structured output `{ barriers: [{domain, finding, severity, fhirResourceId}], referralsNeeded: string[] }`; reads the **AHC-HRSN screening**, seeded as an `Observation` (not a `QuestionnaireResponse` — **revised 2026-07-05**) + demographics from the bundle.
+  - *Domain rule:* SDOH agent reads the AHC-HRSN screening Observation (S3 acceptance, revised); barriers cite resource ids (GD11).
+  - *Test:* mocked-client parse; asserts a barrier derived from the AHC-HRSN `Observation` cites its id.
 
-- [ ] **A4. Action Planner agent (`runActionPlannerAgent`).** Input is the **three prior agents' structured outputs** (not the raw bundle); output `{ tasks: [{title, description, priority, assignTo, dueInDays, fhirResources}] }` where `fhirResources` are the ids that generated the task.
+- [x] **A4. Action Planner agent (`runActionPlannerAgent`).** Input is the **three prior agents' structured outputs** (not the raw bundle); output `{ tasks: [{title, description, priority, assignTo, dueInDays, fhirResources}] }` where `fhirResources` are the ids that generated the task.
   - *Domain rule:* Action Planner synthesizes the other three (GD/prd contract); each task cites its source resources (GD11).
   - *ponytail:* consumes parsed outputs — no second bundle read, no re-derivation.
   - *Test:* given three canned agent outputs, produces tasks whose `fhirResources` are a subset of the union of cited ids.
 
 ### Phase B — Orchestrator + FHIR Task write (backend, test-first)
 
-- [ ] **B1. Orchestrator (`orchestrate(bundle)`).** Dispatch Risk + Care Gap + SDOH **in parallel** (`Promise`/merged async iteration), tag every streamed event with its `agentId`, collect the three structured results, then run Action Planner over them and stream its output too. Returns one `AsyncIterable<AgentEvent & {agentId}>`.
+- [x] **B1. Orchestrator (`orchestrate(bundle)`).** Dispatch Risk + Care Gap + SDOH **in parallel** (`Promise`/merged async iteration), tag every streamed event with its `agentId`, collect the three structured results, then run Action Planner over them and stream its output too. Returns one `AsyncIterable<AgentEvent & {agentId}>`.
   - *ponytail:* one function, merged iterable — no queue/worker infra (GD1 "self-contained service" is satisfied by module boundaries, not processes).
   - *Test:* with four stub agents, all three parallel agents' events appear before the planner's, and the planner receives the three outputs.
 
-- [ ] **B2. FHIR Task write + re-run replace (audited).** Add `createTask(actor, task)` and `replacePatientTasks(actor, patientId, tasks)` to the FHIR client, going through the **same audited, token-bearing `fetch`** as reads (one audit row per write). `replace` first removes prior CareSync-authored Tasks for the patient (query by an author/tag identifier, then delete) so re-running is clean.
+- [x] **B2. FHIR Task write + re-run replace (audited).** Add `createTask(actor, task)` and `replacePatientTasks(actor, patientId, tasks)` to the FHIR client, going through the **same audited, token-bearing `fetch`** as reads (one audit row per write). `replace` first removes prior CareSync-authored Tasks for the patient (query by an author/tag identifier, then delete) so re-running is clean.
   - *Domain rule:* Action Planner output becomes FHIR Task resources persisted in HAPI; re-run replaces prior Tasks cleanly (S3 acceptance); every write audited (S1 audit spine).
   - *Test (Supertest vs test HAPI):* planner tasks are POSTed as FHIR Tasks resolvable in HAPI with their citations; a second run leaves exactly the new Task set (no duplicates); each write writes an audit row.
 
-- [ ] **B3. Analysis route → orchestration + validation gate for all four.** Swap `createAnalysisRouter`'s defaulted param from `runRiskAgent` to `runAnalysis = orchestrate`. Each agent's citations pass through the A2/S2 `validateCitations` gate against the bundle `validIds` **before emit and before Task creation** — a task whose citations all drop is not created. Emit `finding` events carrying `agentId`; emit a per-agent `complete`; emit `task` events for created Tasks.
+- [x] **B3. Analysis route → orchestration + validation gate for all four.** Swap `createAnalysisRouter`'s defaulted param from `runRiskAgent` to `runAnalysis = orchestrate`. Each agent's citations pass through the A2/S2 `validateCitations` gate against the bundle `validIds` **before emit and before Task creation** — a task whose citations all drop is not created. Emit `finding` events carrying `agentId`; emit a per-agent `complete`; emit `task` events for created Tasks.
   - *Domain rule:* no finding/Task reaches the UI citing an out-of-bundle resource (GD11); the analysis read + Task writes are audited.
   - *Test (Supertest, boundary — S3 acceptance):* one run yields findings from all four agents, creates the expected Tasks, and **every** returned citation (findings + Tasks) resolves in the bundle; a fabricated id injected via a stub is dropped everywhere.
 
 ### Phase C — Frontend: four live feeds + Task cards from analysis
 
-- [ ] **C1. Client: route SSE by `agentId`.** Extend `streamAnalysis` handlers so `onFinding`/`onToken`/`onComplete` carry `agentId`, and add `onTask`. No new transport.
+- [x] **C1. Client: route SSE by `agentId`.** Extend `streamAnalysis` handlers so `onFinding`/`onToken`/`onComplete` carry `agentId`, and add `onTask`. No new transport.
 
-- [ ] **C2. `PatientDetail`: light up all four feeds + render created Tasks (W03, mockup fidelity).** The three S2 idle placeholders (Care Gap violet / SDOH emerald / Action Planner amber) become **live streaming feeds** using the existing `FeedBox` component and per-agent accent already defined; created Tasks render as Task cards with their citation chips in the existing Tasks section.
+- [x] **C2. `PatientDetail`: light up all four feeds + render created Tasks (W03, mockup fidelity).** The three S2 idle placeholders (Care Gap violet / SDOH emerald / Action Planner amber) become **live streaming feeds** using the existing `FeedBox` component and per-agent accent already defined; created Tasks render as Task cards with their citation chips in the existing Tasks section.
   - *Mockup-fidelity note (per CLAUDE.md UI rules):* completes the four-feed grid from `reference-materials/caresync-ai.html`; the **agent-graph canvas above the feeds is still omitted — built in S4**. Record this as the one remaining deviation for W03.
   - *Test (Vitest, mocked stream):* a finding on each of the four `agentId`s renders in its own feed with the right accent; a `task` event renders a Task card with its citation chip.
 
 ### Phase D — Verification (Seam 1/2 + E2E)
 
-- [ ] **D1. Unit + API suites green.** `npm run test:api` (four-agent boundary + Task write/replace + validator) and `npm run test:web`.
-- [ ] **D2. Frontend E2E (`frontend-e2e-verification`).** Playwright: Coordinator → Maria → Run Analysis → all four feeds stream → Task cards appear with citations. Extend the S2 spec.
-- [ ] **D3. Live-call evidence.** One live orchestrated run against OpenAI `gpt-5.5`; confirm all four produce structured output, Tasks land in HAPI, and a deliberately fabricated citation is dropped end-to-end. Label *live* vs *local-mock*.
+- [x] **D1. Unit + API suites green.** `npm run test:api` — 19 suites / 80 tests. `npm run test:web` — 5 files / 24 tests. Both `npm run build` clean. Real local HAPI confirmed clean of stray `ai-generated-task` Tasks after full runs.
+- [x] **D2. Frontend E2E (`frontend-e2e-verification`) — done 2026-07-05.** Extended `apps/web/e2e/patient-analysis.spec.ts` with a second test: Coordinator → Maria → Run Analysis → all four feeds stream (route-intercepted SSE with `agentId`-tagged frames matching the real route's wire format) → a Task card renders with its citation chips. **Evidence strength: packaged UI / local-mock.** While extending, the run surfaced that the *existing* S2 test's mocked frames predated S3's `agentId` tagging (no `agentId` on `token`/`finding`/`complete`) — under the current `withText`/`withFinding` (keyed by `agentId`), those frames no longer route to any feed, so the S2 test itself started failing. Fixed by adding `agentId: 'risk'` to its frames (no product-code change needed there); also added a `data-testid={task.key}` to task cards in `PatientDetail.tsx` to scope the new test's citation assertions (the same `Condition/…`/`Observation/…` ids otherwise also match the Active Conditions list and feed finding chips). `npm run test:e2e`: 4/4 green; `npm run test:web`: 24/24 still green.
+- [x] **D3. Live-call evidence — done 2026-07-05.** API booted standalone (`PORT=4001`) against the live HAPI container; one real `POST /api/patients/maria-chen/analysis` call against OpenAI `gpt-5.5` (~27s, 209 streamed tokens). All four agents produced structured output with 0 dropped citations: risk (9 findings, riskScore 88/critical), careGap (8 findings), sdoh (2 findings), actionPlanner (10 tasks). Confirmed live in HAPI: `GET /Task?patient=maria-chen` returns the 10 newly created CareSync Tasks (ids 36–45) alongside the 2 seed Tasks, each with its citations intact. Fabrication-drop path proven against the real `validateCitations` (not a synthetic unit test): took the 9 real citations from this run's risk flags plus 1 deliberately fabricated id, validated against a fresh live `$everything` fetch's `validIds` (20 resources) → 9 valid / 1 dropped. **Evidence strength: live.**
+
+### Post-review fixes — done 2026-07-05
+The whole-implementation review pass (after all of Phase A–C individually passed spec + code-quality review) found two real defects, neither exercised by any single task's own review because each surfaced only from viewing the composed system:
+
+- [x] **E1. Streamed narration misattributed to the wrong feed.** `apps/web/src/api/client.ts`'s `dispatch` parsed `payload.agentId` off every `token` SSE frame and then discarded it, forwarding only `text`; `PatientDetail.tsx` covered the gap with an `activeAgentRef` heuristic that only updated on `finding`/`complete` (i.e., at an agent's *completion*, not its narration). Since the Orchestrator genuinely interleaves Risk/Care Gap/SDOH's `token` events (per `orchestrator.test.ts`'s own interleaving proof), a concurrently-narrating agent's pre-completion tokens landed in whichever feed box the ref last pointed at — demo-visible text bleeding between boxes. Fixed: `onToken` now carries `(agentId, text)` end-to-end; `activeAgentRef` deleted. *Test:* a new interleaving regression test in both `client.test.ts` and `PatientDetail.test.tsx` reproduces the exact bug ordering (token before any finding/complete) and asserts correct per-agent attribution.
+- [x] **E2. Three of four feeds never visibly streamed.** `AgentFeedContent` rendered the idle placeholder until `feed.started` flipped true, but `withText` (unlike `withFinding`/`withSummary`) never set it — so Care Gap/SDOH/Action Planner stayed on "Awaiting analysis run…" through their entire narration phase and only "popped" the full accumulated text the instant their `result` arrived, defeating the point of streaming for 3 of 4 boxes. Not caught by the existing isolation tests because they fired `onFinding` before `onToken` — an ordering that doesn't match the real backend (narration always precedes an agent's terminal result). Fixed: `withText` now also sets `started: true`. *Test:* a new regression test fires `onToken` alone (no finding/complete yet) and asserts the box shows live text instead of the placeholder.
+
+### Post-review spec correction — done 2026-07-05
+- **AC #4 wording did not match the real data model.** `issues.md`/`prd.md` originally required "SDOH reads the AHC-HRSN QuestionnaireResponse; Care Gap reads CarePlan/Encounter," but the S1 seed pipeline (`seed-patients.ts`/`import-fhir.ts`, unchanged by S3) never creates a `QuestionnaireResponse` or `CarePlan` resource — the AHC-HRSN screening is seeded as an `Observation`. Verified live against HAPI: `Patient/maria-chen/$everything` returns only `Patient/Condition/Observation/Encounter/RiskAssessment/Task/Group`. This did not compromise citation safety (both agents cite real, in-bundle resource ids of the types that actually exist) — it was a spec/data-model mismatch, not a functional defect. User-approved fix: reworded `issues.md`/`prd.md`/this plan to match the real seeded types rather than changing the seed data.
 
 ### Rollback / safety
 Task writes are additive to HAPI and reversible via `docker compose down -v`. Re-run replace only touches CareSync-authored Tasks (tag-scoped delete) — never Synthea/seed Tasks. No DB migration (analysis still persists nothing until S4 cache).
 
 ### Definition of done (S3) — maps to `issues.md` acceptance
-- Four agents run in parallel from the Orchestrator; each streams to its own feed (B1, C2).
-- Action Planner output becomes FHIR Tasks persisted in HAPI (B2).
-- Each Task cites validated (non-fabricated) FHIR resources (B3, Seam 2).
-- SDOH reads AHC-HRSN QuestionnaireResponse; Care Gap reads CarePlan/Encounter (A2, A3).
-- Re-running replaces prior findings + Tasks cleanly (B2).
-- API-boundary test: all four agents' findings + created Tasks with resolvable citations (D1); E2E green (D2); live evidence (D3).
+- Four agents run in parallel from the Orchestrator; each streams to its own feed (B1, C2). ✅ verified, including the post-review streaming fixes.
+- Action Planner output becomes FHIR Tasks persisted in HAPI (B2). ✅ verified live against real HAPI.
+- Each Task cites validated (non-fabricated) FHIR resources (B3, Seam 2). ✅ verified end-to-end (agent → route gate → HAPI/client).
+- SDOH reads the AHC-HRSN screening Observation; Care Gap reads Condition/Encounter/Observation (A2, A3, revised 2026-07-05). ✅ verified against real seed data.
+- Re-running replaces prior findings + Tasks cleanly (B2). ✅ verified live, twice, on two different patients (parallel-test-safe).
+- API-boundary test: all four agents' findings + created Tasks with resolvable citations (D1) ✅. E2E (D2) ✅ and live-call evidence (D3) ✅ — both done 2026-07-05. Evidence strength to date: **source-level + local mock (D1/D2) + live (D3).**
 
 ---
 
@@ -244,7 +253,9 @@ Task writes are additive to HAPI and reversible via `docker compose down -v`. Re
 
 **Goal:** The signature W03 visual and the demo-reliability mechanism. A native **Canvas agent graph** (`requestAnimationFrame`, 5-node radial layout, bezier edges, particle flow, per-agent color, state machine `IDLE→INIT→DISPATCH→ANALYZING→SYNTHESIZING→COMPLETE`) visualizes the S3 orchestration; the last successful analysis per patient is **cached** and replays instantly/deterministically, while an explicit **live** trigger forces a fresh model run (OpenAI `gpt-5.5`) and re-caches.
 
-**Architecture:** Backend gains a small **analysis cache** — a SQLite `analysis_cache` table keyed by patient id holding the full validated result set (findings per agent + created Task ids + summary) as JSON, plus model version + timestamp. The analysis route reads: default request serves the cached result (replayed through the same SSE shape so the UI treatment is identical); `?live=1` runs the orchestrator, re-caches, and streams live. Frontend adds a `AgentGraph` canvas component driven by the analysis state machine, wired to the same stream events (node state transitions on `dispatch`/`finding`/`complete`). **No chart/animation library** — raw Canvas 2D + `requestAnimationFrame`, cleaned up on unmount.
+**Architecture:** Backend gains a small **analysis cache** — a SQLite `analysis_cache` table keyed by patient id holding the full validated result set (findings per agent + created Task **payloads**, not just ids + summary) as JSON, plus model version + timestamp. Storing Task content, not ids, keeps replay self-contained: S3's re-run deletes+recreates Tasks with fresh ids (B2), so a cache that held only ids could dangle to deleted Tasks. The analysis route reads: default request serves the cached result (replayed through the same SSE shape so the UI treatment is identical); `?live=1` runs the orchestrator, re-caches, and streams live. Frontend adds a `AgentGraph` canvas component driven by the analysis state machine, wired to the same stream events.
+
+**Event→state contract (resolve before B1).** S3's SSE vocabulary (Iteration 3, B3) is `finding`/`complete`/`task`, each tagged with `agentId` — there is **no `dispatch` or `synthesizing` event**. S4 does **not** add backend events; the client derives the state machine from the existing stream: `INIT`→`DISPATCH` on stream open (all four agent nodes pending), `ANALYZING` per node on its first `agentId`-tagged `finding`/`token`, `SYNTHESIZING` on the first event with `agentId: actionPlanner`, `COMPLETE` on the final `complete`. This derivation is the "documented event sequence" B1's test asserts against — write it down as a fixture. (If a demo needs crisper node timing later, adding an explicit `dispatch` event is an S3-orchestrator change, out of S4 scope.) **No chart/animation library** — raw Canvas 2D + `requestAnimationFrame`, cleaned up on unmount.
 
 **Tech Stack (delta):** SQLite `analysis_cache` (better-sqlite3, JSON column) · `?live=1` query flag on the existing route · one Canvas 2D component (`requestAnimationFrame`, bezier, particles) — no dependency.
 
@@ -252,18 +263,18 @@ Task writes are additive to HAPI and reversible via `docker compose down -v`. Re
 
 ### Phase A — Analysis cache (backend, test-first)
 
-- [ ] **A1. `analysis_cache` schema + migrate.** Table `(patient_id PK, result_json, model_version, created_ts)`; idempotent migrate at boot (matches the S1 migrate pattern). Persist the **validated** result (post-citation-gate) so replay can never surface a dropped citation.
+- [ ] **A1. `analysis_cache` schema + migrate.** Table `(patient_id PK, result_json, model_version, created_ts)`; idempotent migrate at boot (matches the S1 migrate pattern). Persist the **validated** result (post-citation-gate) so replay can never surface a dropped citation. `result_json` holds the full findings-per-agent set + Task **payloads** (not just ids) + summary, so replay is self-contained and can't reference a deleted Task.
   - *ponytail:* one row per patient (last successful run), overwritten on re-run — no history table (YAGNI until a "compare runs" feature exists).
-  - *Test:* write-then-read round-trips the full result; overwrite replaces.
+  - *Test:* write-then-read round-trips the full result (including Task payloads); overwrite replaces.
 
-- [ ] **A2. Cache-aware analysis route.** On `POST /:id/analysis`: if `?live=1` → run orchestrator, persist to cache, stream live; else → if a cache row exists, **replay it** as the same `finding`/`task`/`complete` SSE events (optionally paced for the streaming feel); if no cache, fall back to a live run + cache.
-  - *Domain rule:* cached analysis replays deterministically without a live model call; explicit live trigger forces a fresh run and re-caches (S4 acceptance); cache is real prior output, not a script (GD2).
-  - *Test (Supertest):* seed a cache row → default request replays it with **zero** agent invocations (stub agent asserts not-called); `?live=1` invokes the (stub) orchestrator and updates the row.
+- [ ] **A2. Cache-aware analysis route.** On `POST /:id/analysis`: if `?live=1` → run orchestrator, persist to cache, stream live; else → if a cache row exists, **replay it** as the same `finding`/`task`/`complete` SSE events; if no cache, fall back to a live run + cache. Replay must re-emit in the **same phased order** live produces — three parallel agents' events, then the Action Planner's — tagged with the same `agentId`s, so the canvas animates through the identical state machine (not a single burst). Pacing between events is cosmetic; the ordering is not.
+  - *Domain rule:* cached analysis replays deterministically without a live model call; explicit live trigger forces a fresh run and re-caches (S4 acceptance); cache is real prior output, not a script (GD2); cached and live share UI treatment, which requires matching event order (C2).
+  - *Test (Supertest):* (a) seed a cache row → default request replays it with **zero** agent invocations (stub agent asserts not-called) and the replayed events carry the same `agentId`s in the same phased order as live; (b) `?live=1` invokes the (stub) orchestrator and updates the row; (c) **cold cache** (no row) → default request runs the (stub) orchestrator exactly once and the row now exists.
 
 ### Phase B — Agent-graph canvas (frontend)
 
-- [ ] **B1. Analysis state machine (client).** A small reducer/hook mapping stream events → graph state (`IDLE→INIT→DISPATCH→ANALYZING→SYNTHESIZING→COMPLETE`) and per-node status (Orchestrator + 4 agents). Pure and unit-testable.
-  - *Test (Vitest):* the documented event sequence drives the states in order; per-agent nodes flip to ANALYZING/COMPLETE on their events.
+- [ ] **B1. Analysis state machine (client).** A small reducer/hook mapping stream events → graph state (`IDLE→INIT→DISPATCH→ANALYZING→SYNTHESIZING→COMPLETE`) and per-node status (Orchestrator + 4 agents), per the **Event→state contract** above (derived from `finding`/`complete`/`task` + `agentId` — no `dispatch` event exists). Pure and unit-testable.
+  - *Test (Vitest):* the documented event sequence (the fixture from the Event→state contract) drives the states in order; per-agent nodes flip to ANALYZING on their first tagged event and COMPLETE on their `complete`; `SYNTHESIZING` fires on the first `actionPlanner` event.
 
 - [ ] **B2. `AgentGraph` Canvas component (W03, mockup fidelity).** Native Canvas: 5-node radial layout (Orchestrator center + 4 agents), bezier edges, particle flow along active edges, per-agent color identity **consistent with the feed boxes and Task citation chips**, animated via `requestAnimationFrame` and torn down on unmount. Placed above the feeds grid per `reference-materials/caresync-ai.html`, closing W03's last deviation.
   - *Domain rule:* no chart library (GD10); per-agent color consistent graph→feed→task (S4 acceptance).
@@ -274,7 +285,7 @@ Task writes are additive to HAPI and reversible via `docker compose down -v`. Re
 
 ### Phase C — Verification
 - [ ] **C1.** `npm run test:api` (cache replay/live) + `npm run test:web` (state machine) green.
-- [ ] **C2. Frontend E2E (`frontend-e2e-verification`).** Cached replay renders graph→feeds→tasks with no live call; the live trigger forces a fresh run; both produce the same UI treatment (GD2).
+- [ ] **C2. Frontend E2E (`frontend-e2e-verification`).** Cached replay renders graph→feeds→tasks with no live call; the live trigger forces a fresh run; both produce the same UI treatment (GD2). Run with reduced-motion **disabled** in the browser context (the B2 `prefers-reduced-motion` path renders the final state statically and would not exercise the animation-in-sync assertion).
 
 ### Rollback / safety
 Cache is a single SQLite table — deletable without affecting HAPI; `docker compose down -v` + delete SQLite resets. A stale/absent cache degrades to a live run, never a fake. Canvas is presentational — no data risk.

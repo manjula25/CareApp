@@ -118,6 +118,129 @@ describe('FhirReadService', () => {
   });
 });
 
+describe('FhirReadService Task writes (createTask / replacePatientTasks)', () => {
+  let db: Database.Database;
+  let service: FhirReadService;
+  const createdTaskIds: string[] = [];
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    migrate(db);
+    service = new FhirReadService(db, process.env.FHIR_BASE_URL ?? 'http://localhost:8080/fhir');
+  });
+
+  afterEach(async () => {
+    // Best-effort cleanup so repeated local runs don't accumulate Tasks in the
+    // shared HAPI instance. Ignore failures (already deleted by the test itself).
+    while (createdTaskIds.length > 0) {
+      const id = createdTaskIds.pop()!;
+      await fetch(`${process.env.FHIR_BASE_URL ?? 'http://localhost:8080/fhir'}/Task/${id}`, {
+        method: 'DELETE',
+      }).catch(() => undefined);
+    }
+  });
+
+  async function fetchTask(id: string): Promise<any> {
+    const res = await fetch(`${process.env.FHIR_BASE_URL ?? 'http://localhost:8080/fhir'}/Task/${id}`);
+    return res.json();
+  }
+
+  // Reads via Patient/{id}/$everything rather than a Task?search endpoint:
+  // both `Task?patient=...&_tag=...` and even a bare `Task?patient=...`
+  // lag well behind writes on this HAPI instance under a burst of
+  // create/delete calls (confirmed by manual probing — see the comment on
+  // replacePatientTasks in client.ts), which would make assertions through
+  // that same search flaky against this test's own fixture data.
+  // `$everything` reflects writes immediately, which is also why production
+  // code (replacePatientTasks) uses it for the same read-before-delete step.
+  async function fetchTaggedTasksFor(patientId: string): Promise<any[]> {
+    const base = process.env.FHIR_BASE_URL ?? 'http://localhost:8080/fhir';
+    const res = await fetch(`${base}/Patient/${patientId}/$everything`);
+    const bundle = (await res.json()) as { entry?: { resource: any }[] };
+    return (bundle.entry ?? [])
+      .map((e) => e.resource)
+      .filter(
+        (r) =>
+          r.resourceType === 'Task' &&
+          (r.meta?.tag ?? []).some(
+            (t: any) => t.system === 'https://caresync.demo/fhir/tags' && t.code === 'ai-generated-task'
+          )
+      );
+  }
+
+  it('createTask POSTs a resolvable, tagged Task to HAPI and writes one audit row', async () => {
+    const result = await service.createTask(coordinator, 'maria-chen', {
+      title: 'Schedule follow-up',
+      description: 'Call patient to schedule a cardiology follow-up',
+      priority: 'high',
+      fhirResources: ['Condition/maria-chen-chf'],
+    });
+    createdTaskIds.push(result.id);
+
+    const fetched = await fetchTask(result.id);
+    expect(fetched.resourceType).toBe('Task');
+    expect(fetched.priority).toBe('urgent');
+    expect(fetched.description).toContain('Schedule follow-up');
+    expect(fetched.meta?.tag).toEqual(
+      expect.arrayContaining([{ system: 'https://caresync.demo/fhir/tags', code: 'ai-generated-task' }])
+    );
+
+    const rows = db.prepare('SELECT * FROM audit_log ORDER BY id').all() as any[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ actor: 'coord-1', action: 'create', outcome: 'success', fhir_resource: `Task/${result.id}` });
+  });
+
+  it('replacePatientTasks called twice leaves exactly the second call\'s Tasks tagged for that patient', async () => {
+    const firstRun = await service.replacePatientTasks(coordinator, 'maria-chen', [
+      { title: 'First task A', description: 'desc A', priority: 'medium', fhirResources: [] },
+      { title: 'First task B', description: 'desc B', priority: 'high', fhirResources: [] },
+    ]);
+    const secondRun = await service.replacePatientTasks(coordinator, 'maria-chen', [
+      { title: 'Second task only', description: 'desc C', priority: 'critical', fhirResources: [] },
+    ]);
+    createdTaskIds.push(...secondRun.map((t) => t.id));
+
+    const tagged = await fetchTaggedTasksFor('maria-chen');
+    expect(tagged).toHaveLength(1);
+    expect(tagged[0].id).toBe(secondRun[0].id);
+    expect(tagged.map((t: any) => t.id)).not.toEqual(expect.arrayContaining(firstRun.map((t) => t.id)));
+    expect(tagged[0].description).toContain('Second task only');
+  });
+
+  it('never deletes a seed Task lacking the ai-generated-task tag', async () => {
+    const before = await fetchTask('maria-chen-task-medrec');
+    expect(before.resourceType).toBe('Task');
+
+    const created = await service.replacePatientTasks(coordinator, 'maria-chen', [
+      { title: 'Replacement task', description: 'desc', priority: 'medium', fhirResources: [] },
+    ]);
+    createdTaskIds.push(...created.map((t) => t.id));
+
+    const after = await fetchTask('maria-chen-task-medrec');
+    expect(after.resourceType).toBe('Task');
+    expect(after.id).toBe('maria-chen-task-medrec');
+  });
+
+  it('denies a Social Worker writing Tasks (no clinical scope) before any HAPI call, and audits denial', async () => {
+    await expect(
+      service.createTask(socialWorker, 'maria-chen', {
+        title: 'Should not be created',
+        description: 'desc',
+        priority: 'high',
+        fhirResources: [],
+      })
+    ).rejects.toBeInstanceOf(ScopeDeniedError);
+
+    const rows = db.prepare('SELECT * FROM audit_log ORDER BY id').all() as any[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ actor: 'sw-1', action: 'create', outcome: 'denied' });
+
+    // Confirm no Task was actually created for this social worker attempt.
+    const tagged = await fetchTaggedTasksFor('maria-chen');
+    expect(tagged.find((t: any) => t.description?.includes('Should not be created'))).toBeUndefined();
+  });
+});
+
 describe('FhirReadService with a SMART token client', () => {
   it('attaches the SMART access token as a Bearer header on every HAPI call', async () => {
     const db = new Database(':memory:');

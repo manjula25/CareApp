@@ -48,10 +48,10 @@ test('Coordinator runs analysis on Maria Chen and sees the Risk feed stream', as
     await new Promise((resolve) => setTimeout(resolve, 400));
 
     const frames = [
-      ['token', { text: 'Elevated BNP and reduced eGFR ' }],
-      ['token', { text: 'are consistent with a CHF exacerbation risk.' }],
-      ['finding', { text: 'Elevated BNP consistent with CHF exacerbation', fhirResourceId: 'Observation/maria-chen-bnp' }],
-      ['complete', { riskScore: 87, riskLevel: 'high', readmissionProbability: 0.62, findingCount: 1, droppedCount: 1 }],
+      ['token', { agentId: 'risk', text: 'Elevated BNP and reduced eGFR ' }],
+      ['token', { agentId: 'risk', text: 'are consistent with a CHF exacerbation risk.' }],
+      ['finding', { agentId: 'risk', text: 'Elevated BNP consistent with CHF exacerbation', fhirResourceId: 'Observation/maria-chen-bnp' }],
+      ['complete', { agentId: 'risk', riskScore: 87, riskLevel: 'high', readmissionProbability: 0.62, findingCount: 1, droppedCount: 1 }],
     ] as const;
     const body = frames.map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`).join('');
 
@@ -80,4 +80,79 @@ test('Coordinator runs analysis on Maria Chen and sees the Risk feed stream', as
   // stay honest idle placeholders (not wired up until S3).
   await expect(page.getByRole('button', { name: /^run analysis$/i })).toBeVisible();
   await expect(idlePlaceholders).toHaveCount(3);
+});
+
+/**
+ * S3 D2 — four-agent orchestration + Task creation E2E.
+ *
+ * Same substitute-for-a-live-call rationale as the S2 test above (no
+ * `OPENAI_API_KEY` in this environment): intercepts the SSE call and serves
+ * synthetic frames in the real route's `agentId`-tagged format
+ * (`apps/api/src/routes/analysis.ts`), covering all four agents plus a
+ * `task` and `done` event. Proves the frontend's per-agent routing
+ * (`streamAnalysis`'s `onToken(agentId, text)`) and Task-card rendering in a
+ * real headless browser — packaged UI / local-mock strength. Live-model and
+ * live-HAPI-write proof is D3.
+ */
+test('Coordinator runs analysis and sees all four feeds stream plus a created Task', async ({ page }) => {
+  await page.goto('/login');
+  await page.getByLabel('Email').fill('coordinator@caresync.demo');
+  await page.getByLabel('Password').fill('Demo1234!');
+  await page.getByRole('button', { name: /sign in/i }).click();
+  await expect(page).toHaveURL(/\/panel$/);
+
+  await page.goto('/patients/maria-chen');
+  await expect(page.getByText('Maria Chen')).toBeVisible();
+
+  await page.route('**/api/patients/*/analysis', async (route) => {
+    const frames = [
+      ['token', { agentId: 'risk', text: 'Elevated BNP consistent with CHF exacerbation risk.' }],
+      ['token', { agentId: 'careGap', text: 'Cardiology follow-up is overdue.' }],
+      ['token', { agentId: 'sdoh', text: 'Housing instability flagged on AHC-HRSN screening.' }],
+      ['finding', { agentId: 'risk', text: 'Elevated BNP', fhirResourceId: 'Observation/maria-chen-bnp' }],
+      ['complete', { agentId: 'risk', riskScore: 87, riskLevel: 'high', readmissionProbability: 0.62, findingCount: 1, droppedCount: 0 }],
+      ['finding', { agentId: 'careGap', gapType: 'follow-up', description: 'Cardiology follow-up overdue', urgency: 'high', fhirResourceId: 'Condition/maria-chen-chf' }],
+      ['complete', { agentId: 'careGap', findingCount: 1, droppedCount: 0 }],
+      ['finding', { agentId: 'sdoh', domain: 'housing', finding: 'Housing instability', severity: 'high', fhirResourceId: 'Observation/maria-chen-sdoh' }],
+      ['complete', { agentId: 'sdoh', findingCount: 1, droppedCount: 0, referralsNeeded: ['housing navigator'] }],
+      ['token', { agentId: 'actionPlanner', text: 'Synthesizing prioritized tasks.' }],
+      [
+        'task',
+        {
+          agentId: 'actionPlanner',
+          id: 'maria-chen-task-e2e',
+          reference: 'Task/maria-chen-task-e2e',
+          title: 'Schedule cardiology follow-up',
+          description: 'Overdue per Care Gap agent',
+          priority: 'high',
+          assignTo: 'coordinator',
+          dueInDays: 2,
+          fhirResources: ['Condition/maria-chen-chf', 'Observation/maria-chen-bnp'],
+        },
+      ],
+      ['complete', { agentId: 'actionPlanner', findingCount: 1, droppedCount: 0 }],
+      ['done', {}],
+    ] as const;
+    const body = frames.map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`).join('');
+
+    await route.fulfill({ status: 200, contentType: 'text/event-stream', body });
+  });
+
+  await page.getByRole('button', { name: /run analysis/i }).click();
+
+  // All four feeds go live — none stay on the idle placeholder.
+  await expect(page.getByText('Awaiting analysis run…')).toHaveCount(0);
+  await expect(page.getByTestId('risk-summary')).toHaveText(/high risk · score 87/i);
+  await expect(page.getByTestId('care-gap-summary')).toHaveText(/1 findings · 0 dropped/i);
+  await expect(page.getByTestId('sdoh-summary')).toHaveText(/1 findings · 0 dropped/i);
+  await expect(page.getByTestId('action-planner-summary')).toHaveText(/1 findings · 0 dropped/i);
+
+  // The created Task renders as a card with its citation chips.
+  const taskCard = page.getByTestId('created-maria-chen-task-e2e');
+  await expect(taskCard.getByText('Schedule cardiology follow-up')).toBeVisible();
+  await expect(taskCard.getByText('Task/maria-chen-task-e2e')).toBeVisible();
+  await expect(taskCard.getByText('Condition/maria-chen-chf')).toBeVisible();
+  await expect(taskCard.getByText('Observation/maria-chen-bnp')).toBeVisible();
+
+  await expect(page.getByRole('button', { name: /^run analysis$/i })).toBeVisible();
 });

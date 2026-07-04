@@ -54,23 +54,57 @@ export function getPatient(id: string): Promise<PatientDetail> {
   return apiFetch(`/api/patients/${id}`);
 }
 
+export type AgentId = 'risk' | 'careGap' | 'sdoh' | 'actionPlanner';
+
+/**
+ * A `finding` event's payload. Shape varies per agent (risk/careGap/sdoh each
+ * add their own fields), so only `agentId` is required; the rest are optional
+ * so callers can safely read whichever fields their agentId implies while
+ * still typechecking (e.g. `flag.fhirResourceId`, `flag.text`).
+ */
 export interface AnalysisFinding {
-  text: string;
-  fhirResourceId: string;
+  agentId: AgentId;
+  text?: string;
+  fhirResourceId?: string;
+  gapType?: string;
+  description?: string;
+  urgency?: string;
+  domain?: string;
+  finding?: string;
+  severity?: string;
+  [key: string]: unknown;
 }
 
+/** A `complete` event's payload — fires once per agent. */
 export interface AnalysisSummary {
-  riskScore: number;
-  riskLevel: string;
-  readmissionProbability: number;
+  agentId: AgentId;
   findingCount: number;
   droppedCount: number;
+  riskScore?: number;
+  riskLevel?: string;
+  readmissionProbability?: number;
+  referralsNeeded?: string[];
+}
+
+/** A `task` event's payload — one per Task created in HAPI by the action planner. */
+export interface AnalysisTask {
+  agentId: 'actionPlanner';
+  id: string;
+  reference: string;
+  title: string;
+  description: string;
+  priority: string;
+  assignTo?: string;
+  dueInDays?: number;
+  fhirResources: string[];
 }
 
 export interface AnalysisHandlers {
-  onToken?: (text: string) => void;
+  onToken?: (agentId: AgentId, text: string) => void;
   onFinding?: (flag: AnalysisFinding) => void;
   onComplete?: (summary: AnalysisSummary) => void;
+  onTask?: (task: AnalysisTask) => void;
+  onDone?: () => void;
 }
 
 /**
@@ -98,9 +132,11 @@ export async function streamAnalysis(patientId: string, handlers: AnalysisHandle
 
   const dispatch = (event: string, data: string) => {
     const payload = JSON.parse(data);
-    if (event === 'token') handlers.onToken?.(payload.text);
+    if (event === 'token') handlers.onToken?.(payload.agentId, payload.text);
     else if (event === 'finding') handlers.onFinding?.(payload);
     else if (event === 'complete') handlers.onComplete?.(payload);
+    else if (event === 'task') handlers.onTask?.(payload);
+    else if (event === 'done') handlers.onDone?.();
   };
 
   for (;;) {

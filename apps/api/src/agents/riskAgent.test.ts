@@ -62,7 +62,7 @@ describe('runRiskAgent (B1 revised — mocked OpenAI client, no live call)', () 
     validIds: new Set(['Condition/maria-chen-chf', 'Observation/maria-chen-bnp']),
   };
 
-  it('yields token events for streamed text, then a final result event with the parsed RiskOutput', async () => {
+  it('yields token events (self-tagged agentId:risk) for streamed text, then a final result event with the parsed RiskOutput', async () => {
     const output: RiskOutput = {
       riskScore: 87,
       riskLevel: 'critical',
@@ -83,9 +83,9 @@ describe('runRiskAgent (B1 revised — mocked OpenAI client, no live call)', () 
     }
 
     expect(events).toEqual([
-      { type: 'token', text: 'Analyzing recent labs' },
-      { type: 'token', text: ' and active conditions...' },
-      { type: 'result', output },
+      { type: 'token', agentId: 'risk', text: 'Analyzing recent labs' },
+      { type: 'token', agentId: 'risk', text: ' and active conditions...' },
+      { type: 'result', agentId: 'risk', output },
     ]);
   });
 

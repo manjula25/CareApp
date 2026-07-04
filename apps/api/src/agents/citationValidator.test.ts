@@ -1,4 +1,9 @@
-import { validateCitations, redactUnvalidatedCitations, createNarrationBuffer } from './citationValidator';
+import {
+  validateCitations,
+  validateCitationList,
+  redactUnvalidatedCitations,
+  createNarrationBuffer,
+} from './citationValidator';
 
 describe('validateCitations (Seam 2 — GD11 citation enforcement)', () => {
   const validIds = new Set(['Condition/maria-chen-chf', 'Observation/maria-chen-hba1c']);
@@ -35,6 +40,51 @@ describe('validateCitations (Seam 2 — GD11 citation enforcement)', () => {
 
     expect(valid).toEqual([]);
     expect(dropped).toEqual([{ text: 'wrong case', fhirResourceId: 'condition/maria-chen-chf' }]);
+  });
+});
+
+describe('validateCitationList (GD11 — id-list items, all-or-nothing per item)', () => {
+  const validIds = new Set(['Condition/maria-chen-chf', 'Observation/maria-chen-hba1c']);
+
+  // An Action-Planner-shaped item: cites an ARRAY of FHIR ids.
+  interface Task {
+    title: string;
+    fhirResources: string[];
+  }
+  const getIds = (t: Task) => t.fhirResources;
+  const withIds = (t: Task, ids: string[]): Task => ({ ...t, fhirResources: ids });
+
+  it('keeps an item with at least one valid id, narrowing its id list to only the valid ids', () => {
+    const items: Task[] = [
+      { title: 'Schedule cardiology follow-up', fhirResources: ['Condition/maria-chen-chf', 'Observation/does-not-exist'] },
+    ];
+
+    const { valid, dropped } = validateCitationList(items, getIds, withIds, validIds);
+
+    expect(valid).toEqual([{ title: 'Schedule cardiology follow-up', fhirResources: ['Condition/maria-chen-chf'] }]);
+    expect(dropped).toEqual([]);
+  });
+
+  it('drops an item whose cited ids all miss the bundle', () => {
+    const items: Task[] = [
+      { title: 'Bogus task', fhirResources: ['Observation/does-not-exist', 'Condition/also-fake'] },
+    ];
+
+    const { valid, dropped } = validateCitationList(items, getIds, withIds, validIds);
+
+    expect(valid).toEqual([]);
+    expect(dropped).toEqual([{ title: 'Bogus task', fhirResources: ['Observation/does-not-exist', 'Condition/also-fake'] }]);
+  });
+
+  it('trims each id before matching but keeps FHIR ids case-sensitive', () => {
+    const items: Task[] = [
+      { title: 'Mixed', fhirResources: ['  Observation/maria-chen-hba1c  ', 'condition/maria-chen-chf'] },
+    ];
+
+    const { valid, dropped } = validateCitationList(items, getIds, withIds, validIds);
+
+    expect(valid).toEqual([{ title: 'Mixed', fhirResources: ['Observation/maria-chen-hba1c'] }]);
+    expect(dropped).toEqual([]);
   });
 });
 
