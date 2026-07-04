@@ -14,11 +14,11 @@
 - [x] A3. Import Maria Chen bundle + ~5 panel patients via $batch (500-Synthea deferred to S5)
 
 ### Phase B — Backend core (test-first)
-- [ ] B1. SQLite: users + audit_log (no sessions table)
-- [ ] B2. Seed 3 demo accounts (bcrypt)
-- [ ] B3. Auth login + role middleware (Supertest TDD; no /me)
-- [ ] B4. Role→FHIR-scope enforcement in API (SW denied non-SDOH — real denial)
-- [ ] B5. FHIR read service + routes; audit written in the single HAPI wrapper
+- [x] B1. SQLite: users + audit_log (no sessions table)
+- [x] B2. Seed 3 demo accounts (bcrypt)
+- [x] B3. Auth login + role middleware (Supertest TDD; no /me)
+- [x] B4. Role→FHIR-scope enforcement in API (SW denied non-SDOH — real denial)
+- [x] B5. FHIR read service + routes; audit written in the single HAPI wrapper
 - [ ] B6. SMART Backend Services token flow + HAPI interceptor (sequenced last; honest-staging note if it slips)
 
 ### Phase C — Frontend foundation

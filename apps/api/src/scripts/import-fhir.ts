@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { ALL_PATIENTS, COORDINATOR_PANEL_GROUP_ID, SeedPatient } from '../fhir-data/seed-patients';
 
 const FHIR_BASE_URL = process.env.FHIR_BASE_URL ?? 'http://localhost:8080/fhir';
