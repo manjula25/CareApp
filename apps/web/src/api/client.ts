@@ -100,7 +100,7 @@ export interface AnalysisTask {
 }
 
 export interface AnalysisHandlers {
-  onToken?: (text: string) => void;
+  onToken?: (agentId: AgentId, text: string) => void;
   onFinding?: (flag: AnalysisFinding) => void;
   onComplete?: (summary: AnalysisSummary) => void;
   onTask?: (task: AnalysisTask) => void;
@@ -132,7 +132,7 @@ export async function streamAnalysis(patientId: string, handlers: AnalysisHandle
 
   const dispatch = (event: string, data: string) => {
     const payload = JSON.parse(data);
-    if (event === 'token') handlers.onToken?.(payload.text);
+    if (event === 'token') handlers.onToken?.(payload.agentId, payload.text);
     else if (event === 'finding') handlers.onFinding?.(payload);
     else if (event === 'complete') handlers.onComplete?.(payload);
     else if (event === 'task') handlers.onTask?.(payload);

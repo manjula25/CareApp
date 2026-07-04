@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useParams, Link } from 'react-router-dom';
 import {
@@ -209,29 +209,17 @@ export function PatientDetail() {
   const [running, setRunning] = useState(false);
   const [feeds, setFeeds] = useState<Record<AgentId, AgentFeedState>>(() => makeFeeds(false));
   const [createdTasks, setCreatedTasks] = useState<AnalysisTask[]>([]);
-  // Token events carry no `agentId` on the wire (only `finding`/`complete` do) — the
-  // backend narrates one agent at a time, so we track which agent is "live" and
-  // route bare narration text to it, flipping the pointer whenever a tagged event
-  // (finding/complete) names a different agent.
-  const activeAgentRef = useRef<AgentId>('risk');
 
   async function handleRunAnalysis() {
     if (!id || running) return;
     setRunning(true);
     setFeeds(makeFeeds(true));
     setCreatedTasks([]);
-    activeAgentRef.current = 'risk';
     try {
       await streamAnalysis(id, {
-        onToken: (text) => setFeeds((prev) => withText(prev, activeAgentRef.current, text)),
-        onFinding: (flag) => {
-          activeAgentRef.current = flag.agentId;
-          setFeeds((prev) => withFinding(prev, flag));
-        },
-        onComplete: (summary) => {
-          activeAgentRef.current = summary.agentId;
-          setFeeds((prev) => withSummary(prev, summary));
-        },
+        onToken: (agentId, text) => setFeeds((prev) => withText(prev, agentId, text)),
+        onFinding: (flag) => setFeeds((prev) => withFinding(prev, flag)),
+        onComplete: (summary) => setFeeds((prev) => withSummary(prev, summary)),
         onTask: (task) => setCreatedTasks((prev) => [...prev, task]),
       });
     } finally {

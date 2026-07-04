@@ -68,10 +68,10 @@ describe('PatientDetail — Run Analysis + four-feed grid', () => {
     // Other three feeds stay idle the instant a run starts.
     expect(screen.getAllByText('Awaiting analysis run…')).toHaveLength(3);
 
-    act(() => run.handlers().onToken?.('Risk is '));
+    act(() => run.handlers().onToken?.('risk', 'Risk is '));
     expect(screen.getByText('Risk is')).toBeInTheDocument();
 
-    act(() => run.handlers().onToken?.('elevated.'));
+    act(() => run.handlers().onToken?.('risk', 'elevated.'));
     expect(screen.getByText('Risk is elevated.')).toBeInTheDocument();
 
     act(() =>
@@ -116,7 +116,7 @@ describe('PatientDetail — Run Analysis + four-feed grid', () => {
     );
     expect(screen.getByText('Condition/gap-1')).toBeInTheDocument();
 
-    act(() => run.handlers().onToken?.('Colonoscopy overdue by 3 years.'));
+    act(() => run.handlers().onToken?.('careGap', 'Colonoscopy overdue by 3 years.'));
     expect(screen.getByText('Colonoscopy overdue by 3 years.')).toBeInTheDocument();
 
     act(() => {
@@ -151,7 +151,7 @@ describe('PatientDetail — Run Analysis + four-feed grid', () => {
     );
     expect(screen.getByText('Observation/sdoh-1')).toBeInTheDocument();
 
-    act(() => run.handlers().onToken?.('Transportation access barrier noted.'));
+    act(() => run.handlers().onToken?.('sdoh', 'Transportation access barrier noted.'));
     expect(screen.getByText('Transportation access barrier noted.')).toBeInTheDocument();
 
     act(() => {
@@ -179,7 +179,7 @@ describe('PatientDetail — Run Analysis + four-feed grid', () => {
     );
     expect(screen.getByText('Task/planner-1')).toBeInTheDocument();
 
-    act(() => run.handlers().onToken?.('Drafting follow-up tasks.'));
+    act(() => run.handlers().onToken?.('actionPlanner', 'Drafting follow-up tasks.'));
     expect(screen.getByText('Drafting follow-up tasks.')).toBeInTheDocument();
 
     act(() => {
@@ -195,6 +195,64 @@ describe('PatientDetail — Run Analysis + four-feed grid', () => {
     expect(screen.queryByTestId('sdoh-summary')).not.toBeInTheDocument();
     expect(screen.queryByTestId('care-gap-summary')).not.toBeInTheDocument();
     expect(screen.queryByTestId('risk-summary')).not.toBeInTheDocument();
+  });
+
+  it('attributes each agent\'s token to its own feed box even when Risk and Care Gap tokens interleave before either agent has emitted a finding/complete', async () => {
+    renderPatientDetail();
+    await screen.findByText('Maria Chen');
+
+    const run = startRun();
+
+    // Reproduces the real interleaving order from the backend: Risk's first
+    // token, then Care Gap's first token — BEFORE either agent has emitted any
+    // finding/complete event — then Risk finishes, then Care Gap finishes.
+    act(() => run.handlers().onToken?.('risk', 'Risk narration.'));
+    act(() => run.handlers().onToken?.('careGap', 'Care gap narration.'));
+
+    // Risk was already "started" (it's the first agent to run), so its token
+    // renders immediately. Care Gap's box only flips out of idle once its own
+    // finding/complete arrives below — but the text buffered from this early
+    // token must already be attributed to careGap, not risk, so it surfaces
+    // in the Care Gap box (not Risk's) once Care Gap starts rendering.
+    expect(screen.getByText('Risk narration.')).toBeInTheDocument();
+
+    act(() =>
+      run.handlers().onFinding?.({ agentId: 'risk', text: 'HbA1c 8.9%', fhirResourceId: 'Observation/hba1c-1' })
+    );
+    act(() => {
+      run.handlers().onComplete?.({
+        agentId: 'risk',
+        riskScore: 87,
+        riskLevel: 'high',
+        readmissionProbability: 0.42,
+        findingCount: 1,
+        droppedCount: 0,
+      });
+    });
+
+    act(() =>
+      run.handlers().onFinding?.({
+        agentId: 'careGap',
+        gapType: 'screening',
+        description: 'Colonoscopy overdue',
+        urgency: 'high',
+        fhirResourceId: 'Condition/gap-1',
+      })
+    );
+    act(() => {
+      run.handlers().onComplete?.({ agentId: 'careGap', findingCount: 1, droppedCount: 0 });
+      run.resolve();
+    });
+
+    // Care Gap's narration must never have bled into the Risk feed box, and
+    // vice versa — each feed box shows only its own agent's text.
+    const riskBox = (await screen.findByTestId('risk-summary')).closest('div.flex.flex-col')!;
+    const careGapBox = (await screen.findByTestId('care-gap-summary')).closest('div.flex.flex-col')!;
+
+    expect(riskBox.textContent).toContain('Risk narration.');
+    expect(riskBox.textContent).not.toContain('Care gap narration.');
+    expect(careGapBox.textContent).toContain('Care gap narration.');
+    expect(careGapBox.textContent).not.toContain('Risk narration.');
   });
 
   it('renders a newly-created Task with citation chips alongside the initially-loaded task, and bumps the open count', async () => {

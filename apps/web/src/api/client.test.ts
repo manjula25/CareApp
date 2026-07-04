@@ -51,8 +51,8 @@ describe('streamAnalysis', () => {
       })
     );
 
-    expect(onToken).toHaveBeenNthCalledWith(1, 'Risk ');
-    expect(onToken).toHaveBeenNthCalledWith(2, 'is elevated.');
+    expect(onToken).toHaveBeenNthCalledWith(1, 'risk', 'Risk ');
+    expect(onToken).toHaveBeenNthCalledWith(2, 'risk', 'is elevated.');
     expect(onFinding).toHaveBeenCalledWith({
       agentId: 'risk',
       text: 'HbA1c 8.9%',
@@ -108,6 +108,31 @@ describe('streamAnalysis', () => {
       expect.objectContaining({ agentId: 'sdoh', referralsNeeded: ['housing-support'] })
     );
     expect(onComplete).toHaveBeenNthCalledWith(4, expect.objectContaining({ agentId: 'actionPlanner' }));
+  });
+
+  it('attributes interleaved token events to their own agentId, not whichever agent streamed last', async () => {
+    // Risk and Care Gap tokens interleave, as they genuinely do when agents run
+    // concurrently (see apps/api's orchestrator interleaving test). onToken must
+    // carry the agentId from its own frame — never inferred from a prior frame.
+    const frames = [
+      'event: token\ndata: {"agentId":"risk","text":"Risk tok1"}\n\n',
+      'event: token\ndata: {"agentId":"careGap","text":"CareGap tok1"}\n\n',
+      'event: token\ndata: {"agentId":"risk","text":"Risk tok2"}\n\n',
+      'event: token\ndata: {"agentId":"careGap","text":"CareGap tok2"}\n\n',
+    ];
+
+    const body = sseStream(frames);
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(body));
+
+    const onToken = vi.fn();
+
+    await streamAnalysis('maria-1', { onToken });
+
+    expect(onToken).toHaveBeenCalledTimes(4);
+    expect(onToken).toHaveBeenNthCalledWith(1, 'risk', 'Risk tok1');
+    expect(onToken).toHaveBeenNthCalledWith(2, 'careGap', 'CareGap tok1');
+    expect(onToken).toHaveBeenNthCalledWith(3, 'risk', 'Risk tok2');
+    expect(onToken).toHaveBeenNthCalledWith(4, 'careGap', 'CareGap tok2');
   });
 
   it('dispatches a task event to onTask with the full payload', async () => {
