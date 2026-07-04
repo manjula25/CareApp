@@ -3,10 +3,11 @@ export interface AgentFlag {
   fhirResourceId: string;
 }
 
-export interface CitationValidationResult {
-  valid: AgentFlag[];
-  dropped: AgentFlag[];
-}
+// Kept as a named alias for back-compat with existing single-agent-shaped
+// callers/tests; validateCitations itself is now generic (S3 B3) so it also
+// works for CareGapOutput.gaps / SdohOutput.barriers, which share the same
+// single-fhirResourceId shape as AgentFlag, just with different sibling fields.
+export type CitationValidationResult = ListCitationValidationResult<AgentFlag>;
 
 export interface ListCitationValidationResult<T> {
   valid: T[];
@@ -49,16 +50,24 @@ export function validateCitationList<T>(
 }
 
 /**
- * Seam 2 — GD11 citation enforcement for flags that cite a single
+ * Seam 2 — GD11 citation enforcement for items that cite a single
  * `fhirResourceId`. Thin wrapper over {@link validateCitationList}: partitions
- * flags by whether their (trimmed) `fhirResourceId` is present in the bundle,
- * returning kept flags with the trimmed id and dropping the rest unchanged.
+ * items by whether their (trimmed) `fhirResourceId` is present in the bundle,
+ * returning kept items with the trimmed id and dropping the rest unchanged.
+ *
+ * Generic over any `{fhirResourceId}`-shaped item (not just `AgentFlag`) so
+ * the same gate covers RiskOutput.flags, CareGapOutput.gaps, and
+ * SdohOutput.barriers — they all cite a single resource, just with different
+ * sibling fields (S3 B3).
  */
-export function validateCitations(flags: AgentFlag[], validIds: Set<string>): CitationValidationResult {
+export function validateCitations<T extends { fhirResourceId: string }>(
+  items: T[],
+  validIds: Set<string>
+): ListCitationValidationResult<T> {
   return validateCitationList(
-    flags,
-    (flag) => [flag.fhirResourceId],
-    (flag, [trimmedId]) => ({ ...flag, fhirResourceId: trimmedId }),
+    items,
+    (item) => [item.fhirResourceId],
+    (item, [trimmedId]) => ({ ...item, fhirResourceId: trimmedId }),
     validIds
   );
 }
