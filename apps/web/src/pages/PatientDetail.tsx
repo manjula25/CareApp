@@ -296,7 +296,7 @@ export function PatientDetail() {
           </div>
           {displayTasks.length === 0 && <p className="text-body text-text-muted">No open tasks.</p>}
           {displayTasks.map((task) => (
-            <div key={task.key} className="bg-surface-raised border border-border rounded-card p-2.5 mb-2">
+            <div key={task.key} data-testid={task.key} className="bg-surface-raised border border-border rounded-card p-2.5 mb-2">
               <div className="flex items-center justify-between mb-1.5">
                 <span
                   className={`text-[9px] font-bold tracking-wide rounded-pill border px-2 py-0.5 ${task.priorityClassName}`}

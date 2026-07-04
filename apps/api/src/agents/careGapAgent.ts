@@ -70,7 +70,7 @@ function buildPrompt(bundle: PatientBundle): string {
   return [
     'You are a care-gap agent identifying overdue or missing preventive and chronic-care items. Narrate your reasoning briefly in plain text, then report your findings by calling the report_care_gaps tool exactly once.',
     '',
-    'You are the Care Gap agent on a care-coordination platform. Focus on CarePlan, Condition, Encounter, and Observation resources to find preventive screenings and chronic-care monitoring that are overdue or missing.',
+    'You are the Care Gap agent on a care-coordination platform. Focus on Condition, Encounter, and Observation resources to find preventive screenings and chronic-care monitoring that are overdue or missing.',
     "Below is the patient's complete retrieved FHIR record (one resource per line, as `ResourceType/id: <resource JSON>`).",
     '',
     resourceLines,

@@ -76,12 +76,12 @@ function buildPrompt(bundle: PatientBundle): string {
   return [
     'You are the SDOH (social determinants of health) agent on a care-coordination platform. Narrate your reasoning briefly in plain text, then report your findings by calling the report_sdoh tool exactly once.',
     '',
-    'Focus on the AHC-HRSN QuestionnaireResponse (the Accountable Health Communities Health-Related Social Needs screening) to identify social barriers to health, alongside patient demographics (Patient) and relevant Observations.',
+    'Focus on the AHC-HRSN screening (the Accountable Health Communities Health-Related Social Needs screening, seeded as an Observation) to identify social barriers to health, alongside patient demographics (Patient) and relevant Observations.',
     "Below is the patient's complete retrieved FHIR record (one resource per line, as `ResourceType/id: <resource JSON>`).",
     '',
     resourceLines,
     '',
-    'Every barrier you report MUST cite the exact `ResourceType/id` of a resource listed above via `fhirResourceId`. Barriers drawn from the AHC-HRSN screening must cite that QuestionnaireResponse id.',
+    'Every barrier you report MUST cite the exact `ResourceType/id` of a resource listed above via `fhirResourceId`. Barriers drawn from the AHC-HRSN screening must cite that Observation id.',
     'Never cite a resource id that is not listed above — fabricated citations are dropped and undermine clinical trust.',
     'Briefly narrate your reasoning, then call the `report_sdoh` tool exactly once with the structured result.',
   ].join('\n');

@@ -78,12 +78,12 @@ Task cards render in the queue with their citations. Citation enforcement applie
 all four agents.
 
 ### Acceptance criteria
-- [ ] All four agents run in parallel from the Orchestrator; each streams to its own feed.
-- [ ] Action Planner output becomes FHIR Task resources persisted in HAPI.
-- [ ] Each Task card cites the FHIR resource(s) behind it; citations are validated (none fabricated).
-- [ ] SDOH agent reads the AHC-HRSN screening (seeded as an `Observation`, per S1's data model — not a `QuestionnaireResponse`); Care Gap reads Condition/Encounter/Observation (no `CarePlan` resource is seeded).
-- [ ] Re-running an analysis replaces prior findings and Tasks cleanly.
-- [ ] API-boundary tests: analysis run yields findings from all four agents and creates the expected Tasks with resolvable citations.
+- [x] All four agents run in parallel from the Orchestrator; each streams to its own feed.
+- [x] Action Planner output becomes FHIR Task resources persisted in HAPI.
+- [x] Each Task card cites the FHIR resource(s) behind it; citations are validated (none fabricated).
+- [x] SDOH agent reads the AHC-HRSN screening (seeded as an `Observation`, per S1's data model — not a `QuestionnaireResponse`); Care Gap reads Condition/Encounter/Observation (no `CarePlan` resource is seeded).
+- [x] Re-running an analysis replaces prior findings and Tasks cleanly.
+- [x] API-boundary tests: analysis run yields findings from all four agents and creates the expected Tasks with resolvable citations.
 
 ### Blocked by
 - S2
