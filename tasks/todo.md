@@ -35,5 +35,20 @@
 - [x] `npm run test:api` green (31/31); `npm run build && npm run lint` clean for both apps
 - [x] All S1 acceptance criteria in `issues.md` checked (see verification note on the 500-Synthea/browser-UI exceptions, both pre-approved deviations)
 
+## Reference-fidelity fixup (2026-07-04)
+C1-C4 originally used only the HANDOFF.md §4 token summary, not the actual
+`reference-materials/caresync-ai.html` markup/CSS — a real gap against the
+new `CLAUDE.md` "UI implementation" rule (≥80% fidelity to the matching
+reference). Rebuilt against it: header (compliance pills for what's actually
+built — FHIR R4, SMART on FHIR; CDS Hooks omitted, it's S10), My Patients
+list (severity dot, age/sex, condition tag chips, search, count — backed by
+real Condition/RiskAssessment/Task data, not mock), and the patient detail
+top bar (name/age-sex/mono resource id). The mockup's "Run Analysis" button
+and the center/right agent-feed and task panels are S2/S3 functionality and
+were intentionally left out rather than shown as inert chrome. Backend
+`getAssignedPanel` now also returns `gender`, `birthDate`, and
+`conditionTags` (short ICD-10→tag lookup) to support this — TDD throughout,
+`npm run test:api` still green (33/33).
+
 ## Rollback
 - `docker compose down -v` + delete SQLite → full reset. No external systems, no real PHI.

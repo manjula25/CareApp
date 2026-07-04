@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth, roleHome } from '../auth/useAuth';
-import { PulseIcon } from '../icons';
+import { LogoIcon } from '../icons';
 
 export function Login() {
   const { login } = useAuth();
@@ -29,7 +29,7 @@ export function Login() {
     <div className="min-h-screen bg-bg flex items-center justify-center">
       <form onSubmit={handleSubmit} className="w-full max-w-sm bg-surface border border-border rounded-card p-6">
         <div className="flex items-center gap-2 text-cyan mb-6">
-          <PulseIcon className="w-6 h-6" />
+          <LogoIcon />
           <span className="text-section font-semibold">CareSync AI</span>
         </div>
 

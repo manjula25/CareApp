@@ -36,7 +36,11 @@ describe('patients routes', () => {
     const token = await loginAs(app, 'coordinator@caresync.demo');
     const res = await request(app).get('/api/patients/assigned').set('Authorization', `Bearer ${token}`);
     expect(res.status).toBe(200);
-    expect(res.body.find((p: any) => p.id === 'maria-chen')).toMatchObject({ riskScore: 87 });
+    expect(res.body.find((p: any) => p.id === 'maria-chen')).toMatchObject({
+      riskScore: 87,
+      gender: 'female',
+      conditionTags: expect.arrayContaining(['CHF', 'Diabetes']),
+    });
   });
 
   it('GET /api/patients/:id returns name and conditions for a Coordinator', async () => {

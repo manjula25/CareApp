@@ -76,6 +76,12 @@ Rules:
 <!-- FILL IN: line length, naming conventions, framework/version choices,
      import rules, async vs sync. Point at the config file that enforces it. -->
 
+## UI implementation
+
+- `reference-materials/*.html` are the visual source of truth (HANDOFF.md §4/§5) — colors, layout, component structure, and spacing, not just the token summary in HANDOFF.md §4. Before building or restyling any screen, open the matching reference HTML file (match by its `<title>` or the screen name in HANDOFF.md §5) and implement against its actual markup/CSS.
+- Target **at least 80% visual/structural fidelity** to the matching reference for any screen that has one — layout regions, component patterns (e.g. list-row structure, badges/pills, status colors), color/type tokens, and spacing scale should all match, not just the color palette. Record any intentional deviation and why (e.g. content that depends on a not-yet-built agent/slice) in the slice's verification notes.
+- If no reference screen exists yet for a given view, build to the design tokens in HANDOFF.md §4 and flag it as a placeholder pending a mockup — don't invent a new visual language.
+
 ## Verification rules
 
 - Run a focused test for the touched module first, then the full suite when feasible.

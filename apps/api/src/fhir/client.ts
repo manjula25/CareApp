@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import { AuthTokenPayload } from '../auth/jwt';
 import { hasScope, ResourceDomain } from '../auth/scopes';
 import { writeAudit } from '../db/audit';
+import { shortConditionTag } from './conditionTags';
 
 export class ScopeDeniedError extends Error {
   constructor(role: string, domain: ResourceDomain) {
@@ -26,8 +27,11 @@ export interface ConditionSummary {
 export interface PanelEntry {
   id: string;
   name: string;
+  gender: string;
+  birthDate: string;
   riskScore: number;
   taskCount: number;
+  conditionTags: string[];
 }
 
 interface FhirBundleEntry<T> {
@@ -105,18 +109,25 @@ export class FhirReadService {
 
     return Promise.all(
       patientIds.map(async (id) => {
-        const [patient, risk, tasks] = await Promise.all([
+        const [patient, risk, tasks, conditions] = await Promise.all([
           this.fhirFetch<any>(`/Patient/${id}`),
           this.fhirFetch<FhirBundle<any>>(`/RiskAssessment?subject=Patient/${id}`),
           this.fhirFetch<FhirBundle<any>>(`/Task?subject=Patient/${id}`),
+          this.fhirFetch<FhirBundle<any>>(`/Condition?subject=Patient/${id}`),
         ]);
         const name = patient.name?.[0];
         const riskScore = Math.round((risk.entry?.[0]?.resource.prediction?.[0]?.probabilityDecimal ?? 0) * 100);
+        const conditionTags = (conditions.entry ?? [])
+          .slice(0, 2)
+          .map((e) => shortConditionTag(e.resource.code?.coding?.[0]?.code, e.resource.code?.text ?? ''));
         return {
           id,
           name: [name?.given?.join(' '), name?.family].filter(Boolean).join(' '),
+          gender: patient.gender,
+          birthDate: patient.birthDate,
           riskScore,
           taskCount: tasks.entry?.length ?? 0,
+          conditionTags,
         };
       })
     );

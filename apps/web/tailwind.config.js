@@ -38,6 +38,7 @@ export default {
         xs: '11px',
         label: '12px',
         body: '13px',
+        nav: '15px',
         section: '17px',
         title: '20px',
         stat: '28px',

@@ -44,10 +44,18 @@ describe('FhirReadService', () => {
     expect(patient.name).toBe('Maria Chen');
   });
 
-  it('returns the assigned panel with risk score and task count', async () => {
+  it('returns the assigned panel with risk score, task count, and list-row display fields', async () => {
     const panel = await service.getAssignedPanel(coordinator);
     const maria = panel.find((p) => p.id === 'maria-chen');
-    expect(maria).toMatchObject({ name: 'Maria Chen', riskScore: 87, taskCount: 2 });
+    expect(maria).toMatchObject({
+      name: 'Maria Chen',
+      riskScore: 87,
+      taskCount: 2,
+      gender: 'female',
+      birthDate: '1958-04-12',
+    });
+    expect(maria!.conditionTags).toEqual(expect.arrayContaining(['CHF', 'Diabetes']));
+    expect(maria!.conditionTags.length).toBeLessThanOrEqual(2);
     expect(panel.length).toBeGreaterThanOrEqual(6);
   });
 });

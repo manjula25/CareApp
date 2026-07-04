@@ -25,8 +25,11 @@ export function login(email: string, password: string): Promise<{ token: string 
 export interface PanelPatient {
   id: string;
   name: string;
+  gender: string;
+  birthDate: string;
   riskScore: number;
   taskCount: number;
+  conditionTags: string[];
 }
 
 export function getAssignedPanel(): Promise<PanelPatient[]> {
