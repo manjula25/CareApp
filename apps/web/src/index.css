@@ -13,6 +13,16 @@
   }
 }
 
+/* Blinking streaming cursor for .feed-text.streaming (reference-materials/caresync-ai.html). */
+@keyframes feed-blink {
+  50% {
+    opacity: 0;
+  }
+}
+.feed-cursor {
+  animation: feed-blink 0.9s steps(1) infinite;
+}
+
 /* Scanline overlay — subtle CRT/medical-display texture (HANDOFF §4). */
 .scanline-overlay {
   position: fixed;

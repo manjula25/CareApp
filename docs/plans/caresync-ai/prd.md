@@ -127,8 +127,9 @@ EHR/standalone launch is envisioned, not built.
 
 **Agent orchestration (GD2/GD11/GD13).** An Orchestrator dispatches four specialist
 agents in parallel over the patient's FHIR bundle, streaming findings to the client
-over SSE. Agents run on **Claude Sonnet 5 (`claude-sonnet-5`)** with structured
-output. The agent I/O contracts:
+over SSE. Agents run on **OpenAI `gpt-5.5`** (via the `openai` SDK Responses API)
+with structured output — provider **revised 2026-07-04** (see `plan.md` GD13;
+originally Claude Sonnet 5). The agent I/O contracts:
 
 - Risk: bundle (Condition, Observation, MedicationRequest, Encounter) →
   `{ riskScore, riskLevel, flags: [{type, finding, fhirResourceId, severity}], readmissionProbability }`
@@ -146,7 +147,7 @@ finding reaches the UI or becomes a Task. This is the core safety guarantee.
 
 **Analysis caching (GD2).** The last successful analysis per patient is persisted.
 Demo mode replays it deterministically; an explicit "live" trigger forces a fresh
-Claude run and re-caches. A pre-recorded video is the out-of-band fallback.
+model run and re-caches. A pre-recorded video is the out-of-band fallback.
 
 **FHIR data (GD3).** Maria Chen plus 1–2 backup hero patients are hand-authored as
 controlled FHIR R4 bundles (exact labs/conditions/SDOH); ~500 Synthea patients

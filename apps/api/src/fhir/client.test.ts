@@ -71,6 +71,51 @@ describe('FhirReadService', () => {
     expect(maria!.conditionTags.length).toBeLessThanOrEqual(2);
     expect(panel.length).toBeGreaterThanOrEqual(6);
   });
+
+  describe('getPatientBundle ($everything — GD11 citation source)', () => {
+    it("returns Maria's full record including her Conditions and Observations", async () => {
+      const { resources } = await service.getPatientBundle(coordinator, 'maria-chen');
+
+      const types = resources.map((r) => r.resourceType);
+      expect(types).toEqual(expect.arrayContaining(['Patient', 'Condition', 'Observation']));
+      expect(types.filter((t) => t === 'Condition').length).toBeGreaterThanOrEqual(1);
+      expect(types.filter((t) => t === 'Observation').length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('derives validIds as one ResourceType/id per returned resource, including Patient/maria-chen', async () => {
+      const { resources, validIds } = await service.getPatientBundle(coordinator, 'maria-chen');
+
+      expect(validIds.size).toBe(resources.length);
+      expect(validIds.has('Patient/maria-chen')).toBe(true);
+      for (const r of resources) {
+        expect(validIds.has(`${r.resourceType}/${r.id}`)).toBe(true);
+      }
+    });
+
+    it('writes one success audit row for the bundle read', async () => {
+      await service.getPatientBundle(coordinator, 'maria-chen');
+
+      const rows = db.prepare('SELECT * FROM audit_log ORDER BY id').all() as any[];
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        actor: 'coord-1',
+        outcome: 'success',
+        fhir_resource: 'Patient/maria-chen/$everything',
+      });
+    });
+
+    it('denies a Social Worker (no clinical scope) and writes a denied audit row', async () => {
+      await expect(service.getPatientBundle(socialWorker, 'maria-chen')).rejects.toBeInstanceOf(ScopeDeniedError);
+
+      const rows = db.prepare('SELECT * FROM audit_log ORDER BY id').all() as any[];
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        actor: 'sw-1',
+        outcome: 'denied',
+        fhir_resource: 'Patient/maria-chen/$everything',
+      });
+    });
+  });
 });
 
 describe('FhirReadService with a SMART token client', () => {

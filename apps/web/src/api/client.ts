@@ -53,3 +53,73 @@ export interface PatientDetail {
 export function getPatient(id: string): Promise<PatientDetail> {
   return apiFetch(`/api/patients/${id}`);
 }
+
+export interface AnalysisFinding {
+  text: string;
+  fhirResourceId: string;
+}
+
+export interface AnalysisSummary {
+  riskScore: number;
+  riskLevel: string;
+  readmissionProbability: number;
+  findingCount: number;
+  droppedCount: number;
+}
+
+export interface AnalysisHandlers {
+  onToken?: (text: string) => void;
+  onFinding?: (flag: AnalysisFinding) => void;
+  onComplete?: (summary: AnalysisSummary) => void;
+}
+
+/**
+ * Streams `POST /api/patients/:id/analysis`'s `text/event-stream` response,
+ * dispatching each SSE frame (`event: <type>\ndata: <json>\n\n`) to the
+ * matching handler as it arrives. Buffers across `read()` calls so a frame
+ * split across chunk boundaries is still parsed correctly.
+ */
+export async function streamAnalysis(patientId: string, handlers: AnalysisHandlers): Promise<void> {
+  const token = localStorage.getItem(TOKEN_KEY);
+  const res = await fetch(`${API_BASE_URL}/api/patients/${patientId}/analysis`, {
+    method: 'POST',
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok || !res.body) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(body.error ?? `Request failed: ${res.status}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  const dispatch = (event: string, data: string) => {
+    const payload = JSON.parse(data);
+    if (event === 'token') handlers.onToken?.(payload.text);
+    else if (event === 'finding') handlers.onFinding?.(payload);
+    else if (event === 'complete') handlers.onComplete?.(payload);
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let frameEnd: number;
+    while ((frameEnd = buffer.indexOf('\n\n')) !== -1) {
+      const frame = buffer.slice(0, frameEnd);
+      buffer = buffer.slice(frameEnd + 2);
+
+      let event = '';
+      let data = '';
+      for (const line of frame.split('\n')) {
+        if (line.startsWith('event: ')) event = line.slice('event: '.length);
+        else if (line.startsWith('data: ')) data = line.slice('data: '.length);
+      }
+      if (event && data) dispatch(event, data);
+    }
+  }
+}

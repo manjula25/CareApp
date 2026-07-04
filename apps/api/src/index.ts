@@ -1,8 +1,10 @@
+import './env'; // load .env before riskAgent.ts constructs `new OpenAI()`
 import express from 'express';
 import cors from 'cors';
 import { getDb } from './db';
 import { createAuthRouter } from './routes/auth';
 import { createPatientsRouter } from './routes/patients';
+import { createAnalysisRouter } from './routes/analysis';
 import { FhirReadService } from './fhir/client';
 import { generateKeyPair } from './smart/keys';
 import { createTokenServer } from './smart/tokenServer';
@@ -39,6 +41,9 @@ if (require.main === module) {
   const fhirService = new FhirReadService(db, FHIR_BASE_URL, tokenClient);
   app.use('/api/auth', createAuthRouter(db));
   app.use('/api/patients', createPatientsRouter(fhirService));
+  // S2 — a second router on the same base path; the real runRiskAgent is the
+  // default so no extra wiring is needed beyond mounting this route.
+  app.use('/api/patients', createAnalysisRouter(fhirService));
 
   app.listen(PORT, () => {
     console.log(`API listening on :${PORT}`);

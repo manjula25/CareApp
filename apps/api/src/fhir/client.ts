@@ -59,6 +59,11 @@ export interface PanelEntry {
   conditionTags: string[];
 }
 
+export interface PatientBundle {
+  resources: any[];
+  validIds: Set<string>;
+}
+
 interface FhirBundleEntry<T> {
   resource: T;
 }
@@ -136,6 +141,19 @@ export class FhirReadService {
       due: e.resource.restriction?.period?.end,
       status: FHIR_STATUS_TO_DISPLAY[e.resource.status] ?? 'Open',
     }));
+  }
+
+  async getPatientBundle(actor: AuthTokenPayload, patientId: string): Promise<PatientBundle> {
+    const resource = `Patient/${patientId}/$everything`;
+    this.guard(actor, 'clinical', resource);
+    const bundle = await this.fhirFetch<FhirBundle<any>>(`/${resource}`);
+    writeAudit(this.db, { actor: actor.id, action: 'read', fhirResource: resource, outcome: 'success' });
+
+    const resources = (bundle.entry ?? []).map((e) => e.resource);
+    // validIds is derived from resources — never assembled separately — so the
+    // agent's input and the citation-check set cannot drift (GD11).
+    const validIds = new Set(resources.map((r) => `${r.resourceType}/${r.id}`));
+    return { resources, validIds };
   }
 
   async getAssignedPanel(actor: AuthTokenPayload): Promise<PanelEntry[]> {

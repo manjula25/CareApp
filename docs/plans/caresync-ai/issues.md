@@ -45,16 +45,17 @@ determines both the landing screen and which FHIR scopes the API issues.
 
 ### What to build
 The core innovation, kept thin to one agent. On Maria's detail view, "Run Analysis"
-starts an analysis that dispatches the **Risk agent** (live Claude Sonnet 5,
-structured output) over her FHIR bundle. Its findings stream to a single feed box
-over SSE, word-by-word. Every `fhirResourceId` the agent emits is validated against
-the resource IDs actually present in the retrieved bundle; any citation not in the
-bundle is dropped/flagged before it reaches the UI. This establishes the SSE stream,
-the citation validator as an isolated pure module, and the reusable agent-service
-pattern.
+starts an analysis that dispatches the **Risk agent** (live model call,
+structured output — **OpenAI `gpt-5.5`**, revised 2026-07-04 from the original
+Claude Sonnet 5 plan; see `plan.md` GD13) over her FHIR bundle. Its findings stream
+to a single feed box over SSE, word-by-word. Every `fhirResourceId` the agent emits
+is validated against the resource IDs actually present in the retrieved bundle; any
+citation not in the bundle is dropped/flagged before it reaches the UI. This
+establishes the SSE stream, the citation validator as an isolated pure module, and
+the reusable agent-service pattern.
 
 ### Acceptance criteria
-- [ ] "Run Analysis" triggers a live Claude call producing structured Risk output (riskScore, riskLevel, flags with fhirResourceId, readmissionProbability).
+- [ ] "Run Analysis" triggers a live model call producing structured Risk output (riskScore, riskLevel, flags with fhirResourceId, readmissionProbability).
 - [ ] Findings stream to the client over SSE and render incrementally in one feed box.
 - [ ] The citation validator, given an agent output with one in-bundle citation and one fabricated ID, passes the valid one and drops/flags the fabricated one.
 - [ ] No finding reaches the UI citing a resource ID absent from the retrieved bundle.
