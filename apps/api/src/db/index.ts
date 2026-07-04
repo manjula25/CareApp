@@ -20,6 +20,13 @@ export function migrate(db: Database.Database): void {
       fhir_resource TEXT NOT NULL,
       outcome TEXT NOT NULL CHECK (outcome IN ('success', 'denied', 'error'))
     );
+
+    CREATE TABLE IF NOT EXISTS analysis_cache (
+      patient_id TEXT PRIMARY KEY,
+      result_json TEXT NOT NULL,
+      model_version TEXT NOT NULL,
+      created_ts TEXT NOT NULL
+    );
   `);
 }
 
