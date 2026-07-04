@@ -99,6 +99,22 @@ describe('PatientDetail — Run Analysis + four-feed grid', () => {
     expect(screen.getAllByText('Awaiting analysis run…')).toHaveLength(3);
   });
 
+  it('flips the Care Gap feed live on its first token alone — matching the real backend, which narrates via tokens throughout and only emits finding/complete at the very end of its own stream', async () => {
+    renderPatientDetail();
+    await screen.findByText('Maria Chen');
+
+    const run = startRun();
+    expect(screen.getAllByText('Awaiting analysis run…')).toHaveLength(3);
+
+    // Only a token arrives — no finding/complete yet, reproducing the real
+    // narrate-then-result ordering instead of the test-only finding-first shortcut.
+    act(() => run.handlers().onToken?.('careGap', 'Checking care plan...'));
+
+    expect(screen.getByText('Checking care plan...')).toBeInTheDocument();
+    // Care Gap's box must already be live; SDOH and Action Planner remain idle.
+    expect(screen.getAllByText('Awaiting analysis run…')).toHaveLength(2);
+  });
+
   it('streams the Care Gap feed in isolation without affecting SDOH/Action Planner/Risk', async () => {
     renderPatientDetail();
     await screen.findByText('Maria Chen');

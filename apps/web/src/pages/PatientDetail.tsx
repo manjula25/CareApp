@@ -117,7 +117,7 @@ function agentFeedState(feed: AgentFeedState, running: boolean): FeedState {
 }
 
 function withText(feeds: Record<AgentId, AgentFeedState>, agentId: AgentId, text: string) {
-  return { ...feeds, [agentId]: { ...feeds[agentId], text: feeds[agentId].text + text } };
+  return { ...feeds, [agentId]: { ...feeds[agentId], started: true, text: feeds[agentId].text + text } };
 }
 
 function withFinding(feeds: Record<AgentId, AgentFeedState>, finding: AnalysisFinding) {
