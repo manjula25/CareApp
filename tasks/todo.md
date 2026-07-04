@@ -22,10 +22,10 @@
 - [x] B6. SMART Backend Services token flow + HAPI interceptor (sequenced last) — token mint/exchange/cache/attach is real and tested; HAPI-side enforcement not possible on the stock image (no shell to configure an interceptor) — honest-staging note recorded in plan.md §3
 
 ### Phase C — Frontend foundation
-- [ ] C1. Design tokens (HANDOFF §4) + app shell
-- [ ] C2. Router role guards + TanStack Query client + login (W01); token in localStorage + useAuth (no Zustand yet)
-- [ ] C3. W12 My Patient Panel (Coordinator landing)
-- [ ] C4. Patient detail minimal (name + conditions from HAPI)
+- [x] C1. Design tokens (HANDOFF §4) + app shell
+- [x] C2. Router role guards + TanStack Query client + login (W01); token in localStorage + useAuth (no Zustand yet)
+- [x] C3. W12 My Patient Panel (Coordinator landing)
+- [x] C4. Patient detail minimal (name + conditions from HAPI)
 
 ### Phase D — Seam verification
 - [ ] D1. API-boundary Supertest suite green (Seam 1 reference)
