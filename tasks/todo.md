@@ -28,12 +28,12 @@
 - [x] C4. Patient detail minimal (name + conditions from HAPI)
 
 ### Phase D — Seam verification
-- [ ] D1. API-boundary Supertest suite green (Seam 1 reference)
-- [ ] D2. End-to-end smoke (docker up → login → panel → Maria → conditions live)
+- [x] D1. API-boundary Supertest suite green (Seam 1 reference) — 31 tests, `npm run test:api` green
+- [x] D2. End-to-end smoke (docker up → login → panel → Maria → conditions live) — full clean reset (`docker compose down -v` + delete SQLite) then re-run verified: Coordinator login → panel (6 patients, risk+tasks) → Maria's name+conditions from a live HAPI read → Social Worker denied (403) → every read/denial audited. No browser was available in this environment to visually verify the rendered UI — see final report.
 
 ## Verification
-- `npm run test:api` green; `npm run build && npm run lint` clean
-- All S1 acceptance criteria in `issues.md` checked
+- [x] `npm run test:api` green (31/31); `npm run build && npm run lint` clean for both apps
+- [x] All S1 acceptance criteria in `issues.md` checked (see verification note on the 500-Synthea/browser-UI exceptions, both pre-approved deviations)
 
 ## Rollback
 - `docker compose down -v` + delete SQLite → full reset. No external systems, no real PHI.
