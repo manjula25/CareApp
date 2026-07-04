@@ -1,0 +1,18 @@
+services:
+  hapi-fhir:
+    image: hapiproject/hapi:v7.2.0
+    ports:
+      - "8080:8080"
+    environment:
+      hapi.fhir.default_encoding: json
+      hapi.fhir.fhir_version: R4
+      hapi.fhir.allow_external_references: "true"
+      hapi.fhir.narrative_enabled: "false"
+    volumes:
+      - hapi-data:/data/hapi
+    # No container healthcheck: this image ships no shell/wget/curl to run one.
+    # Readiness is verified host-side by the import script's retry loop against
+    # GET /fhir/metadata (see apps/api/src/scripts/import-fhir.ts).
+
+volumes:
+  hapi-data:

@@ -194,7 +194,7 @@ demo mode replays it; `?live=1` forces a fresh Claude run.
 | Standard | Status | Evidence in build |
 |---|---|---|
 | FHIR R4 | **Built** | HAPI reads/writes; every recommendation cites a resource ID |
-| SMART on FHIR | **Built** | Backend Services client-credentials to HAPI; role→scopes |
+| SMART on FHIR | **Partial (S1 honest-staging note, 2026-07-04)** | Client assertion (RS256, RFC 7523) minted, exchanged with a self-hosted token endpoint, cached to expiry, and attached as `Authorization: Bearer` on every HAPI call — all real, tested code (`apps/api/src/smart/`). Role→scope denial is real and enforced API-side (B4/B5). What is **not** yet true: HAPI itself does not require or validate that token — the stock `hapiproject/hapi` Docker image ships no shell/wget/curl, so no bearer-token authorization interceptor could be configured into it without a custom Java build, which is out of scope for S1. Verified empirically: `curl http://localhost:8080/fhir/Patient/maria-chen` with no Authorization header still returns 200. Per the S1 ponytail contingency: treat SMART as API-side token issuance only until a custom HAPI interceptor lands (G1) — do not claim SMART is enforced by HAPI. |
 | CDS Hooks | **Built (minimal)** | patient-view service, public sandbox demo (GD6) |
 | FHIR Task | **Built** | Action Planner creates Tasks; role-filtered queues |
 | FHIR Subscription | **Built** | HAPI rest-hook → relay → client (GD7) |

@@ -8,3 +8,7 @@ build/
 .DS_Store
 coverage/
 .claude/settings.local.json
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
