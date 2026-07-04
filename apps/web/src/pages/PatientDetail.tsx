@@ -1,12 +1,14 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useParams, Link } from 'react-router-dom';
 import {
   getPatient,
   streamAnalysis,
+  type AgentId,
   type TaskSummary,
   type AnalysisFinding,
   type AnalysisSummary,
+  type AnalysisTask,
 } from '../api/client';
 import { ageSexLabel } from '../lib/patient';
 import { PRIORITY_LABEL, dueLabel } from '../lib/task';
@@ -16,6 +18,21 @@ const PRIORITY_CLASS: Record<TaskSummary['priority'], string> = {
   high: 'text-amber bg-amber-dim border-amber',
   medium: 'text-violet bg-violet-dim border-violet',
 };
+
+const FALLBACK_PRIORITY_CLASS = 'text-text-muted bg-surface-raised border-border-light';
+
+/**
+ * `AnalysisTask.priority` is a bare `string` on the wire (it comes back from a
+ * JSON payload, not a typechecked union), so a value outside `TaskPriority`
+ * shouldn't crash the render — fall back to a neutral pill instead.
+ */
+function priorityClassName(priority: string): string {
+  return PRIORITY_CLASS[priority as TaskSummary['priority']] ?? FALLBACK_PRIORITY_CLASS;
+}
+
+function priorityLabelText(priority: string): string {
+  return PRIORITY_LABEL[priority as TaskSummary['priority']] ?? priority.toUpperCase();
+}
 
 type FeedAccent = 'red' | 'violet' | 'emerald' | 'amber';
 type FeedState = 'idle' | 'streaming' | 'done';
@@ -29,6 +46,20 @@ const FEED_ACCENT: Record<FeedAccent, { border: string; label: string; cursor: s
   emerald: { border: 'border-l-emerald', label: 'text-emerald', cursor: 'text-emerald' },
   amber: { border: 'border-l-amber', label: 'text-amber', cursor: 'text-amber' },
 };
+
+const SUMMARY_TESTID: Record<AgentId, string> = {
+  risk: 'risk-summary',
+  careGap: 'care-gap-summary',
+  sdoh: 'sdoh-summary',
+  actionPlanner: 'action-planner-summary',
+};
+
+const FEED_DEFS: Array<{ id: AgentId; label: string; accent: FeedAccent }> = [
+  { id: 'risk', label: 'Risk Agent', accent: 'red' },
+  { id: 'careGap', label: 'Care Gap', accent: 'violet' },
+  { id: 'sdoh', label: 'SDOH', accent: 'emerald' },
+  { id: 'actionPlanner', label: 'Action Planner', accent: 'amber' },
+];
 
 function FeedBox({
   label,
@@ -67,6 +98,106 @@ function IdlePlaceholder() {
   return <span className="italic text-text-dim">Awaiting analysis run…</span>;
 }
 
+/** Per-agent slice of the feeds grid's state. `started` gates idle vs. live rendering. */
+interface AgentFeedState {
+  started: boolean;
+  text: string;
+  findings: AnalysisFinding[];
+  summary: AnalysisSummary | null;
+}
+
+function makeFeeds(riskStarted: boolean): Record<AgentId, AgentFeedState> {
+  const blank = (started: boolean): AgentFeedState => ({ started, text: '', findings: [], summary: null });
+  return { risk: blank(riskStarted), careGap: blank(false), sdoh: blank(false), actionPlanner: blank(false) };
+}
+
+function agentFeedState(feed: AgentFeedState, running: boolean): FeedState {
+  if (!feed.started) return 'idle';
+  return running ? 'streaming' : 'done';
+}
+
+function withText(feeds: Record<AgentId, AgentFeedState>, agentId: AgentId, text: string) {
+  return { ...feeds, [agentId]: { ...feeds[agentId], text: feeds[agentId].text + text } };
+}
+
+function withFinding(feeds: Record<AgentId, AgentFeedState>, finding: AnalysisFinding) {
+  const prev = feeds[finding.agentId];
+  return { ...feeds, [finding.agentId]: { ...prev, started: true, findings: [...prev.findings, finding] } };
+}
+
+function withSummary(feeds: Record<AgentId, AgentFeedState>, summary: AnalysisSummary) {
+  return { ...feeds, [summary.agentId]: { ...feeds[summary.agentId], started: true, summary } };
+}
+
+function AgentFeedContent({ agentId, feed }: { agentId: AgentId; feed: AgentFeedState }) {
+  if (!feed.started) return <IdlePlaceholder />;
+  return (
+    <>
+      <span>{feed.text}</span>
+      {feed.findings.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {feed.findings.map((flag, i) => (
+            <span
+              key={`${flag.fhirResourceId}-${i}`}
+              className="font-mono text-[10px] text-text-dim bg-bg border border-border rounded-chip px-1.5 py-0.5"
+            >
+              {flag.fhirResourceId}
+            </span>
+          ))}
+        </div>
+      )}
+      {feed.summary && (
+        <div className="mt-2 pt-2 border-t border-border text-[11px] text-text-muted">
+          <span data-testid={SUMMARY_TESTID[agentId]}>
+            {agentId === 'risk'
+              ? `${feed.summary.riskLevel} risk · score ${feed.summary.riskScore}`
+              : `${feed.summary.findingCount} findings · ${feed.summary.droppedCount} dropped`}
+          </span>
+        </div>
+      )}
+    </>
+  );
+}
+
+/** Normalized shape both `TaskSummary` (initial query) and `AnalysisTask` (freshly streamed) render into. */
+interface DisplayTask {
+  key: string;
+  priorityClassName: string;
+  priorityLabel: string;
+  due: string;
+  title: string;
+  description?: string;
+  reference: string;
+  status: string;
+  citations?: string[];
+}
+
+function fromTaskSummary(task: TaskSummary): DisplayTask {
+  return {
+    key: `existing-${task.id}`,
+    priorityClassName: PRIORITY_CLASS[task.priority],
+    priorityLabel: PRIORITY_LABEL[task.priority],
+    due: `Due: ${dueLabel(task.due)}`,
+    title: task.title,
+    reference: `Task/${task.id}`,
+    status: task.status,
+  };
+}
+
+function fromAnalysisTask(task: AnalysisTask): DisplayTask {
+  return {
+    key: `created-${task.id}`,
+    priorityClassName: priorityClassName(task.priority),
+    priorityLabel: priorityLabelText(task.priority),
+    due: task.dueInDays !== undefined ? `Due in ${task.dueInDays}d` : 'Due: —',
+    title: task.title,
+    description: task.description,
+    reference: task.reference,
+    status: 'Open',
+    citations: task.fhirResources,
+  };
+}
+
 export function PatientDetail() {
   const { id } = useParams<{ id: string }>();
   const { data, isLoading, isError, error } = useQuery({
@@ -76,30 +207,42 @@ export function PatientDetail() {
   });
 
   const [running, setRunning] = useState(false);
-  const [hasRun, setHasRun] = useState(false);
-  const [riskText, setRiskText] = useState('');
-  const [findings, setFindings] = useState<AnalysisFinding[]>([]);
-  const [summary, setSummary] = useState<AnalysisSummary | null>(null);
-
-  const riskState: FeedState = !hasRun ? 'idle' : running ? 'streaming' : 'done';
+  const [feeds, setFeeds] = useState<Record<AgentId, AgentFeedState>>(() => makeFeeds(false));
+  const [createdTasks, setCreatedTasks] = useState<AnalysisTask[]>([]);
+  // Token events carry no `agentId` on the wire (only `finding`/`complete` do) — the
+  // backend narrates one agent at a time, so we track which agent is "live" and
+  // route bare narration text to it, flipping the pointer whenever a tagged event
+  // (finding/complete) names a different agent.
+  const activeAgentRef = useRef<AgentId>('risk');
 
   async function handleRunAnalysis() {
     if (!id || running) return;
     setRunning(true);
-    setHasRun(true);
-    setRiskText('');
-    setFindings([]);
-    setSummary(null);
+    setFeeds(makeFeeds(true));
+    setCreatedTasks([]);
+    activeAgentRef.current = 'risk';
     try {
       await streamAnalysis(id, {
-        onToken: (text) => setRiskText((prev) => prev + text),
-        onFinding: (flag) => setFindings((prev) => [...prev, flag]),
-        onComplete: (result) => setSummary(result),
+        onToken: (text) => setFeeds((prev) => withText(prev, activeAgentRef.current, text)),
+        onFinding: (flag) => {
+          activeAgentRef.current = flag.agentId;
+          setFeeds((prev) => withFinding(prev, flag));
+        },
+        onComplete: (summary) => {
+          activeAgentRef.current = summary.agentId;
+          setFeeds((prev) => withSummary(prev, summary));
+        },
+        onTask: (task) => setCreatedTasks((prev) => [...prev, task]),
       });
     } finally {
       setRunning(false);
     }
   }
+
+  const displayTasks: DisplayTask[] = [
+    ...(data?.tasks.map(fromTaskSummary) ?? []),
+    ...createdTasks.map(fromAnalysisTask),
+  ];
 
   return (
     <div>
@@ -133,48 +276,16 @@ export function PatientDetail() {
             </button>
           </div>
 
-          {/* Feeds grid matches reference-materials/caresync-ai.html's .feeds — the
-              agent-graph canvas above it is out of scope (S4). Risk Agent is live
-              this slice; Care Gap/SDOH/Action Planner stay honest idle placeholders
-              until S3 wires their agents up. */}
+          {/* Feeds grid now fully matches reference-materials/caresync-ai.html's .feeds —
+              all four agents (Risk/Care Gap/SDOH/Action Planner) stream live. The
+              agent-graph canvas above the grid in the mockup remains the one recorded
+              deviation, deferred to a future slice (S4); it is not built here. */}
           <div className="grid grid-cols-4 gap-2.5 mb-6">
-            <FeedBox label="Risk Agent" accent="red" state={riskState}>
-              {!hasRun ? (
-                <IdlePlaceholder />
-              ) : (
-                <>
-                  <span>{riskText}</span>
-                  {findings.length > 0 && (
-                    <div className="mt-1.5 flex flex-wrap gap-1">
-                      {findings.map((flag, i) => (
-                        <span
-                          key={`${flag.fhirResourceId}-${i}`}
-                          className="font-mono text-[10px] text-text-dim bg-bg border border-border rounded-chip px-1.5 py-0.5"
-                        >
-                          {flag.fhirResourceId}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  {summary && (
-                    <div className="mt-2 pt-2 border-t border-border text-[11px] text-text-muted">
-                      <span data-testid="risk-summary">
-                        {summary.riskLevel} risk · score {summary.riskScore}
-                      </span>
-                    </div>
-                  )}
-                </>
-              )}
-            </FeedBox>
-            <FeedBox label="Care Gap" accent="violet" state="idle">
-              <IdlePlaceholder />
-            </FeedBox>
-            <FeedBox label="SDOH" accent="emerald" state="idle">
-              <IdlePlaceholder />
-            </FeedBox>
-            <FeedBox label="Action Planner" accent="amber" state="idle">
-              <IdlePlaceholder />
-            </FeedBox>
+            {FEED_DEFS.map(({ id: agentId, label, accent }) => (
+              <FeedBox key={agentId} label={label} accent={accent} state={agentFeedState(feeds[agentId], running)}>
+                <AgentFeedContent agentId={agentId} feed={feeds[agentId]} />
+              </FeedBox>
+            ))}
           </div>
 
           <h2 className="text-section text-text mb-2">Active Conditions</h2>
@@ -192,27 +303,40 @@ export function PatientDetail() {
           <div className="flex items-center gap-2 mb-2">
             <h2 className="text-section text-text">Tasks</h2>
             <span className="text-xs font-bold text-cyan bg-cyan-dim border border-cyan rounded-pill px-2.5 py-0.5">
-              {data.tasks.length} open
+              {displayTasks.length} open
             </span>
           </div>
-          {data.tasks.length === 0 && <p className="text-body text-text-muted">No open tasks.</p>}
-          {data.tasks.map((task) => (
-            <div key={task.id} className="bg-surface-raised border border-border rounded-card p-2.5 mb-2">
+          {displayTasks.length === 0 && <p className="text-body text-text-muted">No open tasks.</p>}
+          {displayTasks.map((task) => (
+            <div key={task.key} className="bg-surface-raised border border-border rounded-card p-2.5 mb-2">
               <div className="flex items-center justify-between mb-1.5">
                 <span
-                  className={`text-[9px] font-bold tracking-wide rounded-pill border px-2 py-0.5 ${PRIORITY_CLASS[task.priority]}`}
+                  className={`text-[9px] font-bold tracking-wide rounded-pill border px-2 py-0.5 ${task.priorityClassName}`}
                 >
-                  {PRIORITY_LABEL[task.priority]}
+                  {task.priorityLabel}
                 </span>
-                <span className="text-xs text-text-muted">Due: {dueLabel(task.due)}</span>
+                <span className="text-xs text-text-muted">{task.due}</span>
               </div>
               <p className="text-body font-bold text-text mb-1.5">{task.title}</p>
+              {task.description && <p className="text-xs text-text-muted mb-1.5">{task.description}</p>}
               <div className="flex items-center justify-between">
-                <span className="font-mono text-[10.5px] text-text-dim">Task/{task.id}</span>
+                <span className="font-mono text-[10.5px] text-text-dim">{task.reference}</span>
                 <span className="text-xs font-semibold text-text-muted border border-border-light rounded-pill px-2 py-px">
                   {task.status}
                 </span>
               </div>
+              {task.citations && task.citations.length > 0 && (
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {task.citations.map((ref) => (
+                    <span
+                      key={ref}
+                      className="font-mono text-[10px] text-text-dim bg-bg border border-border rounded-chip px-1.5 py-0.5"
+                    >
+                      {ref}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </div>
