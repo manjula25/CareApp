@@ -419,6 +419,36 @@ describe('analysis routes — cache-aware live/replay (S4 A2)', () => {
     expect(row!.createdTs).toBe('2020-01-01T00:00:00.000Z');
   });
 
+  it('(d) denies a Social Worker (no clinical scope) on the cache-replay path too, and audits the denial', async () => {
+    const orchestratorSpy = jest.fn(stubOrchestrate);
+    const cachedApp = buildApp(db, orchestratorSpy);
+    writeAnalysisCache(db, {
+      patientId: PATIENT_ID,
+      resultJson: cachedResultFromStub('cached-task-1'),
+      modelVersion: 'gpt-5.5',
+      createdTs: '2020-01-01T00:00:00.000Z',
+    });
+
+    const token = await loginAs(cachedApp, 'socialworker@caresync.demo');
+    const res = await request(cachedApp).post(`/api/patients/${PATIENT_ID}/analysis`).set('Authorization', `Bearer ${token}`);
+
+    // Same 403 shape the live path already produces for this role (see the
+    // B3 describe block's "denies a Social Worker" test) — the replay path
+    // must not leak cached clinical findings just because someone else
+    // triggered a live run for this patient earlier.
+    expect(res.status).toBe(403);
+    expect(orchestratorSpy).not.toHaveBeenCalled();
+
+    const rows = db.prepare('SELECT * FROM audit_log ORDER BY id').all() as any[];
+    const denialRows = rows.filter((r) => r.action === 'read' && r.fhir_resource === `Patient/${PATIENT_ID}/$everything` && r.outcome === 'denied');
+    expect(denialRows).toHaveLength(1);
+    expect(denialRows[0]).toMatchObject({ actor: expect.any(String), outcome: 'denied' });
+
+    // Cache row itself must be untouched by the denial.
+    const row = readAnalysisCache(db, PATIENT_ID);
+    expect(row!.createdTs).toBe('2020-01-01T00:00:00.000Z');
+  });
+
   it('(b) ?live=1 always invokes the orchestrator and overwrites the cache row, even when one already exists', async () => {
     const orchestratorSpy = jest.fn(stubOrchestrate);
     const liveApp = buildApp(db, orchestratorSpy);

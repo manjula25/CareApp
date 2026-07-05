@@ -2,6 +2,8 @@ import { Router, Response } from 'express';
 import Database from 'better-sqlite3';
 import { requireAuth } from '../middleware/auth';
 import { FhirReadService, PatientBundle, ScopeDeniedError } from '../fhir/client';
+import { hasScope } from '../auth/scopes';
+import { writeAudit } from '../db/audit';
 import { orchestrate } from '../agents/orchestrator';
 import { AgentEvent, AgentId } from '../agents/agent';
 import { validateCitations, validateCitationList, createNarrationBuffer, NarrationBuffer, AgentFlag } from '../agents/citationValidator';
@@ -132,6 +134,22 @@ export function createAnalysisRouter(
     if (!isLive) {
       const cached = readCache(db, patientId);
       if (cached) {
+        // Replay skips `getPatientBundle` entirely (no HAPI call), but that
+        // method is also the ONLY place role→scope enforcement + audit
+        // logging happens for this data (`FhirReadService.guard`, private).
+        // Skipping the fetch must not silently skip the scope gate too — a
+        // role denied 'clinical' scope on the live path (e.g. Social Worker)
+        // must be denied here as well, and the denial must still be audited,
+        // even though this check is a local role comparison and makes no
+        // HAPI request itself.
+        const resource = `Patient/${patientId}/$everything`;
+        if (!hasScope(req.auth!.role, 'clinical')) {
+          writeAudit(db, { actor: req.auth!.id, action: 'read', fhirResource: resource, outcome: 'denied' });
+          const err = new ScopeDeniedError(req.auth!.role, 'clinical');
+          res.status(403).json({ error: err.message });
+          return;
+        }
+
         res.writeHead(200, {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
