@@ -5,6 +5,7 @@ import { getDb } from './db';
 import { createAuthRouter } from './routes/auth';
 import { createPatientsRouter } from './routes/patients';
 import { createAnalysisRouter } from './routes/analysis';
+import { orchestrate } from './agents/orchestrator';
 import { FhirReadService } from './fhir/client';
 import { generateKeyPair } from './smart/keys';
 import { createTokenServer } from './smart/tokenServer';
@@ -43,7 +44,10 @@ if (require.main === module) {
   app.use('/api/patients', createPatientsRouter(fhirService));
   // S2 — a second router on the same base path; the real runRiskAgent is the
   // default so no extra wiring is needed beyond mounting this route.
-  app.use('/api/patients', createAnalysisRouter(fhirService));
+  // S4 A2 — `db` threads through so the route can read/write `analysis_cache`;
+  // `orchestrate` is passed explicitly (not defaulted) since it now sits
+  // before `db` in the parameter list.
+  app.use('/api/patients', createAnalysisRouter(fhirService, orchestrate, db));
 
   app.listen(PORT, () => {
     console.log(`API listening on :${PORT}`);

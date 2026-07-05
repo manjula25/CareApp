@@ -263,29 +263,29 @@ Task writes are additive to HAPI and reversible via `docker compose down -v`. Re
 
 ### Phase A — Analysis cache (backend, test-first)
 
-- [ ] **A1. `analysis_cache` schema + migrate.** Table `(patient_id PK, result_json, model_version, created_ts)`; idempotent migrate at boot (matches the S1 migrate pattern). Persist the **validated** result (post-citation-gate) so replay can never surface a dropped citation. `result_json` holds the full findings-per-agent set + Task **payloads** (not just ids) + summary, so replay is self-contained and can't reference a deleted Task.
+- [x] **A1. `analysis_cache` schema + migrate.** Table `(patient_id PK, result_json, model_version, created_ts)`; idempotent migrate at boot (matches the S1 migrate pattern). Persist the **validated** result (post-citation-gate) so replay can never surface a dropped citation. `result_json` holds the full findings-per-agent set + Task **payloads** (not just ids) + summary, so replay is self-contained and can't reference a deleted Task.
   - *ponytail:* one row per patient (last successful run), overwritten on re-run — no history table (YAGNI until a "compare runs" feature exists).
   - *Test:* write-then-read round-trips the full result (including Task payloads); overwrite replaces.
 
-- [ ] **A2. Cache-aware analysis route.** On `POST /:id/analysis`: if `?live=1` → run orchestrator, persist to cache, stream live; else → if a cache row exists, **replay it** as the same `finding`/`task`/`complete` SSE events; if no cache, fall back to a live run + cache. Replay must re-emit in the **same phased order** live produces — three parallel agents' events, then the Action Planner's — tagged with the same `agentId`s, so the canvas animates through the identical state machine (not a single burst). Pacing between events is cosmetic; the ordering is not.
+- [x] **A2. Cache-aware analysis route.** On `POST /:id/analysis`: if `?live=1` → run orchestrator, persist to cache, stream live; else → if a cache row exists, **replay it** as the same `finding`/`task`/`complete` SSE events; if no cache, fall back to a live run + cache. Replay must re-emit in the **same phased order** live produces — three parallel agents' events, then the Action Planner's — tagged with the same `agentId`s, so the canvas animates through the identical state machine (not a single burst). Pacing between events is cosmetic; the ordering is not.
   - *Domain rule:* cached analysis replays deterministically without a live model call; explicit live trigger forces a fresh run and re-caches (S4 acceptance); cache is real prior output, not a script (GD2); cached and live share UI treatment, which requires matching event order (C2).
   - *Test (Supertest):* (a) seed a cache row → default request replays it with **zero** agent invocations (stub agent asserts not-called) and the replayed events carry the same `agentId`s in the same phased order as live; (b) `?live=1` invokes the (stub) orchestrator and updates the row; (c) **cold cache** (no row) → default request runs the (stub) orchestrator exactly once and the row now exists.
 
 ### Phase B — Agent-graph canvas (frontend)
 
-- [ ] **B1. Analysis state machine (client).** A small reducer/hook mapping stream events → graph state (`IDLE→INIT→DISPATCH→ANALYZING→SYNTHESIZING→COMPLETE`) and per-node status (Orchestrator + 4 agents), per the **Event→state contract** above (derived from `finding`/`complete`/`task` + `agentId` — no `dispatch` event exists). Pure and unit-testable.
+- [x] **B1. Analysis state machine (client).** A small reducer/hook mapping stream events → graph state (`IDLE→INIT→DISPATCH→ANALYZING→SYNTHESIZING→COMPLETE`) and per-node status (Orchestrator + 4 agents), per the **Event→state contract** above (derived from `finding`/`complete`/`task` + `agentId` — no `dispatch` event exists). Pure and unit-testable.
   - *Test (Vitest):* the documented event sequence (the fixture from the Event→state contract) drives the states in order; per-agent nodes flip to ANALYZING on their first tagged event and COMPLETE on their `complete`; `SYNTHESIZING` fires on the first `actionPlanner` event.
 
-- [ ] **B2. `AgentGraph` Canvas component (W03, mockup fidelity).** Native Canvas: 5-node radial layout (Orchestrator center + 4 agents), bezier edges, particle flow along active edges, per-agent color identity **consistent with the feed boxes and Task citation chips**, animated via `requestAnimationFrame` and torn down on unmount. Placed above the feeds grid per `reference-materials/caresync-ai.html`, closing W03's last deviation.
+- [x] **B2. `AgentGraph` Canvas component (W03, mockup fidelity).** Native Canvas: 5-node radial layout (Orchestrator center + 4 agents), bezier edges, particle flow along active edges, per-agent color identity **consistent with the feed boxes and Task citation chips**, animated via `requestAnimationFrame` and torn down on unmount. Placed above the feeds grid per `reference-materials/caresync-ai.html`, closing W03's last deviation.
   - *Domain rule:* no chart library (GD10); per-agent color consistent graph→feed→task (S4 acceptance).
   - *ponytail:* one component, no lib; guard against SSR/`useEffect` leaks; respects `prefers-reduced-motion` by rendering the final state statically.
   - *Verify:* graph animates through the state machine in sync with the streaming analysis (visual, in E2E/manual).
 
-- [ ] **B3. Live vs cached UI parity + trigger.** Wire a "Run live" affordance that hits `?live=1`; default Run Analysis serves cache. Both drive the identical graph + feeds treatment.
+- [x] **B3. Live vs cached UI parity + trigger.** Wire a "Run live" affordance that hits `?live=1`; default Run Analysis serves cache. Both drive the identical graph + feeds treatment.
 
 ### Phase C — Verification
-- [ ] **C1.** `npm run test:api` (cache replay/live) + `npm run test:web` (state machine) green.
-- [ ] **C2. Frontend E2E (`frontend-e2e-verification`).** Cached replay renders graph→feeds→tasks with no live call; the live trigger forces a fresh run; both produce the same UI treatment (GD2). Run with reduced-motion **disabled** in the browser context (the B2 `prefers-reduced-motion` path renders the final state statically and would not exercise the animation-in-sync assertion).
+- [x] **C1.** `npm run test:api` (cache replay/live) + `npm run test:web` (state machine) green.
+- [x] **C2. Frontend E2E (`frontend-e2e-verification`).** Cached replay renders graph→feeds→tasks with no live call; the live trigger forces a fresh run; both produce the same UI treatment (GD2). Run with reduced-motion **disabled** in the browser context (the B2 `prefers-reduced-motion` path renders the final state statically and would not exercise the animation-in-sync assertion).
 
 ### Rollback / safety
 Cache is a single SQLite table — deletable without affecting HAPI; `docker compose down -v` + delete SQLite resets. A stale/absent cache degrades to a live run, never a fake. Canvas is presentational — no data risk.

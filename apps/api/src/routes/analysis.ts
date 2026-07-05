@@ -1,37 +1,219 @@
-import { Router } from 'express';
+import { Router, Response } from 'express';
+import Database from 'better-sqlite3';
 import { requireAuth } from '../middleware/auth';
 import { FhirReadService, PatientBundle, ScopeDeniedError } from '../fhir/client';
 import { orchestrate } from '../agents/orchestrator';
 import { AgentEvent, AgentId } from '../agents/agent';
-import { validateCitations, validateCitationList, createNarrationBuffer, NarrationBuffer } from '../agents/citationValidator';
+import { validateCitations, validateCitationList, createNarrationBuffer, NarrationBuffer, AgentFlag } from '../agents/citationValidator';
+import { readAnalysisCache, writeAnalysisCache, AnalysisCacheEntry, AnalysisCacheRow } from '../db/analysisCache';
+import { writeAudit } from '../db/audit';
+// All four agent modules currently export the same MODEL constant
+// ('gpt-5.5') — riskAgent's is used here as the single source of truth for
+// what gets recorded as `modelVersion` on the cache row.
+import { MODEL } from '../agents/riskAgent';
 
 type RunAnalysis = (bundle: PatientBundle) => AsyncIterable<AgentEvent>;
+type ReadCache = (db: Database.Database, patientId: string) => AnalysisCacheRow | null;
+type WriteCache = (db: Database.Database, entry: AnalysisCacheEntry) => void;
 
-function writeSseEvent(res: import('express').Response, event: string, data: unknown): void {
+function writeSseEvent(res: Response, event: string, data: unknown): void {
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
 /**
- * S3 analysis route (B3). Audits + scope-guards one `$everything` read of the
- * patient's bundle (via `FhirReadService`), then streams the full four-agent
- * orchestration (risk/careGap/sdoh in parallel, then the action planner) over
- * SSE. Every citation — a flag/gap/barrier's `fhirResourceId`, or a task's
- * `fhirResources` list — is validated against the bundle's `validIds` (GD11 —
- * Seam 2) before it is emitted as a `finding`/`task`, or, for tasks, before it
- * is persisted to HAPI via `replacePatientTasks`. Dropped citations never
- * reach the client or HAPI.
+ * A2 (S4) — everything needed to replay the exact same `token`/`finding`/
+ * `task`/`complete` SSE sequence a live run produced, without re-touching
+ * HAPI or the LLM. Per bundle-driven agent (risk/careGap/sdoh): the accumulated
+ * SAFE (GD11-redacted, as-emitted) narration text, the citation-gate-SURVIVING
+ * findings (in emission order), plus that agent's `complete` payload. For
+ * actionPlanner: its narration, the full created-Task payloads (id/reference/
+ * title/description/priority/assignTo/dueInDays/fhirResources) — not just
+ * ids — because S3's replacePatientTasks deletes+recreates Tasks with new
+ * ids on every live run, so an id-only cache would dangle; plus its
+ * `complete` payload.
  *
- * `runAnalysis` defaults to the real `orchestrate` so production wiring needs
- * no extra step, while tests inject a stub to avoid a live OpenAI call.
+ * `narration` holds only the SAFE text the live run actually emitted (the
+ * `safeText`/`remainder` values that already passed through
+ * `createNarrationBuffer`'s GD11 gate) — never the raw model `event.text` —
+ * so a replay can't leak an unvalidated citation the live path would have
+ * redacted. `agentId` is intentionally omitted from each entry here (it's
+ * implied by the key) and re-added at emit time on both the live and replay
+ * paths, so the two paths share one event shape by construction.
  */
-export function createAnalysisRouter(fhirService: FhirReadService, runAnalysis: RunAnalysis = orchestrate): Router {
+export interface AnalysisResultJson {
+  risk: {
+    narration: string;
+    findings: AgentFlag[];
+    complete: { riskScore: number; riskLevel: string; readmissionProbability: number; findingCount: number; droppedCount: number };
+  };
+  careGap: {
+    narration: string;
+    findings: { gapType: string; description: string; lastDone?: string; dueDate?: string; urgency: string; fhirResourceId: string }[];
+    complete: { findingCount: number; droppedCount: number };
+  };
+  sdoh: {
+    narration: string;
+    findings: { domain: string; finding: string; severity: string; fhirResourceId: string }[];
+    complete: { findingCount: number; droppedCount: number; referralsNeeded: string[] };
+  };
+  actionPlanner: {
+    narration: string;
+    tasks: {
+      id: string;
+      reference: string;
+      title: string;
+      description: string;
+      priority: string;
+      assignTo?: string;
+      dueInDays?: number;
+      fhirResources: string[];
+    }[];
+    complete: { findingCount: number; droppedCount: number };
+  };
+}
+
+/**
+ * Replays a cached `AnalysisResultJson` as the identical `token`/`finding`/
+ * `task`/`complete` SSE sequence a live run would have produced — same phased
+ * order (each agent narrates, then its findings, then its complete;
+ * actionPlanner last), same `agentId` tagging, same `{ agentId, text }`
+ * token payload shape — so the canvas AND the per-agent reasoning feed
+ * (`PatientDetail.tsx`, which renders accumulated `token` text) can't tell a
+ * replay from a live run. No HAPI or LLM call on this path.
+ *
+ * A live run streams an agent's narration in many small `token` chunks as it
+ * reasons; a replay emits the whole accumulated narration as one `token`
+ * event — the plan states pacing is cosmetic, only ordering is load-bearing,
+ * and the client accumulates `token` text either way. An empty (or absent,
+ * for a legacy row) narration emits no token event, matching a live run that
+ * produced no safe narration for that agent.
+ */
+function replayCachedAnalysis(res: Response, result: AnalysisResultJson): void {
+  if (result.risk.narration) {
+    writeSseEvent(res, 'token', { agentId: 'risk', text: result.risk.narration });
+  }
+  for (const finding of result.risk.findings) {
+    writeSseEvent(res, 'finding', { agentId: 'risk', ...finding });
+  }
+  writeSseEvent(res, 'complete', { agentId: 'risk', ...result.risk.complete });
+
+  if (result.careGap.narration) {
+    writeSseEvent(res, 'token', { agentId: 'careGap', text: result.careGap.narration });
+  }
+  for (const finding of result.careGap.findings) {
+    writeSseEvent(res, 'finding', { agentId: 'careGap', ...finding });
+  }
+  writeSseEvent(res, 'complete', { agentId: 'careGap', ...result.careGap.complete });
+
+  if (result.sdoh.narration) {
+    writeSseEvent(res, 'token', { agentId: 'sdoh', text: result.sdoh.narration });
+  }
+  for (const finding of result.sdoh.findings) {
+    writeSseEvent(res, 'finding', { agentId: 'sdoh', ...finding });
+  }
+  writeSseEvent(res, 'complete', { agentId: 'sdoh', ...result.sdoh.complete });
+
+  if (result.actionPlanner.narration) {
+    writeSseEvent(res, 'token', { agentId: 'actionPlanner', text: result.actionPlanner.narration });
+  }
+  for (const task of result.actionPlanner.tasks) {
+    writeSseEvent(res, 'task', { agentId: 'actionPlanner', ...task });
+  }
+  writeSseEvent(res, 'complete', { agentId: 'actionPlanner', ...result.actionPlanner.complete });
+
+  writeSseEvent(res, 'done', {});
+}
+
+/**
+ * S3/S4 analysis route (B3, then A2). Audits + scope-guards one `$everything`
+ * read of the patient's bundle (via `FhirReadService`), then streams the full
+ * four-agent orchestration (risk/careGap/sdoh in parallel, then the action
+ * planner) over SSE. Every citation — a flag/gap/barrier's `fhirResourceId`,
+ * or a task's `fhirResources` list — is validated against the bundle's
+ * `validIds` (GD11 — Seam 2) before it is emitted as a `finding`/`task`, or,
+ * for tasks, before it is persisted to HAPI via `replacePatientTasks`.
+ * Dropped citations never reach the client or HAPI.
+ *
+ * S4 A2 — cache-aware modes:
+ *  - `?live=1`: always runs the orchestrator, streams live, then persists the
+ *    run to `analysis_cache` (overwriting any prior row) before `done`.
+ *  - no `?live=1`, cache row exists: replays that row's `resultJson` as the
+ *    identical `finding`/`task`/`complete` sequence a live run produced —
+ *    zero orchestrator calls, zero HAPI reads/writes.
+ *  - no `?live=1`, no cache row (cold cache): falls back to a live run
+ *    exactly like `?live=1`, so the first view of any patient is always live
+ *    and gets cached for the next one.
+ *
+ * `runAnalysis`/`readCache`/`writeCache` default to the real implementations
+ * so production wiring needs no extra step, while tests inject stubs to
+ * avoid a live OpenAI call and to assert on cache reads/writes.
+ */
+export function createAnalysisRouter(
+  fhirService: FhirReadService,
+  runAnalysis: RunAnalysis = orchestrate,
+  db: Database.Database,
+  readCache: ReadCache = readAnalysisCache,
+  writeCache: WriteCache = writeAnalysisCache
+): Router {
   const router = Router();
   router.use(requireAuth);
 
   router.post('/:id/analysis', async (req, res) => {
+    const patientId = req.params.id;
+    const isLive = req.query.live === '1';
+
+    if (!isLive) {
+      const cached = readCache(db, patientId);
+      if (cached) {
+        // Replay skips `getPatientBundle` entirely (no HAPI call), but that
+        // method is also the ONLY place role→scope enforcement + audit
+        // logging happens for this data. `assertScope` is the same guard
+        // `getPatientBundle` runs internally, called directly so the
+        // invariant can't drift between the live and replay code paths —
+        // it's a local role comparison, no HAPI request, so calling it here
+        // doesn't cost the HAPI round-trip replay exists to avoid. On
+        // success we write our own audit row (mirroring `getPatientBundle`'s
+        // guard-then-audit pattern) since `assertScope` only audits denials.
+        try {
+          fhirService.assertScope(req.auth!, 'clinical', `Patient/${patientId}/$everything`);
+        } catch (err) {
+          if (err instanceof ScopeDeniedError) {
+            res.status(403).json({ error: err.message });
+            return;
+          }
+          throw err;
+        }
+        writeAudit(db, {
+          actor: req.auth!.id,
+          action: 'read',
+          fhirResource: `Patient/${patientId}/$everything`,
+          outcome: 'success',
+        });
+
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+        });
+        try {
+          replayCachedAnalysis(res, cached.resultJson as AnalysisResultJson);
+        } catch {
+          // Same error-boundary convention the live path uses below: headers
+          // are already sent by this point, so an SSE `error` event is the
+          // only way left to signal failure (e.g. a malformed/legacy cached
+          // shape) — no `done` fires on this path either.
+          writeSseEvent(res, 'error', { message: 'Analysis failed' });
+        }
+        res.end();
+        return;
+      }
+      // Cold cache: no row yet for this patient — fall through to the same
+      // live path `?live=1` takes, below.
+    }
+
     let bundle: PatientBundle;
     try {
-      bundle = await fhirService.getPatientBundle(req.auth!, req.params.id);
+      bundle = await fhirService.getPatientBundle(req.auth!, patientId);
     } catch (err) {
       if (err instanceof ScopeDeniedError) {
         res.status(403).json({ error: err.message });
@@ -61,11 +243,30 @@ export function createAnalysisRouter(fhirService: FhirReadService, runAnalysis: 
       return buffer;
     }
 
+    // Accumulated in step with every emitted SSE event below so the cache
+    // row written on success is exactly what was streamed — not a
+    // re-derivation that could drift from it.
+    const resultJson: AnalysisResultJson = {
+      risk: { narration: '', findings: [], complete: { riskScore: 0, riskLevel: 'low', readmissionProbability: 0, findingCount: 0, droppedCount: 0 } },
+      careGap: { narration: '', findings: [], complete: { findingCount: 0, droppedCount: 0 } },
+      sdoh: { narration: '', findings: [], complete: { findingCount: 0, droppedCount: 0, referralsNeeded: [] } },
+      actionPlanner: { narration: '', tasks: [], complete: { findingCount: 0, droppedCount: 0 } },
+    };
+
+    // Accumulates ONLY the safe (GD11-redacted, actually-emitted) narration
+    // text per agent, so the cache captures exactly what streamed and a
+    // replay re-emits the same prose — never the raw model tokens.
+    const narrationText = new Map<AgentId, string>();
+    function appendNarration(agentId: AgentId, text: string): void {
+      narrationText.set(agentId, (narrationText.get(agentId) ?? '') + text);
+    }
+
     try {
       for await (const event of runAnalysis(bundle)) {
         if (event.type === 'token') {
           const safeText = narrationFor(event.agentId).push(event.text);
           if (safeText) {
+            appendNarration(event.agentId, safeText);
             writeSseEvent(res, 'token', { agentId: event.agentId, text: safeText });
           }
           continue;
@@ -73,6 +274,7 @@ export function createAnalysisRouter(fhirService: FhirReadService, runAnalysis: 
 
         const remainder = narrationFor(event.agentId).flush();
         if (remainder) {
+          appendNarration(event.agentId, remainder);
           writeSseEvent(res, 'token', { agentId: event.agentId, text: remainder });
         }
 
@@ -84,35 +286,31 @@ export function createAnalysisRouter(fhirService: FhirReadService, runAnalysis: 
           for (const flag of valid) {
             writeSseEvent(res, 'finding', { agentId: 'risk', ...flag });
           }
-          writeSseEvent(res, 'complete', {
-            agentId: 'risk',
+          const complete = {
             riskScore: event.output.riskScore,
             riskLevel: event.output.riskLevel,
             readmissionProbability: event.output.readmissionProbability,
             findingCount: valid.length,
             droppedCount: dropped.length,
-          });
+          };
+          writeSseEvent(res, 'complete', { agentId: 'risk', ...complete });
+          resultJson.risk = { narration: narrationText.get('risk') ?? '', findings: valid, complete };
         } else if (event.agentId === 'careGap') {
           const { valid, dropped } = validateCitations(event.output.gaps, bundle.validIds);
           for (const gap of valid) {
             writeSseEvent(res, 'finding', { agentId: 'careGap', ...gap });
           }
-          writeSseEvent(res, 'complete', {
-            agentId: 'careGap',
-            findingCount: valid.length,
-            droppedCount: dropped.length,
-          });
+          const complete = { findingCount: valid.length, droppedCount: dropped.length };
+          writeSseEvent(res, 'complete', { agentId: 'careGap', ...complete });
+          resultJson.careGap = { narration: narrationText.get('careGap') ?? '', findings: valid, complete };
         } else if (event.agentId === 'sdoh') {
           const { valid, dropped } = validateCitations(event.output.barriers, bundle.validIds);
           for (const barrier of valid) {
             writeSseEvent(res, 'finding', { agentId: 'sdoh', ...barrier });
           }
-          writeSseEvent(res, 'complete', {
-            agentId: 'sdoh',
-            findingCount: valid.length,
-            droppedCount: dropped.length,
-            referralsNeeded: event.output.referralsNeeded,
-          });
+          const complete = { findingCount: valid.length, droppedCount: dropped.length, referralsNeeded: event.output.referralsNeeded };
+          writeSseEvent(res, 'complete', { agentId: 'sdoh', ...complete });
+          resultJson.sdoh = { narration: narrationText.get('sdoh') ?? '', findings: valid, complete };
         } else {
           // actionPlanner — all-or-nothing per task (validateCitationList): a
           // task whose citations ALL drop must never reach HAPI. `valid` is
@@ -127,11 +325,10 @@ export function createAnalysisRouter(fhirService: FhirReadService, runAnalysis: 
           // Always call replacePatientTasks, even with an empty `valid`, so a
           // re-run with zero surviving tasks still clears prior CareSync
           // Tasks for this patient (B2's replace guarantee).
-          const created = await fhirService.replacePatientTasks(req.auth!, req.params.id, valid);
-          created.forEach((task, i) => {
+          const created = await fhirService.replacePatientTasks(req.auth!, patientId, valid);
+          const tasks = created.map((task, i) => {
             const source = valid[i];
-            writeSseEvent(res, 'task', {
-              agentId: 'actionPlanner',
+            return {
               id: task.id,
               reference: `Task/${task.id}`,
               title: source.title,
@@ -140,20 +337,30 @@ export function createAnalysisRouter(fhirService: FhirReadService, runAnalysis: 
               assignTo: source.assignTo,
               dueInDays: source.dueInDays,
               fhirResources: source.fhirResources,
-            });
+            };
           });
+          tasks.forEach((task) => writeSseEvent(res, 'task', { agentId: 'actionPlanner', ...task }));
 
-          writeSseEvent(res, 'complete', {
-            agentId: 'actionPlanner',
-            findingCount: valid.length,
-            droppedCount: dropped.length,
-          });
+          const complete = { findingCount: valid.length, droppedCount: dropped.length };
+          writeSseEvent(res, 'complete', { agentId: 'actionPlanner', ...complete });
+          resultJson.actionPlanner = { narration: narrationText.get('actionPlanner') ?? '', tasks, complete };
         }
       }
 
       // Every agent — including the Action Planner's Task-creation step —
-      // has now fully finished. This is the one terminal signal a consumer
-      // (S4's web client) needs to know the whole run ended.
+      // has now fully finished. Persist this run (A2: cache-aware route) so
+      // the next non-live view of this patient replays it. This is
+      // best-effort: the real work (the streamed findings/tasks + the HAPI
+      // Task writes) already succeeded by this point, so a persistence hiccup
+      // must NOT flip an otherwise-successful run into the `error` path (which
+      // would hang the client's graph in `synthesizing` with no `done`). Log
+      // and continue to `done`; the only cost of a missed write is that the
+      // next non-live view re-runs live instead of replaying.
+      try {
+        writeCache(db, { patientId, resultJson, modelVersion: MODEL, createdTs: new Date().toISOString() });
+      } catch (err) {
+        console.error('analysis cache write failed (run still succeeded):', err);
+      }
       writeSseEvent(res, 'done', {});
     } catch {
       // The connection is already open (res.writeHead ran above) — an SSE

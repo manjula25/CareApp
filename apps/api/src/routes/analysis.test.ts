@@ -4,9 +4,10 @@ import request from 'supertest';
 import { migrate } from '../db';
 import { seedDemoUsers, DEMO_PASSWORD } from '../db/seed';
 import { createAuthRouter } from './auth';
-import { createAnalysisRouter } from './analysis';
+import { createAnalysisRouter, AnalysisResultJson } from './analysis';
 import { FhirReadService } from '../fhir/client';
 import { AgentEvent, RiskOutput, CareGapOutput, SdohOutput, ActionPlannerOutput } from '../agents/agent';
+import { readAnalysisCache, writeAnalysisCache, AnalysisCacheRow } from '../db/analysisCache';
 
 // Deliberately NOT 'maria-chen': fhir/client.test.ts (B2) already exercises
 // Task create/replace against 'maria-chen', and Jest runs different test
@@ -110,13 +111,60 @@ function oneValidTaskAgent(): () => AsyncIterable<AgentEvent> {
   };
 }
 
-function buildApp(db: Database.Database, stub: (bundle: any) => AsyncIterable<AgentEvent>) {
+function buildApp(
+  db: Database.Database,
+  stub: (bundle: any) => AsyncIterable<AgentEvent>,
+  readCache?: (db: Database.Database, patientId: string) => AnalysisCacheRow | null
+) {
   const app = express();
   app.use(express.json());
   const fhirService = new FhirReadService(db, FHIR_BASE_URL);
   app.use('/api/auth', createAuthRouter(db));
-  app.use('/api/patients', createAnalysisRouter(fhirService, stub));
+  app.use('/api/patients', createAnalysisRouter(fhirService, stub, db, readCache));
   return app;
+}
+
+// Mirrors exactly what stubOrchestrate's SURVIVING (post-citation-gate) output
+// looks like once run through the live route — used to seed a cache row that
+// looks like real prior output (GD2), not an invented shape, so replay tests
+// exercise the same resultJson a live run would actually persist. `narration`
+// per agent matches the safe (emitted) token text stubOrchestrate streams —
+// each is a single short chunk that flushes whole through the GD11 buffer.
+function cachedResultFromStub(taskId: string): AnalysisResultJson {
+  return {
+    risk: {
+      narration: 'Reviewing chart...',
+      findings: [{ text: 'CHF diagnosis drives elevated readmission risk', fhirResourceId: VALID_ID }],
+      complete: { riskScore: 87, riskLevel: 'critical', readmissionProbability: 0.7, findingCount: 1, droppedCount: 1 },
+    },
+    careGap: {
+      narration: 'Checking preventive care gaps...',
+      findings: [{ gapType: 'screening', description: 'Overdue HbA1c recheck', urgency: 'high', fhirResourceId: VALID_ID }],
+      complete: { findingCount: 1, droppedCount: 0 },
+    },
+    sdoh: {
+      narration: 'Screening for social barriers...',
+      findings: [
+        { domain: 'transportation', finding: 'No reliable transportation to follow-up visits', severity: 'moderate', fhirResourceId: VALID_ID },
+      ],
+      complete: { findingCount: 1, droppedCount: 0, referralsNeeded: ['transportation-assistance'] },
+    },
+    actionPlanner: {
+      narration: 'Synthesizing worklist...',
+      tasks: [
+        {
+          id: taskId,
+          reference: `Task/${taskId}`,
+          title: 'Schedule cardiology follow-up',
+          description: 'Address CHF readmission risk',
+          priority: 'high',
+          dueInDays: 5,
+          fhirResources: [VALID_ID],
+        },
+      ],
+      complete: { findingCount: 1, droppedCount: 1 },
+    },
+  };
 }
 
 async function loginAs(app: express.Express, email: string): Promise<string> {
@@ -263,16 +311,21 @@ describe('analysis routes (B3 — orchestrated SSE stream + citation validation 
   });
 
   it('leaves only the second run’s Tasks in HAPI after calling the route twice (no dupes)', async () => {
+    // S4 A2: a default (non-`?live=1`) POST now serves a cache replay once a
+    // row exists, so a second bare POST after run1 would never reach
+    // replacePatientTasks at all. `?live=1` forces both runs live — which is
+    // exactly the real-orchestration path this test exists to verify (B2's
+    // replace guarantee) — independent of caching.
     const run1App = buildApp(db, twoValidTasksAgent());
     const token1 = await loginAs(run1App, 'coordinator@caresync.demo');
-    await request(run1App).post(`/api/patients/${PATIENT_ID}/analysis`).set('Authorization', `Bearer ${token1}`);
+    await request(run1App).post(`/api/patients/${PATIENT_ID}/analysis?live=1`).set('Authorization', `Bearer ${token1}`);
 
     const afterRun1 = await fetchOwnedTasks(PATIENT_ID);
     expect(afterRun1).toHaveLength(2);
 
     const run2App = buildApp(db, oneValidTaskAgent());
     const token2 = await loginAs(run2App, 'coordinator@caresync.demo');
-    await request(run2App).post(`/api/patients/${PATIENT_ID}/analysis`).set('Authorization', `Bearer ${token2}`);
+    await request(run2App).post(`/api/patients/${PATIENT_ID}/analysis?live=1`).set('Authorization', `Bearer ${token2}`);
 
     const afterRun2 = await fetchOwnedTasks(PATIENT_ID);
     expect(afterRun2).toHaveLength(1);
@@ -322,5 +375,268 @@ describe('analysis routes (B3 — orchestrated SSE stream + citation validation 
   it('requires auth', async () => {
     const res = await request(app).post(`/api/patients/${PATIENT_ID}/analysis`);
     expect(res.status).toBe(401);
+  });
+});
+
+describe('analysis routes — cache-aware live/replay (S4 A2)', () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    migrate(db);
+    seedDemoUsers(db);
+  });
+
+  it('(a) replays a seeded cache row with zero agent invocations, in the same phased agentId order as a live run', async () => {
+    const orchestratorSpy = jest.fn(stubOrchestrate);
+    const cachedApp = buildApp(db, orchestratorSpy);
+    writeAnalysisCache(db, {
+      patientId: PATIENT_ID,
+      resultJson: cachedResultFromStub('cached-task-1'),
+      modelVersion: 'gpt-5.5',
+      createdTs: '2020-01-01T00:00:00.000Z',
+    });
+
+    const token = await loginAs(cachedApp, 'coordinator@caresync.demo');
+    const res = await request(cachedApp).post(`/api/patients/${PATIENT_ID}/analysis`).set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(orchestratorSpy).not.toHaveBeenCalled();
+
+    const events = parseSse(res.text);
+    // Same phased order a live run produces: each agent narrates (a `token`
+    // event), then its own finding(s), then its own complete; actionPlanner
+    // last (token → task → complete), ending in `done` — risk, careGap,
+    // sdoh, actionPlanner. The `token` frames are part of the replayed
+    // sequence now (narration parity, S4 C2/GD2), not filtered out.
+    expect(events.map((e) => [e.event, e.data.agentId ?? null])).toEqual([
+      ['token', 'risk'],
+      ['finding', 'risk'],
+      ['complete', 'risk'],
+      ['token', 'careGap'],
+      ['finding', 'careGap'],
+      ['complete', 'careGap'],
+      ['token', 'sdoh'],
+      ['finding', 'sdoh'],
+      ['complete', 'sdoh'],
+      ['token', 'actionPlanner'],
+      ['task', 'actionPlanner'],
+      ['complete', 'actionPlanner'],
+      ['done', null],
+    ]);
+    expect(events.find((e) => e.event === 'task')!.data).toMatchObject({
+      id: 'cached-task-1',
+      title: 'Schedule cardiology follow-up',
+    });
+    // Replayed token payload is byte-identical in shape to a live one
+    // (`{ agentId, text }`) and carries the stored safe narration.
+    expect(events.find((e) => e.event === 'token' && e.data.agentId === 'risk')!.data).toEqual({
+      agentId: 'risk',
+      text: 'Reviewing chart...',
+    });
+
+    // Replay must not mutate the cache row it just served.
+    const row = readAnalysisCache(db, PATIENT_ID);
+    expect(row!.createdTs).toBe('2020-01-01T00:00:00.000Z');
+
+    // A successful replay is still a clinical read and must be audited,
+    // same as a live getPatientBundle read — the replay path skips HAPI but
+    // must not skip the audit trail S8's governance dashboard depends on.
+    const auditRows = db.prepare('SELECT * FROM audit_log ORDER BY id').all() as any[];
+    const successRows = auditRows.filter(
+      (r) => r.action === 'read' && r.fhir_resource === `Patient/${PATIENT_ID}/$everything` && r.outcome === 'success'
+    );
+    expect(successRows).toHaveLength(1);
+    expect(successRows[0]).toMatchObject({ actor: expect.any(String), outcome: 'success' });
+  });
+
+  it('(d) denies a Social Worker (no clinical scope) on the cache-replay path too, and audits the denial', async () => {
+    const orchestratorSpy = jest.fn(stubOrchestrate);
+    const cachedApp = buildApp(db, orchestratorSpy);
+    writeAnalysisCache(db, {
+      patientId: PATIENT_ID,
+      resultJson: cachedResultFromStub('cached-task-1'),
+      modelVersion: 'gpt-5.5',
+      createdTs: '2020-01-01T00:00:00.000Z',
+    });
+
+    const token = await loginAs(cachedApp, 'socialworker@caresync.demo');
+    const res = await request(cachedApp).post(`/api/patients/${PATIENT_ID}/analysis`).set('Authorization', `Bearer ${token}`);
+
+    // Same 403 shape the live path already produces for this role (see the
+    // B3 describe block's "denies a Social Worker" test) — the replay path
+    // must not leak cached clinical findings just because someone else
+    // triggered a live run for this patient earlier.
+    expect(res.status).toBe(403);
+    expect(orchestratorSpy).not.toHaveBeenCalled();
+
+    const rows = db.prepare('SELECT * FROM audit_log ORDER BY id').all() as any[];
+    const denialRows = rows.filter((r) => r.action === 'read' && r.fhir_resource === `Patient/${PATIENT_ID}/$everything` && r.outcome === 'denied');
+    expect(denialRows).toHaveLength(1);
+    expect(denialRows[0]).toMatchObject({ actor: expect.any(String), outcome: 'denied' });
+
+    // Cache row itself must be untouched by the denial.
+    const row = readAnalysisCache(db, PATIENT_ID);
+    expect(row!.createdTs).toBe('2020-01-01T00:00:00.000Z');
+  });
+
+  it('(e) emits an `error` SSE event — not a hang — if a malformed cached row fails to replay', async () => {
+    const orchestratorSpy = jest.fn(stubOrchestrate);
+    // Injected in place of the real readAnalysisCache: returns a row whose
+    // resultJson is missing every expected agent key, so replayCachedAnalysis
+    // throws reading `result.risk.findings`. Mirrors a legacy/corrupted row
+    // shape without needing to hand-corrupt real SQLite storage.
+    const brokenReadCache = jest.fn(
+      (): AnalysisCacheRow => ({
+        patientId: PATIENT_ID,
+        resultJson: {} as unknown,
+        modelVersion: 'gpt-5.5',
+        createdTs: '2020-01-01T00:00:00.000Z',
+      })
+    );
+    const brokenApp = buildApp(db, orchestratorSpy, brokenReadCache);
+
+    const token = await loginAs(brokenApp, 'coordinator@caresync.demo');
+    const res = await request(brokenApp).post(`/api/patients/${PATIENT_ID}/analysis`).set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(orchestratorSpy).not.toHaveBeenCalled();
+
+    const events = parseSse(res.text);
+    expect(events.find((e) => e.event === 'error')).toBeDefined();
+    // Same convention the live path's error boundary already establishes:
+    // no `done` fires on a failed run — its absence is itself the signal.
+    expect(events.find((e) => e.event === 'done')).toBeUndefined();
+  });
+
+  it('(b) ?live=1 always invokes the orchestrator and overwrites the cache row, even when one already exists', async () => {
+    const orchestratorSpy = jest.fn(stubOrchestrate);
+    const liveApp = buildApp(db, orchestratorSpy);
+    writeAnalysisCache(db, {
+      patientId: PATIENT_ID,
+      resultJson: cachedResultFromStub('stale-task-id'),
+      modelVersion: 'stale-model',
+      createdTs: '2020-01-01T00:00:00.000Z',
+    });
+
+    const token = await loginAs(liveApp, 'coordinator@caresync.demo');
+    const res = await request(liveApp)
+      .post(`/api/patients/${PATIENT_ID}/analysis?live=1`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(orchestratorSpy).toHaveBeenCalledTimes(1);
+
+    const events = parseSse(res.text);
+    const taskEvent = events.find((e) => e.event === 'task');
+    expect(taskEvent).toBeDefined();
+    expect(taskEvent!.data.id).not.toBe('stale-task-id');
+
+    const row = readAnalysisCache(db, PATIENT_ID);
+    expect(row).not.toBeNull();
+    expect(row!.modelVersion).toBe('gpt-5.5');
+    expect(row!.createdTs).not.toBe('2020-01-01T00:00:00.000Z');
+    const resultJson = row!.resultJson as AnalysisResultJson;
+    expect(resultJson.actionPlanner.tasks).toHaveLength(1);
+    expect(resultJson.actionPlanner.tasks[0].id).toBe(taskEvent!.data.id);
+
+    await deleteTask(taskEvent!.data.id);
+  });
+
+  it('(c) cold cache: default request falls back to exactly one live run and populates the cache row', async () => {
+    const orchestratorSpy = jest.fn(stubOrchestrate);
+    const coldApp = buildApp(db, orchestratorSpy);
+    expect(readAnalysisCache(db, PATIENT_ID)).toBeNull();
+
+    const token = await loginAs(coldApp, 'coordinator@caresync.demo');
+    const res = await request(coldApp).post(`/api/patients/${PATIENT_ID}/analysis`).set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(orchestratorSpy).toHaveBeenCalledTimes(1);
+
+    const row = readAnalysisCache(db, PATIENT_ID);
+    expect(row).not.toBeNull();
+
+    const events = parseSse(res.text);
+    const taskEvent = events.find((e) => e.event === 'task');
+    expect(taskEvent).toBeDefined();
+
+    await deleteTask(taskEvent!.data.id);
+  });
+
+  it('(f) captures live narration into the cache and replays it as byte-identical `token` events', async () => {
+    // Live run (?live=1) first — capture the token events it emits and let it
+    // persist the row — then a default request replays that row. The token
+    // events must match (agentId + text), proving the reasoning prose shows
+    // in the feed on a replay exactly as it did live (C2 / GD2), not a blank
+    // narration.
+    const liveApp = buildApp(db, stubOrchestrate);
+    const liveToken = await loginAs(liveApp, 'coordinator@caresync.demo');
+    const liveRes = await request(liveApp)
+      .post(`/api/patients/${PATIENT_ID}/analysis?live=1`)
+      .set('Authorization', `Bearer ${liveToken}`);
+    const liveTokens = parseSse(liveRes.text)
+      .filter((e) => e.event === 'token')
+      .map((e) => e.data);
+
+    // Sanity: the live run really did stream per-agent narration.
+    expect(liveTokens.length).toBeGreaterThan(0);
+    expect(liveTokens.map((t) => t.agentId).sort()).toEqual(['actionPlanner', 'careGap', 'risk', 'sdoh']);
+
+    // The persisted row captured that same safe narration per agent.
+    const row = readAnalysisCache(db, PATIENT_ID);
+    const stored = row!.resultJson as AnalysisResultJson;
+    expect(stored.risk.narration).toBe('Reviewing chart...');
+    expect(stored.careGap.narration).toBe('Checking preventive care gaps...');
+    expect(stored.sdoh.narration).toBe('Screening for social barriers...');
+    expect(stored.actionPlanner.narration).toBe('Synthesizing worklist...');
+
+    // Replay (default request) — its token events are identical in shape and
+    // content to the live ones (per agent; replay coalesces each agent's
+    // narration into one frame, which is what the live stub emits too here).
+    const replayApp = buildApp(db, stubOrchestrate);
+    const replayToken = await loginAs(replayApp, 'coordinator@caresync.demo');
+    const replayRes = await request(replayApp).post(`/api/patients/${PATIENT_ID}/analysis`).set('Authorization', `Bearer ${replayToken}`);
+    const replayTokens = parseSse(replayRes.text)
+      .filter((e) => e.event === 'token')
+      .map((e) => e.data);
+
+    expect(replayTokens).toEqual(liveTokens);
+
+    // Cleanup the Task the live run created (replay creates none).
+    const liveTaskEvent = parseSse(liveRes.text).find((e) => e.event === 'task');
+    await deleteTask(liveTaskEvent!.data.id);
+  });
+
+  it('(g) a cache-write failure does not sink an otherwise-successful run — `done` still fires', async () => {
+    // writeCache is best-effort: the stream + HAPI Task writes already
+    // succeeded by the time it runs, so a persistence throw must not flip the
+    // run into the `error`/no-`done` path (which would hang the graph in
+    // `synthesizing`). Inject a throwing writeCache and prove `done` fires,
+    // no `error` event, and the real work (task creation) still happened.
+    const orchestratorSpy = jest.fn(stubOrchestrate);
+    const throwingWriteCache = jest.fn(() => {
+      throw new Error('disk full');
+    });
+    const fhirService = new FhirReadService(db, FHIR_BASE_URL);
+    const app = express();
+    app.use(express.json());
+    app.use('/api/auth', createAuthRouter(db));
+    app.use('/api/patients', createAnalysisRouter(fhirService, orchestratorSpy, db, undefined, throwingWriteCache));
+
+    const token = await loginAs(app, 'coordinator@caresync.demo');
+    const res = await request(app).post(`/api/patients/${PATIENT_ID}/analysis?live=1`).set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(throwingWriteCache).toHaveBeenCalledTimes(1);
+
+    const events = parseSse(res.text);
+    expect(events.find((e) => e.event === 'error')).toBeUndefined();
+    expect(events.find((e) => e.event === 'done')).toBeDefined();
+    expect(events[events.length - 1].event).toBe('done');
+
+    const taskEvent = events.find((e) => e.event === 'task');
+    expect(taskEvent).toBeDefined();
+    await deleteTask(taskEvent!.data.id);
   });
 });

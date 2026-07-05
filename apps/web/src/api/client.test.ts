@@ -172,4 +172,35 @@ describe('streamAnalysis', () => {
     expect(onDone).toHaveBeenCalledTimes(1);
     expect(onDone).toHaveBeenCalledWith();
   });
+
+  it('requests the plain analysis URL (no ?live=1) by default', async () => {
+    const body = sseStream(['event: done\ndata: {}\n\n']);
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(body));
+
+    await streamAnalysis('maria-1', {});
+
+    const url = vi.mocked(fetch).mock.calls[0][0] as string;
+    expect(url).toContain('/api/patients/maria-1/analysis');
+    expect(url).not.toContain('live=1');
+  });
+
+  it('appends ?live=1 when opts.live is true', async () => {
+    const body = sseStream(['event: done\ndata: {}\n\n']);
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(body));
+
+    await streamAnalysis('maria-1', {}, { live: true });
+
+    const url = vi.mocked(fetch).mock.calls[0][0] as string;
+    expect(url).toContain('/api/patients/maria-1/analysis?live=1');
+  });
+
+  it('does not append ?live=1 when opts.live is false', async () => {
+    const body = sseStream(['event: done\ndata: {}\n\n']);
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(body));
+
+    await streamAnalysis('maria-1', {}, { live: false });
+
+    const url = vi.mocked(fetch).mock.calls[0][0] as string;
+    expect(url).not.toContain('live=1');
+  });
 });

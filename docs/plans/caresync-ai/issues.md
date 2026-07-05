@@ -102,10 +102,10 @@ cached; demo mode replays it instantly and deterministically, while an explicit
 2026-07-04) and re-caches.
 
 ### Acceptance criteria
-- [ ] Canvas graph animates through the state machine in sync with the streaming analysis; no chart library used.
-- [ ] Per-agent color identity is consistent from graph node → feed box → task card citation.
-- [ ] A cached analysis replays deterministically without a live model call; the explicit live trigger forces a fresh run and updates the cache.
-- [ ] Cached and live runs produce the same UI treatment (cache is real prior output, not a script).
+- [x] Canvas graph animates through the state machine in sync with the streaming analysis; no chart library used.
+- [x] Per-agent color identity is consistent from graph node → feed box → task card citation.
+- [x] A cached analysis replays deterministically without a live model call; the explicit live trigger forces a fresh run and updates the cache.
+- [x] Cached and live runs produce the same UI treatment (cache is real prior output, not a script).
 
 ### Blocked by
 - S3

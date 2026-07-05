@@ -130,6 +130,21 @@ export class FhirReadService {
     }
   }
 
+  /**
+   * Public entry point to the same role→scope check (+ denial audit) every
+   * other method here goes through via the private `guard`, for callers that
+   * need to enforce the invariant without making a HAPI request themselves
+   * (e.g. the analysis route's cache-replay path, S4 A2 — it skips
+   * `getPatientBundle` to avoid a live HAPI read, but must not also skip the
+   * scope gate + audit trail that method would otherwise be the only path
+   * to). Same signature/behavior as `guard` — kept as a thin public alias
+   * rather than renaming `guard` itself, so every existing call site here is
+   * untouched.
+   */
+  assertScope(actor: AuthTokenPayload, domain: ResourceDomain, resource: string, action = 'read'): void {
+    this.guard(actor, domain, resource, action);
+  }
+
   async getPatient(actor: AuthTokenPayload, patientId: string): Promise<PatientSummary> {
     const resource = `Patient/${patientId}`;
     this.guard(actor, 'demographic', resource);

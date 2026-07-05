@@ -112,10 +112,20 @@ export interface AnalysisHandlers {
  * dispatching each SSE frame (`event: <type>\ndata: <json>\n\n`) to the
  * matching handler as it arrives. Buffers across `read()` calls so a frame
  * split across chunk boundaries is still parsed correctly.
+ *
+ * Pass `{ live: true }` to append `?live=1`, forcing the backend to run the
+ * orchestrator fresh instead of replaying its cache. The SSE event shape is
+ * identical either way (by backend design), so this flag only chooses the
+ * source of the data — the caller renders both modes through one code path.
  */
-export async function streamAnalysis(patientId: string, handlers: AnalysisHandlers): Promise<void> {
+export async function streamAnalysis(
+  patientId: string,
+  handlers: AnalysisHandlers,
+  opts?: { live?: boolean }
+): Promise<void> {
   const token = localStorage.getItem(TOKEN_KEY);
-  const res = await fetch(`${API_BASE_URL}/api/patients/${patientId}/analysis`, {
+  const query = opts?.live ? '?live=1' : '';
+  const res = await fetch(`${API_BASE_URL}/api/patients/${patientId}/analysis${query}`, {
     method: 'POST',
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
