@@ -276,13 +276,18 @@ export function PatientDetail() {
             <span className="text-section font-bold text-text">{data.patient.name}</span>
             <span className="text-body text-text-muted">{ageSexLabel(data.patient.birthDate, data.patient.gender)}</span>
             <span className="font-mono text-xs text-text-dim flex-1 truncate">| Patient/{data.patient.id}</span>
-            {/* Mode note: derived purely from which button was pressed — the SSE
-                stream itself carries no cache-vs-live signal (identical by design).
-                A default "Run Analysis" press could still have been served by a
-                cold-cache live fallback on the backend; this label reflects intent. */}
+            {/* Mode note states what was REQUESTED, not an asserted outcome:
+                the client only knows which button was pressed. A default
+                "Run Analysis" press on a cold cache is actually served by a
+                live run + cache-write on the backend, so claiming "cached
+                replay" would assert an outcome the client can't confirm. */}
             {lastMode && (
-              <span className="font-mono text-[10px] text-text-dim uppercase tracking-wide" data-testid="analysis-mode">
-                {lastMode === 'live' ? 'live run' : 'cached replay'}
+              <span
+                className="font-mono text-[10px] text-text-dim uppercase tracking-wide"
+                data-testid="analysis-mode"
+                aria-live="polite"
+              >
+                {lastMode === 'live' ? 'requested: live' : 'requested: cached'}
               </span>
             )}
             {/* Secondary, de-emphasized sibling of Run Analysis — forces ?live=1. */}

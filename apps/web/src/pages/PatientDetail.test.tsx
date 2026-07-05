@@ -291,6 +291,27 @@ describe('PatientDetail — Run Analysis + four-feed grid', () => {
     expect(client.streamAnalysis).toHaveBeenCalledWith('maria-1', expect.any(Object), { live: true });
   });
 
+  it('labels the mode by what was requested, not an asserted outcome', async () => {
+    renderPatientDetail();
+    await screen.findByText('Maria Chen');
+
+    // No label before any run.
+    expect(screen.queryByTestId('analysis-mode')).not.toBeInTheDocument();
+
+    // Resolve immediately so `running` clears and the second click isn't blocked.
+    vi.mocked(client.streamAnalysis).mockResolvedValue(undefined);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /run analysis/i }));
+    });
+    expect(screen.getByTestId('analysis-mode').textContent).toBe('requested: cached');
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /run live/i }));
+    });
+    expect(screen.getByTestId('analysis-mode').textContent).toBe('requested: live');
+  });
+
   it('disables both the Run Analysis and Run live buttons while a run is in progress', async () => {
     renderPatientDetail();
     await screen.findByText('Maria Chen');
