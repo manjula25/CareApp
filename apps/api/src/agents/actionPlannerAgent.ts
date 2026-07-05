@@ -48,6 +48,12 @@ const PLAN_TASKS_TOOL = {
             title: { type: 'string', description: 'Short task title.' },
             description: { type: 'string', description: 'What the assignee should do and why.' },
             priority: { type: 'string', enum: ['critical', 'high', 'medium', 'low'] },
+            domain: {
+              type: 'string',
+              enum: ['clinical', 'sdoh'],
+              description:
+                'Which care domain this task belongs to: "sdoh" for tasks synthesized from SDOH-agent barriers (social/environmental), "clinical" for tasks from the Risk or Care Gap findings.',
+            },
             assignTo: { type: 'string', description: 'Optional role or person to assign this task to.' },
             dueInDays: { type: 'number', description: 'Optional number of days from now this task is due.' },
             fhirResources: {
@@ -57,7 +63,7 @@ const PLAN_TASKS_TOOL = {
               items: { type: 'string' },
             },
           },
-          required: ['title', 'description', 'priority', 'fhirResources'],
+          required: ['title', 'description', 'priority', 'domain', 'fhirResources'],
         },
       },
     },

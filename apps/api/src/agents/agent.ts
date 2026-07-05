@@ -43,6 +43,10 @@ export interface ActionPlannerOutput {
     title: string;
     description: string;
     priority: string;
+    // Which access-scope domain this task belongs to. The model self-reports
+    // it per task (it knows which upstream agent's finding each task
+    // synthesizes); consumed downstream to write Task.category (S7 A0).
+    domain: 'clinical' | 'sdoh';
     assignTo?: string;
     dueInDays?: number;
     fhirResources: string[];

@@ -43,12 +43,20 @@ export interface ConditionSummary {
 
 export type TaskPriority = 'critical' | 'high' | 'medium';
 
+// S7 A0 — the care domain a Task belongs to. Deliberately reuses the
+// access-scope vocabulary (see auth/scopes.ts ResourceDomain) so A1 can filter
+// with hasScope(role, 'sdoh'). Optional on reads: Tasks created before this
+// field existed carry no category and MUST map to undefined (fail-open — an
+// uncategorized Task is visible to every role), never a fabricated default.
+export type TaskDomain = 'clinical' | 'sdoh';
+
 export interface TaskSummary {
   id: string;
   title: string;
   priority: TaskPriority;
   due: string;
   status: string;
+  domain?: TaskDomain;
 }
 
 // S6 A3 — TaskSummary plus the two fields the subscription webhook needs to
@@ -80,6 +88,32 @@ const ACTION_PLANNER_PRIORITY_TO_FHIR: Record<string, string> = {
 // scope deletes to exactly the Tasks it created, never a seed/Synthea Task.
 const CARESYNC_TASK_TAG = { system: 'https://caresync.demo/fhir/tags', code: 'ai-generated-task' } as const;
 
+// S7 A0 — coding system for the meta.tag that records a Task's care domain
+// ('clinical' | 'sdoh'). Stored as a second `meta.tag` coding (a distinct
+// system from CARESYNC_TASK_TAG), directly mirroring that tag pattern.
+//
+// NOTE (deviation from the A0 plan text): the plan asked for a `Task.category`
+// CodeableConcept, but FHIR R4 `Task` has no `category` element and the local
+// HAPI (7.2.0) silently drops it on write (verified — it round-trips as
+// undefined), so filtering could never see it. `meta.tag` is the pattern the
+// plan itself pointed at (CARESYNC_TASK_TAG), is a proven-persistent element,
+// and keeps `Task.code` (whose FHIR meaning is "the activity to perform") free.
+// The externally-visible contract is unchanged: domain is exposed on
+// TaskSummary.domain as 'clinical' | 'sdoh', undefined when absent.
+const TASK_DOMAIN_SYSTEM = 'https://caresync.demo/fhir/task-domain';
+
+/**
+ * Extracts a Task's care domain from its `meta.tag` codings, or undefined if
+ * the Task carries no CareSync domain coding. Fail-open by design: Tasks
+ * created before this field existed carry no domain tag and map to undefined,
+ * never a default like 'clinical' (A1 filtering treats undefined as visible
+ * to every role).
+ */
+function extractTaskDomain(task: any): TaskDomain | undefined {
+  const coding = (task.meta?.tag ?? []).find((t: any) => t.system === TASK_DOMAIN_SYSTEM);
+  return coding ? (coding.code as TaskDomain) : undefined;
+}
+
 // S6 A1 — Task.owner identifier system for assignment. A *logical* reference
 // (`{ identifier: { system, value } }`) rather than a literal
 // `{ reference: 'Practitioner/{id}' }`: this POC has no Practitioner
@@ -109,6 +143,7 @@ export function mapTaskResource(task: any): TaskWithOwner {
     priority: FHIR_PRIORITY_TO_DISPLAY[task.priority] ?? 'medium',
     due: task.restriction?.period?.end,
     status: FHIR_STATUS_TO_DISPLAY[task.status] ?? 'Open',
+    domain: extractTaskDomain(task),
     patientId: task.for?.reference?.split('/')[1],
     ownerId: task.owner?.identifier?.value,
   };
@@ -118,6 +153,7 @@ export interface ActionPlannerTaskInput {
   title: string;
   description: string;
   priority: string;
+  domain?: TaskDomain;
   assignTo?: string;
   dueInDays?: number;
   fhirResources: string[];
@@ -279,6 +315,7 @@ export class FhirReadService {
       priority: FHIR_PRIORITY_TO_DISPLAY[e.resource.priority] ?? 'medium',
       due: e.resource.restriction?.period?.end,
       status: FHIR_STATUS_TO_DISPLAY[e.resource.status] ?? 'Open',
+      domain: extractTaskDomain(e.resource),
     }));
   }
 
@@ -405,6 +442,11 @@ export class FhirReadService {
       body.restriction = {
         period: { end: new Date(Date.now() + task.dueInDays * 24 * 60 * 60 * 1000).toISOString() },
       };
+    }
+    // Only tag the domain when one is present — an untagged Task must stay
+    // untagged (fail-open on the read side), never carry an empty coding.
+    if (task.domain != null) {
+      body.meta = { tag: [CARESYNC_TASK_TAG, { system: TASK_DOMAIN_SYSTEM, code: task.domain }] };
     }
 
     const created = await this.fhirFetch<{ id: string }>('/Task', {
