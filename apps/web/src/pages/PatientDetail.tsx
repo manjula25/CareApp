@@ -212,33 +212,44 @@ export function PatientDetail() {
   const [feeds, setFeeds] = useState<Record<AgentId, AgentFeedState>>(() => makeFeeds(false));
   const [createdTasks, setCreatedTasks] = useState<AnalysisTask[]>([]);
   const [graphState, dispatchGraph] = useAnalysisGraph();
+  // Which button the user last pressed — the ONLY cache-vs-live signal the
+  // client has, since replayed and live SSE streams are identical by design.
+  const [lastMode, setLastMode] = useState<'cached' | 'live' | null>(null);
 
-  async function handleRunAnalysis() {
+  // `live` selects the SSE source only; every handler below is identical for
+  // both modes so the graph + feeds render the same way whether the data came
+  // from an instant cache replay or a fresh model run (S4 cache/live parity).
+  async function handleRunAnalysis(live: boolean) {
     if (!id || running) return;
     setRunning(true);
+    setLastMode(live ? 'live' : 'cached');
     setFeeds(makeFeeds(true));
     setCreatedTasks([]);
     dispatchGraph({ event: 'start' });
     try {
-      await streamAnalysis(id, {
-        onToken: (agentId, text) => {
-          setFeeds((prev) => withText(prev, agentId, text));
-          dispatchGraph({ event: 'token', agentId });
+      await streamAnalysis(
+        id,
+        {
+          onToken: (agentId, text) => {
+            setFeeds((prev) => withText(prev, agentId, text));
+            dispatchGraph({ event: 'token', agentId });
+          },
+          onFinding: (flag) => {
+            setFeeds((prev) => withFinding(prev, flag));
+            dispatchGraph({ event: 'finding', agentId: flag.agentId });
+          },
+          onComplete: (summary) => {
+            setFeeds((prev) => withSummary(prev, summary));
+            dispatchGraph({ event: 'complete', agentId: summary.agentId });
+          },
+          onTask: (task) => {
+            setCreatedTasks((prev) => [...prev, task]);
+            dispatchGraph({ event: 'task', agentId: task.agentId });
+          },
+          onDone: () => dispatchGraph({ event: 'done' }),
         },
-        onFinding: (flag) => {
-          setFeeds((prev) => withFinding(prev, flag));
-          dispatchGraph({ event: 'finding', agentId: flag.agentId });
-        },
-        onComplete: (summary) => {
-          setFeeds((prev) => withSummary(prev, summary));
-          dispatchGraph({ event: 'complete', agentId: summary.agentId });
-        },
-        onTask: (task) => {
-          setCreatedTasks((prev) => [...prev, task]);
-          dispatchGraph({ event: 'task', agentId: task.agentId });
-        },
-        onDone: () => dispatchGraph({ event: 'done' }),
-      });
+        { live }
+      );
     } finally {
       setRunning(false);
     }
@@ -265,8 +276,25 @@ export function PatientDetail() {
             <span className="text-section font-bold text-text">{data.patient.name}</span>
             <span className="text-body text-text-muted">{ageSexLabel(data.patient.birthDate, data.patient.gender)}</span>
             <span className="font-mono text-xs text-text-dim flex-1 truncate">| Patient/{data.patient.id}</span>
+            {/* Mode note: derived purely from which button was pressed — the SSE
+                stream itself carries no cache-vs-live signal (identical by design).
+                A default "Run Analysis" press could still have been served by a
+                cold-cache live fallback on the backend; this label reflects intent. */}
+            {lastMode && (
+              <span className="font-mono text-[10px] text-text-dim uppercase tracking-wide" data-testid="analysis-mode">
+                {lastMode === 'live' ? 'live run' : 'cached replay'}
+              </span>
+            )}
+            {/* Secondary, de-emphasized sibling of Run Analysis — forces ?live=1. */}
             <button
-              onClick={handleRunAnalysis}
+              onClick={() => handleRunAnalysis(true)}
+              disabled={running}
+              className="flex items-center gap-2 bg-transparent border border-border-light text-text-muted font-mono text-label font-bold tracking-wide px-3 py-1.5 rounded-md disabled:opacity-60 disabled:cursor-default"
+            >
+              Run live
+            </button>
+            <button
+              onClick={() => handleRunAnalysis(false)}
               disabled={running}
               className="flex items-center gap-2 bg-cyan-dim border border-cyan text-cyan font-mono text-label font-bold tracking-wide px-4 py-1.5 rounded-md disabled:opacity-85 disabled:cursor-default"
             >

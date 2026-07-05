@@ -63,7 +63,7 @@ describe('PatientDetail — Run Analysis + four-feed grid', () => {
     await screen.findByText('Maria Chen');
 
     const run = startRun();
-    expect(client.streamAnalysis).toHaveBeenCalledWith('maria-1', expect.any(Object));
+    expect(client.streamAnalysis).toHaveBeenCalledWith('maria-1', expect.any(Object), { live: false });
 
     // Other three feeds stay idle the instant a run starts.
     expect(screen.getAllByText('Awaiting analysis run…')).toHaveLength(3);
@@ -269,6 +269,38 @@ describe('PatientDetail — Run Analysis + four-feed grid', () => {
     expect(riskBox.textContent).not.toContain('Care gap narration.');
     expect(careGapBox.textContent).toContain('Care gap narration.');
     expect(careGapBox.textContent).not.toContain('Risk narration.');
+  });
+
+  it('runs the default "Run Analysis" button without forcing a live run (cache-first)', async () => {
+    renderPatientDetail();
+    await screen.findByText('Maria Chen');
+
+    vi.mocked(client.streamAnalysis).mockReturnValue(new Promise<void>(() => {}));
+    fireEvent.click(screen.getByRole('button', { name: /run analysis/i }));
+
+    expect(client.streamAnalysis).toHaveBeenCalledWith('maria-1', expect.any(Object), { live: false });
+  });
+
+  it('forces a live run when the "Run live" button is clicked', async () => {
+    renderPatientDetail();
+    await screen.findByText('Maria Chen');
+
+    vi.mocked(client.streamAnalysis).mockReturnValue(new Promise<void>(() => {}));
+    fireEvent.click(screen.getByRole('button', { name: /run live/i }));
+
+    expect(client.streamAnalysis).toHaveBeenCalledWith('maria-1', expect.any(Object), { live: true });
+  });
+
+  it('disables both the Run Analysis and Run live buttons while a run is in progress', async () => {
+    renderPatientDetail();
+    await screen.findByText('Maria Chen');
+
+    const run = startRun();
+
+    expect(screen.getByRole('button', { name: /analyzing/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /run live/i })).toBeDisabled();
+
+    act(() => run.resolve());
   });
 
   it('renders a newly-created Task with citation chips alongside the initially-loaded task, and bumps the open count', async () => {
