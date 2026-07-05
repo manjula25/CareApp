@@ -402,11 +402,11 @@ Subscription + Tasks live in the disposable HAPI. The relay hub is in-memory (dr
 
 ## Iteration 7 — S7 Role-filtered task queue + task actions — 2026-07-04
 
-**Spec:** `prd.md` (stories 24, 25, 27–29, 31) · **Slice:** S7 (M02/M03 + W13) · **Decisions:** GD4 (**mobile-stack decision — resolve before starting**; recommendation on record: PWA/responsive web), GD5 (role filtering). **Blocked by S3 + the GD4 decision.**
+**Spec:** `prd.md` (stories 24, 25, 27–29, 31) · **Slice:** S7 (M02/M03 + W13) · **Decisions:** GD4 (**resolved 2026-07-05: PWA/responsive web**, see `plan.md` §1), GD5 (role filtering). **Blocked by S3 (shipped).**
 
 **Goal:** The queue and its actions, built responsive per GD4. The queue **filters by role** — a Social Worker sees only SDOH-domain tasks, a Coordinator sees all. Opening a task shows the justifying patient context + citations; the user can **Complete / Defer / Escalate** (and Call), each PATCHing the FHIR Task status in HAPI and syncing back. Completing on the mobile-shaped view syncs to web via the S6 relay.
 
-**Pre-work (gate):** **Record the GD4 mobile-stack decision** (`plan.md` §8 / a short ADR) before implementation — recommendation is PWA/responsive web (one codebase, phone-frame demo). This slice assumes that unless overridden.
+**Pre-work (gate):** ~~Record the GD4 mobile-stack decision before implementation~~ — **done 2026-07-05**, PWA/responsive web (one codebase, phone-frame demo), see `plan.md` §1 GD4.
 
 **Architecture:** Backend gains a **role-filtered task listing** (`GET /api/tasks?role-scoped` — Social Worker → SDOH-domain Tasks only via the S1 scope map + Task category, Coordinator → all) and **status-transition endpoints** (`PATCH /api/tasks/:id/status` for complete/defer/escalate) on the audited write client. Frontend builds the M02 **task queue** and M03 **task detail** as responsive views (`reference-materials/caresync-mobile.html`), plus the W13 Task Management Center on web; status changes reflect back and, via the S6 relay, cross-surface (mobile→web).
 

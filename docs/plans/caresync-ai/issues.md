@@ -165,7 +165,7 @@ status in HAPI and syncs back. **This slice triggers the GD4 mobile-stack decisi
 (PWA/responsive web vs. React Native) — resolve it before starting.**
 
 ### Acceptance criteria
-- [ ] GD4 mobile-stack decision recorded before implementation begins.
+- [x] GD4 mobile-stack decision recorded before implementation begins. (2026-07-05: PWA/responsive web, see `plan.md` §1 GD4)
 - [ ] Social Worker queue shows only SDOH-domain tasks; Coordinator sees all task types.
 - [ ] Task detail shows the justifying patient context and citations.
 - [ ] Complete/Defer/Escalate transitions PATCH the FHIR Task status in HAPI and reflect back in the UI.

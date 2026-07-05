@@ -171,9 +171,9 @@ the rest navigation-only shells. The six existing HTML mockups are ported faithf
 to React, preserving design tokens and the Canvas agent-graph animation; screens
 without mockups are built to the same design system.
 
-**Mobile stack (GD4 — OPEN).** Web is built first. The mobile stack (PWA/responsive
-web — recommended — vs. React Native) must be decided before the mobile task-queue
-work begins, because M02/M03 are demo-critical and Flow 3 is mobile-only.
+**Mobile stack (GD4 — RESOLVED 2026-07-05: PWA/responsive web).** Decided at the S7
+pre-work gate, ahead of Iteration 7 — one responsive codebase, no React Native
+toolchain. See `plan.md` §1 GD4.
 
 ## Testing Decisions
 
