@@ -62,5 +62,7 @@ export function useAuth(): AuthContextValue {
 }
 
 export function roleHome(role: Role): string {
-  return role === 'coordinator' ? '/panel' : '/coming-soon';
+  if (role === 'director') return '/population';
+  if (role === 'coordinator') return '/panel';
+  return '/coming-soon';
 }

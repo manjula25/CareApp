@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { streamAnalysis } from './client';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { streamAnalysis, subscribeToEvents } from './client';
 
 /** Builds a ReadableStream<Uint8Array> that emits the given string chunks in order. */
 function sseStream(chunks: string[]): ReadableStream<Uint8Array> {
@@ -202,5 +202,59 @@ describe('streamAnalysis', () => {
 
     const url = vi.mocked(fetch).mock.calls[0][0] as string;
     expect(url).not.toContain('live=1');
+  });
+});
+
+describe('subscribeToEvents', () => {
+  let unsubscribe: (() => void) | undefined;
+
+  beforeEach(() => {
+    localStorage.clear();
+    localStorage.setItem('caresync_token', 'header.payload.signature');
+  });
+
+  afterEach(() => {
+    unsubscribe?.();
+    unsubscribe = undefined;
+  });
+
+  it('connects to /api/events with a bearer token', async () => {
+    const body = sseStream(['event: connected\ndata: {}\n\n']);
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(body));
+
+    unsubscribe = subscribeToEvents({});
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/events'),
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer header.payload.signature' }) })
+    );
+  });
+
+  it('dispatches an assignment event to onAssignment with the parsed task', async () => {
+    const body = sseStream([
+      'event: connected\ndata: {}\n\n',
+      'event: assignment\ndata: {"id":"task-1","title":"Med rec follow-up","priority":"high","status":"Open","ownerId":"coordinator-1"}\n\n',
+    ]);
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(body));
+
+    const onAssignment = vi.fn();
+    unsubscribe = subscribeToEvents({ onAssignment });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(onAssignment).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'task-1', title: 'Med rec follow-up', ownerId: 'coordinator-1' })
+    );
+  });
+
+  it('ignores non-assignment events (e.g. the initial "connected" event)', async () => {
+    const body = sseStream(['event: connected\ndata: {}\n\n']);
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(body));
+
+    const onAssignment = vi.fn();
+    unsubscribe = subscribeToEvents({ onAssignment });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(onAssignment).not.toHaveBeenCalled();
   });
 });

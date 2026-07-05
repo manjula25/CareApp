@@ -6,11 +6,26 @@
  * re-running the import is idempotent.
  */
 
+/**
+ * US Core race/ethnicity, carried as an OMB category code + display so the
+ * import can render the us-core-race / us-core-ethnicity Patient extensions.
+ * Populated by the S5 population generator (`fhir-data/population.ts`) to
+ * feed the S8 demographic-parity aggregate (GD12); hero/panel patients leave
+ * this unset since they don't need it.
+ */
+export interface RaceEthnicity {
+  raceCode: string;
+  raceDisplay: string;
+  ethnicityCode: string;
+  ethnicityDisplay: string;
+}
+
 export interface SeedPatient {
   id: string;
   name: { given: string[]; family: string };
   gender: 'male' | 'female';
   birthDate: string;
+  raceEthnicity?: RaceEthnicity;
   conditions: Array<{ id: string; system: 'ICD-10'; code: string; display: string; onsetDateTime?: string }>;
   observations?: Array<{
     id: string;

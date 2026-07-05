@@ -1,5 +1,9 @@
+import { useEffect, useRef, useState } from 'react';
 import { Outlet } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../auth/useAuth';
+import { subscribeToEvents } from '../api/client';
+import type { AssignedTaskEvent } from '../api/client';
 import { LogoIcon, BellIcon, LogoutIcon } from '../icons';
 
 const ROLE_LABEL: Record<string, string> = {
@@ -7,6 +11,8 @@ const ROLE_LABEL: Record<string, string> = {
   coordinator: 'Care Coordinator',
   social_worker: 'Social Worker',
 };
+
+const TOAST_DURATION_MS = 6000;
 
 function initials(name: string): string {
   return name
@@ -18,8 +24,49 @@ function initials(name: string): string {
     .toUpperCase();
 }
 
+interface Toast {
+  id: number;
+  message: string;
+}
+
+/**
+ * S6 B1 — the Coordinator's live-assignment notification. Only coordinators
+ * receive `assignment` events (see `routes/events.ts`'s webhook — it relays
+ * to the Task's `ownerId` only), so the relay connection is opened only for
+ * that role rather than for every logged-in user. No `M02` task queue exists
+ * yet (that's S7) — the live update this slice owns is `PatientPanel`'s
+ * `assigned-panel` query, invalidated here so it refetches wherever it's
+ * mounted; this toast is what tells the Coordinator something changed if
+ * they're looking at a different page.
+ */
 export function AppShell() {
   const { user, logout } = useAuth();
+  const queryClient = useQueryClient();
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const nextToastId = useRef(0);
+
+  useEffect(() => {
+    if (!user || user.role !== 'coordinator') return;
+
+    const unsubscribe = subscribeToEvents({
+      onAssignment: (task: AssignedTaskEvent) => {
+        queryClient.invalidateQueries({ queryKey: ['assigned-panel'] });
+
+        const message = `New task assigned: ${task.title}`;
+        const id = nextToastId.current++;
+        // HAPI's rest-hook delivery for a single Task update has been
+        // observed to fire twice in quick succession (confirmed against the
+        // local instance) — skip a second toast with the same text rather
+        // than showing the Coordinator two identical notifications.
+        setToasts((prev) => (prev.some((t) => t.message === message) ? prev : [...prev, { id, message }]));
+        setTimeout(() => {
+          setToasts((prev) => prev.filter((t) => t.id !== id));
+        }, TOAST_DURATION_MS);
+      },
+    });
+
+    return unsubscribe;
+  }, [user, queryClient]);
 
   return (
     <div className="min-h-screen bg-bg">
@@ -62,6 +109,20 @@ export function AppShell() {
       <main className="p-6">
         <Outlet />
       </main>
+
+      {toasts.length > 0 && (
+        <div className="fixed bottom-4 right-4 flex flex-col gap-2 z-50" role="status" aria-live="polite">
+          {toasts.map((toast) => (
+            <div
+              key={toast.id}
+              className="flex items-center gap-2 bg-surface-raised border border-cyan rounded-card px-3.5 py-2.5 shadow-lg max-w-sm"
+            >
+              <BellIcon className="text-cyan w-4 h-4 flex-none" />
+              <span className="text-label text-text">{toast.message}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

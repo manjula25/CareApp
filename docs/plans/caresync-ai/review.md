@@ -1,58 +1,103 @@
-# Code Review — CareSync AI, S4 (Agent-graph canvas + analysis cache/replay)
+# Code Review — CareSync AI, S6 (Task assignment + real-time FHIR Subscription)
 
-> **PLAN_ID:** `caresync-ai` · **Slice:** S4 · **Date:** 2026-07-05
-> **Fixed point:** `e8a9309` (last S3 commit) → `HEAD` (`d5e0796`), fully committed — no uncommitted
-> working-tree changes on this branch besides the `verification-before-completion` doc updates from
-> this session. `git diff e8a9309...HEAD` — 16 commits (`git log e8a9309..HEAD --oneline`), 19 files
-> changed, 2337 insertions / 64 deletions. Two independent sub-agents reviewed the diff in parallel,
-> one per axis, each blind to the other's findings.
+> **PLAN_ID:** `caresync-ai` · **Slice:** S6 · **Date:** 2026-07-05
+> **Fixed point:** `1c8c612` (last S5 commit, = `feature/caresync-s5-population-dashboard` tip) →
+> `HEAD` (`a281628`), fully committed. This branch is cumulative off the previous slice, not off
+> `main`. Two-axis review (Standards + Spec) run as parallel sub-agents over
+> `git diff feature/caresync-s5-population-dashboard...HEAD` (23 files, +1419/−168).
 >
-> Read `docs/plans/caresync-ai/verification.md` first — this review runs on top of a PASS verification
-> gate; that doc has the fresh test-evidence tables this review doesn't repeat.
+> Spec sources: `implementation-plan.md` Iteration 6 (tasks A1, A2, A3, B1, C1, C2), `issues.md` S6
+> acceptance criteria. Standards sources: none documented (no `CODING_STANDARDS.md`/`CONTRIBUTING.md`)
+> — the **smell-baseline-only** path applies; every Standards finding is a judgement call.
+> Prior slice's review preserved at `review-s5.md`.
+>
+> Read `docs/plans/caresync-ai/verification.md` first — this review runs on top of a PASS
+> verification gate (119 API tests, 116 web tests, 9/9 E2E incl. the live Subscription spec, tsc +
+> lint clean); that doc has the test-evidence tables this review doesn't repeat.
+>
+> Commits reviewed:
+> - `d75645e` feat(S6): task assignment + real-time FHIR Subscription relay
+> - `a281628` docs(S6): verification-before-completion artifacts + checkbox closeout
 
 ## Standards
 
-Documented-standard checks: CLAUDE.md's "UI implementation" ≥80% fidelity rule is satisfied (`tasks/todo.md` records an explicit ≥85% self-check plus the intentional deviations). The local convention of routers taking `db` via dependency injection (`createAuthRouter(db)`) is followed by the new `createAnalysisRouter(...)`. No documented-standard (hard) violations found. `CLAUDE.md`'s own "Code style" section is an empty placeholder, so the smell baseline is the only other lens applied.
+No documented coding-standards files exist in this repo, so there are **no hard violations**. Every
+item below is a judgement call against the Fowler smell baseline. Tooling-enforced concerns
+(formatting, `tsc`, lint) are skipped. The diff is unusually well-documented and mostly clean;
+findings are minor.
 
-Baseline smells (all judgement calls, none blocking):
+**Duplicated Code (the one worth acting on) — `apps/web/src/api/client.ts`.**
+`subscribeToEvents`'s SSE frame parser is a near-verbatim copy of the loop already in `streamAnalysis`
+(same file): same `getReader()` / `TextDecoder` / `buffer.indexOf('\n\n')` split and the same
+`event: ` / `data: ` prefix parsing. Two copies of an identical SSE-decoding shape. Possible
+Duplicated Code → extract a shared `readSseFrames(res, onFrame)` helper both callers use. Most
+concrete finding.
 
-- **Duplicated Code** — `analysis.ts`'s `replayCachedAnalysis` repeats the same `token`→`finding`*→`complete` emit triplet four times (once per agent), differing only in field names/`agentId`; could be a per-agent loop or table-driven emit.
-- **Duplicated Code (already tracked)** — `AnalysisCacheEntry`/`AnalysisCacheRow` in `analysisCache.ts` are byte-identical interfaces; `PatientDetail.tsx`'s "Run live"/"Run Analysis" buttons duplicate a long `className` string at both call sites. Both already logged as accepted nits in `tasks/todo.md` (A1, B3) — not new findings.
-- **Middle Man** — `FhirReadService.assertScope()` (`client.ts`) is a one-line pass-through to the existing private `guard()`, added solely so the cache-replay path can call it; reads more naturally as just making `guard` itself public.
-- **Awkward parameter list / mild Data Clump** — `createAnalysisRouter(fhirService, runAnalysis, db, readCache, writeCache)` puts the required `db` after the defaulted `runAnalysis`, forcing every real call site to pass `orchestrate` explicitly just to reach `db`. A `{ runAnalysis, db, readCache, writeCache }` deps object would avoid the ordering trap.
-- **Stale comment (minor)** — `analysisGraph.ts`'s `useAnalysisGraph` doc says "Not wired up yet; … that's B2/B3," but this same diff (`4dc092f`) wires it into `PatientDetail.tsx`.
+**Primitive Obsession / weak typing — `apps/api/src/fhir/client.ts`.** `mapTaskResource(task: any)`
+and `assignTask`'s `task.owner = {...}` on an untyped raw resource lean on `any`/untyped access.
+Possible Primitive Obsession (a raw FHIR Task deserves a minimal typed shape). Worth a note because
+`any` sidesteps `tsc` rather than being caught by it.
 
-**Worst issue on this axis:** the Middle Man / parameter-ordering items are the closest to substantive, and both are minor, non-blocking judgement calls — no hard violations.
+**Message Chains (mild) — `mapTaskResource`.** `task.for?.reference?.split('/')[1]` and
+`task.owner?.identifier?.value` are short navigation chains into an untyped resource. Borderline;
+acceptable given optional-chaining guards. Not worth changing on its own.
+
+**Considered and cleared.**
+- `DirectorOnlyError` consolidation (`population/service.ts` → re-export from `fhir/client.ts`) is the
+  *opposite* of Shotgun Surgery — it removes a parallel duplicate class into one home. Good move; the
+  added `action` constructor param keeps both call sites expressive.
+- `routes/tasks.ts` is a thin HTTP shell over `assignTask`, but that matches every other route file's
+  parse → service → map-error shape. Consistent, not Middle Man.
+- `eventHub.ts` (`Map<userId, Response[]>` register/unregister/publish) is cohesive, single-purpose,
+  no Speculative Generality — scope is exactly the POC's need.
+- Feature Envy / Data Clumps / Repeated Switches / Refused Bequest — none spotted. Tests mirror
+  production shapes; no notable smells beyond the same SSE-parsing idiom.
+
+**Bottom line:** clean diff. One actionable judgement call (shared SSE-frame helper), one minor
+typing note (`any` on the raw FHIR Task). Everything else is intentional consolidation or consistent
+with existing conventions.
 
 ## Spec
 
-Overall: strong compliance. All four S4 acceptance criteria (canvas state-machine sync, per-agent color consistency graph→feed→citation, deterministic cache replay with explicit live override, cache/live UI parity) are implemented and covered by tests matching the documented "Event→state contract" fixture in `implementation-plan.md`/`tasks/todo.md`. Task-citation-chip coloring being neutral gray rather than per-agent-colored is **not** a violation — the mockup (`reference-materials/caresync-ai.html`) itself renders citation ids in flat `text-dim` gray; the AC's "color consistent graph→feed→task" is about traceable attribution, which holds.
+All four acceptance criteria and all plan tasks (A1, A2, A3, B1, C1, C2) are implemented, and the
+four documented deviations (logical `owner.identifier`, `PUT {endpoint}/Task/{id}` route match,
+client-side toast de-dupe, in-process hub) match the code exactly.
 
-**One confirmed defect (category c — looks implemented but is wrong), independently re-verified by the parent review before being reported here:**
+**(a) Missing / partial.**
+- **"the Coordinator's queue updates live"** (`issues.md` S6). The only live-data mechanism is
+  `queryClient.invalidateQueries({ queryKey: ['assigned-panel'] })` (`AppShell.tsx`). But `PanelEntry`
+  carries no owner field, and `getAssignedPanel` reads a fixed `Group/coordinator-demo-panel` —
+  assigning `Task.owner` changes nothing the panel renders (`taskCount` counts a patient's tasks, not
+  the coordinator's owned tasks). So the refetch is visually a no-op; the *only* observable live
+  change is the toast. This is consistent with the plan's scope note ("no M02 queue yet… notification
+  is a toast"), so it is **PARTIAL-by-design**, not a defect — but note that "queue updates live" is
+  satisfied by the toast, not by any queue/panel content change.
 
-**Successful cache-replay reads are never audited — only denials are.** `analysis.ts`'s no-`live=1` branch calls `fhirService.assertScope(...)` (added `2b68194`, refactored to reuse `guard()` in `28a6d45`) before replaying. `assertScope` → `guard()` (`client.ts:126-131`) only calls `writeAudit` on the **denial** branch; a successful scope check does nothing, and — unlike every other read method in `client.ts` (e.g. `getPatientBundle`, which calls `guard()` then its own `writeAudit({outcome: 'success'})`) — no code on the replay path writes a success-audit row. Every default "Run Analysis" that successfully replays a patient's full clinical findings (risk/careGap/sdoh findings + Task citations) leaves **zero** `audit_log` rows for that read, breaking S1's "every FHIR read is audited" invariant (which S8's governance/audit dashboard depends on).
+**(b) Scope creep.** None. The two out-of-slice edits are justified, documented refactors: exporting
+`writeSseEvent` (`analysis.ts`, explicitly for A3 reuse per the plan) and hoisting `DirectorOnlyError`
+into `client.ts` with a re-export shim in `population/service.ts` (no behaviour change; A1 reuses it).
 
-Confirmed directly against the code (not just the sub-agent's claim): `analysis.ts:176`'s comment explicitly says "a local role comparison (+ a denial audit write)" — the comment itself only claims the denial write, none for success. `analysis.test.ts` test (a) (successful replay) asserts on SSE event shape and cache-row immutability but never asserts an `audit_log` row exists; test (d) (denied replay) explicitly queries `audit_log` and asserts one denial row. This gap was never closed: commit `2b68194`'s own message names the exact risk ("could read another user's cached clinical analysis with no audit trail") but its fix, and the later `28a6d45` refactor, only closed the denial half. Not on `tasks/todo.md`'s accepted-deviations list — this is new, not previously reviewed.
+**(c) Wrong / logic concerns.** None found. Verified concretely:
+- `assignTask` is Director-gated with a denial audit before the read, does read-modify-PUT preserving
+  the full resource, and writes a success audit — matches A1's test (owner round-trip + audit row).
+- Webhook relay routes to `task.owner.identifier.value` (= the app `users.id`); `AppShell` registers
+  the SSE connection under `user.id` and only for the `coordinator` role — the two key spaces are
+  consistent (confirmed via the E2E's `decodeUserId`).
+- SSE framing matches on both ends (server writes `event: x\ndata: {json}\n\n`; client parses on
+  `\n\n` split); non-`assignment` events (`connected`) are ignored.
+- Subscription criteria `'Task?'` (bare `Task` is rejected as HAPI-0014) with
+  `payload: 'application/fhir+json'`; idempotency dedupes on criteria + endpoint. Sound.
+- Tests cover both required cases: API-boundary assignment (real HAPI) and the webhook→relay
+  integration path (both PUT-suffix and bare-POST shapes, plus a no-owner no-op).
 
-## Summary
+**Net:** faithful to spec; the one caveat is that "queue updates live" reduces to a toast, as the
+plan itself acknowledges.
 
-- **Standards:** 5 findings, all baseline-smell judgement calls, no hard violations. Worst: Middle Man (`assertScope` pass-through) / parameter-ordering data clump on `createAnalysisRouter` — both minor.
-- **Spec:** 1 finding. Worst (and only): the cache-replay success-audit gap — a real correctness/compliance defect, confirmed, not a false positive.
+---
 
-## Recommendation
-
-The audit gap should be fixed before shipping, consistent with this repo's S2 precedent (`review-s2.md` / `verification-s2.md` §7 — all `code-review`-confirmed defects were fixed test-first before the branch was finished). It's a small, contained fix: add a success `writeAudit` call on the replay path (mirroring `getPatientBundle`'s pattern) and a Supertest assertion in test (a) that a success audit row now exists, the same shape as test (d)'s existing denial-row assertion.
-
-## Post-review fix — 2026-07-05
-
-**User decision: fix before commit** (same precedent as S2's `code-review`-confirmed defects). Fixed test-first:
-
-1. Added a failing assertion to test (a) in `apps/api/src/routes/analysis.test.ts` — queries `audit_log` for a `read`/`success` row on `Patient/${PATIENT_ID}/$everything`, mirroring test (d)'s existing denial-row assertion. Confirmed red (`Expected length: 1, Received length: 0`) before the fix.
-2. `apps/api/src/routes/analysis.ts`: imported `writeAudit` from `../db/audit` and added a `writeAudit(db, { actor, action: 'read', fhirResource: 'Patient/:id/$everything', outcome: 'success' })` call immediately after `assertScope` succeeds on the replay path — mirrors `FhirReadService.getPatientBundle`'s existing guard-then-audit pattern exactly (same actor/action/resource/outcome shape). Updated the surrounding comment to reflect that the route, not `assertScope`, now owns the success-audit write.
-3. Re-verified fresh: API **90/90** (`--runInBand`), web **69/69**, E2E **7/7**, `tsc`/lint clean for both apps (13 pre-existing api warnings, 3 pre-existing/accepted web warnings — unchanged from pre-fix counts). No regressions.
-
-**Gate outcome: PASS.** Standards axis: 0 hard violations (unchanged). Spec axis: the one confirmed defect is now fixed and covered by a regression test.
-
-## Next step
-
-`finishing-a-development-branch`.
+**Summary.** Standards axis: 2 findings, all judgement calls (no documented standards to violate);
+worst is the duplicated SSE-frame parser between `subscribeToEvents` and `streamAnalysis` — extract a
+shared helper. Spec axis: 1 finding; worst (and only) is that "the Coordinator's queue updates live"
+is satisfied by the toast alone — the `assigned-panel` invalidation is a visual no-op given the
+current panel shape — which the plan's own scope note already discloses (no defect). No blocking
+issues on either axis; the branch is shippable.

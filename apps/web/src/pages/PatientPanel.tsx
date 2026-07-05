@@ -2,15 +2,8 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { getAssignedPanel } from '../api/client';
-import { ageSexLabel, riskDotColor, type RiskDotColor } from '../lib/patient';
+import { ageSexLabel, riskDotColor, RISK_DOT_CLASS } from '../lib/patient';
 import { FilterIcon, ChevronRightIcon } from '../icons';
-
-const DOT_CLASS: Record<RiskDotColor, string> = {
-  red: 'bg-red shadow-[0_0_8px_theme(colors.red)]',
-  amber: 'bg-amber shadow-[0_0_8px_theme(colors.amber)]',
-  violet: 'bg-violet shadow-[0_0_8px_theme(colors.violet)]',
-  emerald: 'bg-emerald shadow-[0_0_8px_theme(colors.emerald)]',
-};
 
 export function PatientPanel() {
   const { data, isLoading, isError } = useQuery({ queryKey: ['assigned-panel'], queryFn: getAssignedPanel });
@@ -50,7 +43,7 @@ export function PatientPanel() {
               to={`/patients/${patient.id}`}
               className="flex items-center gap-2.5 px-3.5 py-2.5 border-b border-border last:border-b-0 border-l-[3px] border-l-transparent hover:bg-surface-hover transition-colors"
             >
-              <span className={`w-2 h-2 rounded-full flex-none ${DOT_CLASS[riskDotColor(patient.riskScore)]}`} />
+              <span className={`w-2 h-2 rounded-full flex-none ${RISK_DOT_CLASS[riskDotColor(patient.riskScore)]}`} />
               <div className="flex-1 min-w-0">
                 <div className="text-label font-semibold text-text truncate">
                   {patient.name}

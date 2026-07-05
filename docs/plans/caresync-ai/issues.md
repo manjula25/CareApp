@@ -122,11 +122,11 @@ aggregate API over HAPI. Clicking a cluster drills to a filtered patient list an
 then into a patient detail view.
 
 ### Acceptance criteria
-- [ ] Director login routes to W02 (not the Coordinator panel).
-- [ ] Scatter renders ~500 patients from real HAPI-derived aggregates (native Canvas, no chart library).
-- [ ] Critical-zone count and cost-avoidance figure are computed from patient data, not hardcoded.
-- [ ] Drill-down: cluster → filtered list → patient detail navigation works.
-- [ ] API-boundary tests for the population aggregate endpoints over seeded data.
+- [x] Director login routes to W02 (not the Coordinator panel).
+- [x] Scatter renders ~500 patients from real HAPI-derived aggregates (native Canvas, no chart library).
+- [x] Critical-zone count and cost-avoidance figure are computed from patient data, not hardcoded.
+- [x] Drill-down: cluster → filtered list → patient detail navigation works.
+- [x] API-boundary tests for the population aggregate endpoints over seeded data.
 
 ### Blocked by
 - S1
@@ -143,10 +143,10 @@ clients over SSE/websocket, so the Coordinator's view updates live and shows an
 assignment notification — without a manual refresh.
 
 ### Acceptance criteria
-- [ ] A FHIR Subscription resource exists on HAPI with a rest-hook on Task changes.
-- [ ] Assigning a task updates the FHIR Task and fires the Subscription to the API webhook (visible in logs/network).
-- [ ] The webhook relays to the client over SSE/websocket; the Coordinator's queue updates live and shows a notification.
-- [ ] API-boundary test for assignment; an integration test asserting the webhook→relay path delivers the update.
+- [x] A FHIR Subscription resource exists on HAPI with a rest-hook on Task changes.
+- [x] Assigning a task updates the FHIR Task and fires the Subscription to the API webhook (visible in logs/network).
+- [x] The webhook relays to the client over SSE/websocket; the Coordinator's queue updates live and shows a notification. *(No `M02` task queue exists yet — S7's job. The live-updating surface today is `PatientPanel`/"My Patients" (W12); the notification is a toast.)*
+- [x] API-boundary test for assignment; an integration test asserting the webhook→relay path delivers the update.
 
 ### Blocked by
 - S3

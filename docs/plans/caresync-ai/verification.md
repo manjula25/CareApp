@@ -1,88 +1,174 @@
-# Verification — CareSync AI, S4 (Agent-graph canvas + analysis cache/replay)
+# Verification — CareSync AI, S6 (Task assignment + real-time FHIR Subscription)
 
-> **PLAN_ID:** `caresync-ai` · **Slice:** S4 · **Date:** 2026-07-05
-> **Stage:** Phase 5 (`verification-before-completion`), run on `feature/caresync-s4-agent-graph-cache`
-> (16 commits, base `e8a9309` = last S3 commit, tip `d5e0796`). Read `docs/plans/caresync-ai/implementation-plan.md`
-> Iteration 4 and `docs/plans/caresync-ai/issues.md` S4 for the plan this verifies against — not re-derived here.
-> Per-task status with commit SHAs and accepted deviations lives in `tasks/todo.md` (S4 section) — not re-derived here.
-> Prior slices' verification preserved at `verification-s3.md`, `verification-s2.md`.
+> **PLAN_ID:** `caresync-ai` · **Slice:** S6 · **Date:** 2026-07-05
+> **Stage:** Phase 5 (`verification-before-completion`), run on `feature/caresync-s6-realtime-assignment`
+> (base `1c8c612` = last S5 commit, tip `d75645e`, 1 commit: `d75645e` A1+A2+A3+B1+C1+C2).
+> Read `docs/plans/caresync-ai/implementation-plan.md` Iteration 6 and `docs/plans/caresync-ai/issues.md`
+> S6 for the plan this verifies against — not re-derived here. Prior slice's verification preserved at
+> `verification-s5.md`.
 
 ## 1. Fresh command evidence (this session, 2026-07-05)
 
-All commands re-run fresh in this session against the live local stack (Docker HAPI FHIR healthy at `localhost:8080`, `caresync-ui-hapi-fhir-1` running, `GET /fhir/metadata` → 200).
+All commands re-run fresh in this session against the live local stack (Docker HAPI FHIR healthy,
+DB migrated/seeded, `GET /fhir/Patient?_summary=count` → `506`).
 
 | Command | Result |
 |---|---|
-| `cd apps/api && npx jest --runInBand` | **20 suites / 90 tests passed** |
-| `cd apps/web && npm test` (Vitest) | **8 files / 69 tests passed** |
-| `npx playwright test` (from `apps/web`) | **7/7 passed** (3 new S4 + 4 existing, no regressions) |
-| `npm run build --workspace apps/api` (`tsc`) | exit 0, clean |
-| `npm run build --workspace apps/web` (`tsc -b && vite build`) | exit 0, clean |
-| `npm run lint --workspace apps/api` | 0 errors, 13 pre-existing warnings (unused `_event`/output-type imports — same set as S3's verification, unchanged) |
-| `npm run lint --workspace apps/web` | 0 errors, 3 warnings: 2 pre-existing (`useAuth.tsx:58,64`) + 1 new accepted (`AgentGraph.tsx:143`, `react(only-export-components)` from `paintFrame`/`FrameTiming` exported beside the component — dev-only fast-refresh warning, same tolerated category as the pre-existing two, not fixed to avoid churn) |
+| `cd apps/api && npx jest --runInBand` | **27 suites / 119 tests passed** |
+| `npm run test:web` | **13 files / 116 tests passed** |
+| `cd apps/web && npx playwright test` (full suite, 6 workers) | **9/9 specs passed**, incl. the new `coordinator-live-assignment.spec.ts` |
+| `cd apps/api && npx tsc --noEmit` | exit 0 |
+| `cd apps/web && npx tsc --noEmit` | exit 0 |
+| `npm run lint --workspace apps/api` | 0 errors, 13 pre-existing warnings (none in files this slice touched) |
+| `npm run lint --workspace apps/web` | 0 errors, 4 pre-existing warnings (none in files this slice touched) |
 
-**On the API suite and parallelism — do not mistake for a regression.** `npm test` (parallel Jest workers) is flaky on this branch and pre-dates S4: multiple suites hit the live HAPI container at `localhost:8080` concurrently and time out under contention (60–75s suite times on failure vs. ~15s serial), producing 2–9 spurious failures depending on machine load. This was observed at session start on unmodified S3 code, so it is an **environment/test-infrastructure issue, not an S4 defect**. `--runInBand` (serial) is the correct way to run this suite locally and is green every time it's been run this session. Recommend adding a `test:api:serial` script or CI config that runs Jest with `--runInBand` (or `maxWorkers: 1`) against the shared HAPI container — out of scope to fix in this verification pass, flagged for the user.
+**A genuinely live, non-mocked proof.** `coordinator-live-assignment.spec.ts` is not a simulated
+webhook call — it logs a Coordinator into a real browser tab (holding an open `/api/events` SSE
+connection), then a Director's `PATCH /api/tasks/:id/assign` updates the real FHIR Task in the
+disposable HAPI container, HAPI's real rest-hook Subscription fires the API's real webhook, and the
+test asserts the toast appears in the already-rendered tab **without a page reload or any further
+test interaction**. This is the strongest evidence class this POC's E2E suite produces (packaged
+UI + local HAPI, per CLAUDE.md's evidence-boundary rubric — see §6).
 
-## 2. Definition-of-done check (S4 acceptance, `issues.md`) + evidence-strength labels
+## 2. Definition-of-done check (S6 acceptance, `issues.md`)
 
-Per `CLAUDE.md` "Evidence boundaries," each criterion below is mapped to its proving artifact with an explicit evidence-strength label. All four acceptance bullets in `issues.md` were **stale (`[ ]`) despite being fully implemented** — same pattern `verification-s3.md` found for S3; corrected to `[x]` in this pass (`implementation-plan.md` Iteration 4's Phase A/B/C checkboxes were stale the same way and are also now `[x]`).
+All 4 acceptance bullets confirmed against the actual code and this session's live evidence.
+Checkboxes in `issues.md` and `implementation-plan.md` Iteration 6 were stale (`[ ]` despite full
+implementation) — corrected to `[x]` as part of this pass:
 
-1. **Canvas graph animates through the state machine in sync with the streaming analysis; no chart library used.**
-   - `apps/web/src/lib/analysisGraph.ts` (`analysisGraphReducer`/`useAnalysisGraph`) derives `IDLE→INIT→DISPATCH→ANALYZING→SYNTHESIZING→COMPLETE` purely from the existing `finding`/`complete`/`task`/`done` SSE vocabulary (no new backend events) — unit-tested in `analysisGraph.test.ts` against the documented event-sequence fixture, including the regression test for the whole-slice-review fix (`fully resets on start after a completed run, so a second run animates instead of staying frozen`).
-   - `apps/web/src/lib/agentGraphGeometry.ts` (pure math + `paintFrame`) + `apps/web/src/components/AgentGraph.tsx` (presentational, `requestAnimationFrame`, teardown on unmount, static render under `prefers-reduced-motion`) — no charting dependency added to `package.json` (grep-verified: no new deps in this diff).
-   - **Evidence strength: source-level + local mock (unit).** Visual in-sync animation itself is confirmed at packaged-UI/local-mock strength via E2E (below); the state-machine *logic* driving it is proven at the unit layer.
+1. **A FHIR Subscription resource exists on HAPI with a rest-hook on Task changes** —
+   `ensureTaskSubscription` (`fhir/subscription.ts`, A2) idempotently creates one at boot: `criteria:
+   'Task?'`, `channel: {type: 'rest-hook', endpoint: SUBSCRIPTION_CALLBACK_URL, payload:
+   'application/fhir+json'}`. Confirmed live: `GET /fhir/Subscription/<id>` → `status: 'active'`,
+   correct criteria/channel, no `error` field.
+2. **Assigning a task updates the FHIR Task and fires the Subscription to the API webhook (visible
+   in logs/network)** — `assignTask` (A1) does a guarded read-modify-`PUT` of `Task.owner`, audited.
+   The webhook handler (A3) logs `[S6] Subscription fired: Task/<id> -> owner <id>` on every real
+   delivery — confirmed present in the dev server's console during manual verification and exercised
+   live by the E2E spec.
+3. **The webhook relays to the client over SSE/websocket; the Coordinator's queue updates live and
+   shows a notification** — confirmed live end-to-end via the E2E spec: toast text `New task
+   assigned: <title>` appears in the already-open tab within ~1–8s of the PATCH, no reload. *Scope
+   note, not a gap:* "queue" in the acceptance text anticipates S7's `M02` task queue, which doesn't
+   exist yet. The live-updating surface today is `PatientPanel` ("My Patients", W12) — its
+   `assigned-panel` query is invalidated on the relayed event.
+4. **API-boundary test for assignment; an integration test asserting the webhook→relay path
+   delivers the update** — `apps/api/src/routes/tasks.test.ts` (Supertest vs real HAPI: assignment
+   sets `Task.owner`, reflected on read-back, audit row written, 403 for non-director) and
+   `apps/api/src/routes/events.test.ts` (the webhook→relay path, exercised at both delivery shapes
+   HAPI actually uses — see §3).
 
-2. **Per-agent color identity is consistent from graph node → feed box → task card citation.**
-   - Directly verified in this pass by grep: `agentGraphGeometry.ts` maps `risk→COL.red`, `careGap→COL.violet`, `sdoh→COL.emerald`, `actionPlanner→COL.amber`; `PatientDetail.tsx`'s `FEED_ACCENT` maps the same four agent ids to the same four accent names (`red`/`violet`/`emerald`/`amber`), and task-card citation chips inherit their feed box's accent (same component, same prop) — one color source per agent, not three independently-chosen palettes.
-   - **Evidence strength: source-level.** No dedicated automated assertion cross-checks the three sites' hex values against each other; the invariant holds by construction (single `COL`/`FEED_ACCENT` mapping, not duplicated literals) and was manually confirmed in this pass.
+No drift between what's claimed done and what the code does.
 
-3. **A cached analysis replays deterministically without a live model call; the explicit live trigger forces a fresh run and updates the cache.**
-   - Backend guarantee proven at the **API-boundary Supertest layer**, `apps/api/src/routes/analysis.test.ts`, describe block "analysis routes — cache-aware live/replay (S4 A2)":
-     - test (a): seeded cache row replays with a stub agent asserted **not called**, same phased `agentId` order as a live run.
-     - test (b): `?live=1` **always** invokes the orchestrator and overwrites the existing cache row.
-     - test (c): cold cache (no row) falls back to exactly one live run and populates the row.
-     - test (g): a cache-write failure doesn't sink an otherwise-successful run — `done` still fires (best-effort write, `cfb79ae`).
-   - **Evidence strength: API-boundary Supertest (source-level integration, no live model).** Not proven against a real OpenAI call in this pass — no `OPENAI_API_KEY` in this environment; this was true for S2/S3 too and is a standing, documented environment limitation, not new to S4.
+## 3. Spec-drift check (issues.md / implementation-plan.md vs. code)
 
-4. **Cached and live runs produce the same UI treatment (cache is real prior output, not a script).**
-   - Byte-identical SSE shape (`token`/`finding`/`complete`×4-per-agent/`task`/`done`) is the load-bearing invariant; test (f) in `analysis.test.ts` proves live narration is captured into the cache and replayed as byte-identical `token` events (the whole-slice-review fix, `cfb79ae`, closing the "cached replay shows blank prose" gap).
-   - `apps/web/e2e/agent-graph-cache.spec.ts`: "Default 'Run Analysis' requests WITHOUT `?live=1`... (cached)" and "'Run live' requests WITH `?live=1`... (live)" both assert on the captured `route.request().url()` and both render the identical graph→feeds→tasks treatment, differing only in the `analysis-mode` label text (`requested: cached` vs `requested: live`).
-   - Security-sensitive corollary independently verified in this pass: the cache-replay path enforces the same `'clinical'` scope guard as the live path (`analysis.ts:176`, `fhirService.assertScope(...)` called directly on replay, not a hand-rolled copy) and audits denials — test (d) confirms a Social Worker is denied on the replay path too. Replay is not an unauthenticated/unscoped read.
-   - **Evidence strength: packaged UI / local-mock for the E2E (SSE intercepted, no live model call in this env) + API-boundary Supertest for the backend byte-identity guarantee.** Do not read the E2E pass as proof of live-model acceptance — it isn't, and doesn't claim to be.
+- **`issues.md` S6 acceptance checkboxes and `implementation-plan.md` Iteration 6 A1/A2/A3/B1/C1/C2
+  were unchecked** — all now `[x]`, matching the actual committed state (see §2 for the "queue"
+  scope note added alongside).
+- **Two implementation details the plan didn't (and couldn't) specify, discovered empirically against
+  the real local HAPI and now documented in `implementation-plan.md` Iteration 6 inline:**
+  - The plan's A3 wording ("`POST /api/fhir/subscription-hook`... resolves the changed Task") assumed
+    a fixed `POST` to the bare endpoint and a re-read by id. Neither holds: with `channel.payload`
+    set, HAPI delivers as `PUT {endpoint}/Task/{id}` (mimicking the triggering verb+path), and the
+    POST/PUT body already **is** the changed Task resource — no re-read needed. The original
+    `router.post('/subscription-hook', ...)` route matched none of HAPI's real requests and 404'd
+    silently; this was invisible until a temporary raw request-logging middleware was added to the
+    real dev server and a live assignment was driven through it. Fixed to
+    `router.all('/subscription-hook{/*splat}', ...)`, parsing `resourceType`/`id` from the body.
+  - HAPI has been observed to deliver a single Task update's rest-hook **twice** in quick succession.
+    Rather than attempt server-side de-duplication (which would need to reason about delivery
+    identity HAPI doesn't expose), the client (`AppShell`, B1) skips showing a second toast with the
+    same message — simpler and sufficient for this POC's single-connection demo flow.
+- **Stock HAPI ships rest-hook delivery OFF and the Docker-vs-host callback URL is a real trap** —
+  both fixed and documented: `docker-compose.yml` sets `hapi.fhir.subscription.resthook_enabled:
+  "true"`; `SUBSCRIPTION_CALLBACK_URL` defaults to `host.docker.internal` (reachable from *inside*
+  the HAPI container), not `localhost`.
+- **`EventSource` was ruled out before coding, not discovered as a bug** — the plan's B1 wording said
+  "Subscribe to `/api/events`" without specifying the transport; `EventSource` can't send the
+  `Authorization` header this bearer-gated route requires, so `subscribeToEvents` (client.ts) reuses
+  `streamAnalysis`'s existing `fetch` + stream-reader pattern instead. No rework needed because this
+  was decided during plan review, before Phase B was written.
+- **A1's `Task.owner` shape** — the plan didn't specify how to reference a Coordinator with no
+  Practitioner resources in HAPI. Resolved with a *logical* reference
+  (`{identifier:{system,value}}`) rather than a literal `Practitioner/{id}` reference, which HAPI
+  rejects for a resource it can't resolve (confirmed empirically: HAPI-1094 "not found"). Documented
+  in `fhir/client.ts`'s `COORDINATOR_OWNER_IDENTIFIER_SYSTEM` comment.
+- Iteration 7+ (S7–S9) content already drafted in `implementation-plan.md`, per prior slices'
+  verifications — not touched by this pass, still out of scope for S6.
 
-No drift found between what `tasks/todo.md` claims done and what the code/tests actually do, beyond the stale checkboxes fixed above.
+## 4. Review pass (ahead of the formal `code-review` skill)
 
-## 3. Spec-drift check (issues.md / implementation-plan.md / plan.md vs. code)
+This slice's process differed from S4/S5's subagent-driven two-stage implementer/reviewer loop: work
+started from an already-partially-implemented state (a prior session/agent had written `tasks.ts`,
+`subscription.ts`, `eventHub.test.ts`, and partial `client.ts`/`analysis.ts`/`population/service.ts`
+diffs in a red-TDD state), which was audited task-by-task against the plan rather than re-implemented,
+then completed (`eventHub.ts`, `events.ts`, the `index.ts` wiring, the frontend) and driven through
+real, live verification rather than a second reviewer subagent re-reading the diff.
 
-- **`issues.md` S4 acceptance checkboxes were stale** (`[ ]` despite full implementation) — fixed to `[x]` in this pass (see §2), same pattern as S3's verification found and fixed.
-- **`implementation-plan.md` Iteration 4 Phase A/B/C task checkboxes were stale** (`- [ ] **A1...**` through `- [ ] **C2...**`) — all six now `[x]`, matching `tasks/todo.md`'s already-accurate per-task record.
-- **SSE vocabulary correction already recorded, verified still accurate:** `implementation-plan.md`'s "Event→state contract" section and `tasks/todo.md`'s B1 clarification both correctly state there is no single unified `complete` — 4 per-agent `complete`s + a separate terminal `done`. Confirmed against the actual fixture in `apps/web/src/lib/analysisGraph.test.ts` and the live route code in `analysis.ts` — no drift.
-- **Accepted deviations** (from `tasks/todo.md`, re-confirmed as still accurate, not re-flagged as bugs): canvas not full-bleed (page layout, not a fixed viewport); checkmark text drops the Task count (unavailable to the presentational `AgentGraph` component); mode label states *requested intent* not *asserted outcome* (a cold-cache default press is a live run backend-side — honest-staging, not a bug); `modelVersion` is written to the cache row but not yet read (no cache-invalidation-on-model-change feature exists yet — correctly scoped out of S4); careGap/sdoh finding shapes are hand-written in three places (agent output type / `AnalysisResultJson` / frontend `AnalysisFinding`) — a real drift seam to watch on the next agent-output change, agreed as acceptable today, not S4's to fix.
-- **Iteration 5+ (S5–S9) content already drafted in `implementation-plan.md`**: present, per S2's and S3's verification carrying this flag forward. Not touched by this pass — still out of scope for S4.
-- **`tasks/todo.md` S4 section is accurate and complete** — unlike S3 (which had no `todo.md` entry at all), S4's checklist matches the code precisely; no fix needed here.
+- **A1 (assignment endpoint)** — audited the inherited code: guard-then-write-then-audit shape
+  correctly mirrors `createTask`'s pattern; `DirectorOnlyError` was correctly extracted from
+  `population/service.ts` into `fhir/client.ts` as a shared class (avoiding two parallel Director-only
+  error types) rather than duplicated. No changes needed.
+- **A2 (Subscription bootstrap)** — audited: idempotency search uses `Cache-Control: no-cache`
+  (documented as load-bearing against a real HAPI search-caching quirk); the `docker-compose.yml`
+  `resthook_enabled` fix was already in place. No changes needed.
+- **A3 (webhook + relay)** — this is where the real defect was: the route shape was wrong (see §3).
+  Found via empirical investigation (raw request logging on a disposable second server instance),
+  not by re-reading the diff — this class of bug (a real third-party server's actual wire behavior
+  differing from the natural reading of its own spec) is exactly the kind that a code-only review
+  would not have caught. Fixed, and both the real delivery shape and the bare-POST fallback are now
+  covered by `events.test.ts`.
+- **B1 (client + toast)** — one real bug found running the actual Vite dev server (not caught by
+  Vitest): `import { subscribeToEvents, AssignedTaskEvent } from '../api/client'` mixed a type-only
+  import into a value import, which Vite's per-file esbuild transform failed to elide at runtime
+  (`SyntaxError: does not provide an export named 'AssignedTaskEvent'`) even though Vitest's
+  transform tolerated it. Fixed to `import type`. This is the exact class of bug
+  `frontend-e2e-verification`'s "drive a real browser" requirement exists to catch.
+- **E2E spec itself** — two bugs in the spec, not the product, found and fixed: (1) Playwright's
+  `request` fixture resolves relative paths against `use.baseURL` (the **web** dev server, :5173),
+  not the API (:4000) — direct backend calls needed an absolute URL. (2) HAPI does not create a new
+  resource version (and therefore never fires the Subscription) for a `PUT` whose content is
+  unchanged from the current version — a re-run of the spec against the same disposable HAPI would
+  silently no-op if the Task was already assigned to the same coordinator from a prior run. Fixed by
+  resetting the Task's owner to a placeholder value immediately before the assignment under test.
 
-## 4. Backend review pass (ahead of the formal `code-review` skill)
-
-This session re-confirmed, rather than re-discovered, the two defects the whole-slice integration review already found and fixed earlier in this branch's history (commits `d308c87`, `cfb79ae` — see §2 above for the proving tests). No new defects surfaced in this pass's review of the cache route (`analysis.ts`), the cache module (`apps/api/src/db/analysisCache.ts` — read/write, JSON round-trip, idempotent migrate), or the client state machine (`analysisGraph.ts`).
-
-One pre-existing minor nit carried forward from A1's own task review (`tasks/todo.md`): duplicate `AnalysisCacheEntry`/`AnalysisCacheRow` types and no error guard around `readAnalysisCache`'s `JSON.parse`. Neither has caused a real failure (a malformed row is caught by A2's `replayCachedAnalysis` try/catch and surfaces as an `error` SSE event per test (e), not a crash) — left for the formal `code-review` skill to weigh in on Standards-axis priority, consistent with how S2's and S3's verification passes deferred code-quality nits to that stage rather than fixing them here.
-
-The full S4 backend/frontend diff (agents unchanged; cache schema, cache-aware route, state machine, canvas component, live/cache trigger) has already been through per-task spec + code-quality review during implementation (`tasks/todo.md` records every commit's review outcome) — this section's job is confirming that record against fresh evidence, not re-litigating it; the formal `code-review` skill (Standards + Spec axes, full branch diff since `main`) is the next gate.
+The formal `code-review` skill (Standards + Spec axes over the full branch diff since `main`) is the
+next gate and is not pre-empted here.
 
 ## 5. Domain-term documentation check
 
-No new domain terms were introduced beyond what `implementation-plan.md` Iteration 4 already documents inline via "Domain rule:"/ponytail annotations: `analysis_cache` (schema, replay semantics), `?live=1` (query-flag convention, not a second endpoint), the state-machine vocabulary (`IDLE→INIT→DISPATCH→ANALYZING→SYNTHESIZING→COMPLETE`), and the corrected SSE event contract (4 per-agent `complete`s + terminal `done`, no unified `complete`). `docs/agents/domain.md` still doesn't exist — same pre-existing, deferred gap S2's and S3's verification both noted and left out of scope; unchanged by S4.
+New domain terms introduced by S6 — **FHIR Subscription / rest-hook** (`fhir/subscription.ts`),
+**assignment** as a `Task.owner` logical-reference write (`fhir/client.ts`'s `assignTask` +
+`COORDINATOR_OWNER_IDENTIFIER_SYSTEM`), and the **event hub / webhook relay** (`routes/eventHub.ts`,
+`routes/events.ts`) — are documented inline via module/function doc comments, consistent with the
+"Domain rule:"/"ponytail:" annotation convention already established in `implementation-plan.md` and
+used by S2–S5. `docs/agents/domain.md` still doesn't exist — the same pre-existing, deferred gap
+noted in every prior slice's verification, unchanged by S6.
 
-## 6. Gate outcome
+## 6. Evidence-boundary labeling (CLAUDE.md)
 
-**PASS.** All fresh command evidence is green (§1): API 90/90 (serial — see the parallel-flakiness caveat, a pre-existing env issue not an S4 regression), web 69/69, E2E 7/7, both builds clean, lint clean except pre-existing/accepted warnings. Definition-of-done (§2) is fully mapped to proving artifacts with evidence-strength labels; no overclaiming of live-model or target-environment acceptance beyond what the evidence actually supports. Spec-drift (§3) found only stale-checkbox bookkeeping (now fixed) plus previously-accepted, still-valid deviations. Backend review (§4) found no new defects — the two real integration defects this branch produced (graph-freeze-on-2nd-run, narration-parity gap) were already found and fixed earlier in the branch's own history by a whole-slice review, and this pass independently re-confirmed both fixes hold via the tests that prove them.
+Per CLAUDE.md's evidence-boundaries rule: all evidence in this document is **local mock / packaged
+UI strength** — a headless Playwright run and a Jest/Vitest suite against a local dev stack and a
+disposable local Docker HAPI container. This slice's E2E evidence is a genuine step stronger than
+S1–S5's within that same class: it proves a real third-party system (HAPI's rest-hook Subscription
+mechanism) actually fires and is actually consumed, not just that our own code's internal contract
+holds. It is still **not** target-environment, client-accepted, or production-hardware evidence — no
+such claim is made here. In particular: HAPI's in-memory Subscription matching was observed, during
+manual investigation this session, to sometimes go stale after sustained unrelated activity even
+while the resource still reports `status: active` (not reproduced as a factor in the actual root
+cause — the real bug was the route shape, §3 — but noted here as an environmental characteristic of
+this specific `hapiproject/hapi:7.2.0` image observed under heavy manual probing, not confirmed to
+recur under normal single-assignment demo usage).
 
-## 7. Post-review update — 2026-07-05
+## 7. Gate outcome
 
-`code-review` (see `review.md`) ran next and found one real defect this pass's §4 backend review missed: successful cache-replay reads were never audited (only denials were) — `analysis.ts`'s replay path called `assertScope` but no code wrote a success row, unlike every other read method in `client.ts`. **User decision: fix before commit**, same as S2's precedent. Fixed test-first (failing assertion added to test (a), confirmed red, then `writeAudit` added to the replay path mirroring `getPatientBundle`'s pattern) — see `review.md` "Post-review fix" for full detail. Re-verified fresh after: API **90/90** (unchanged count, now with the audit assertion passing), web **69/69** unchanged, E2E **7/7** unchanged, both builds/lints clean with the same pre-existing/accepted warning counts as §1. No other files touched beyond the fix + its test + the two review docs.
-
-**Still accurate:** everything else in §1–§6 above (evidence, DoD mapping, spec-drift, domain-term check) is unaffected by this fix — it's an additive audit-log write on an already-passing path, not a behavior change to any of the four S4 acceptance criteria.
+**PASS.** All fresh command evidence is green (§1). Definition-of-done (§2) and spec-drift (§3)
+checks found stale-checkbox bookkeeping (fixed) and several implementation details the plan
+appropriately left to discovery — most notably a real defect in HAPI's actual webhook delivery shape,
+found and fixed via live investigation rather than assumed correct from a code read (§4). No product-
+behavior defects remain open.
 
 ## Next step
 
-`finishing-a-development-branch`, once `code-review`'s findings are also marked resolved in `review.md` (they are).
+`code-review`, covering the full branch diff since `feature/caresync-s5-population-dashboard` (this
+slice's actual base — see the header note) along the Standards and Spec axes.

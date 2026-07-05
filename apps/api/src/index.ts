@@ -5,6 +5,11 @@ import { getDb } from './db';
 import { createAuthRouter } from './routes/auth';
 import { createPatientsRouter } from './routes/patients';
 import { createAnalysisRouter } from './routes/analysis';
+import { createPopulationRouter } from './routes/population';
+import { createTasksRouter } from './routes/tasks';
+import { createEventsRouter, createSubscriptionWebhookRouter } from './routes/events';
+import { createEventHub } from './routes/eventHub';
+import { ensureTaskSubscription } from './fhir/subscription';
 import { orchestrate } from './agents/orchestrator';
 import { FhirReadService } from './fhir/client';
 import { generateKeyPair } from './smart/keys';
@@ -15,6 +20,10 @@ const FHIR_BASE_URL = process.env.FHIR_BASE_URL ?? 'http://localhost:8080/fhir';
 const PORT = process.env.PORT ?? 4000;
 const SMART_CLIENT_ID = 'caresync-api';
 const SMART_TOKEN_ENDPOINT = process.env.SMART_TOKEN_ENDPOINT ?? `http://localhost:${PORT}/smart/token`;
+// S6 A2 — must be reachable from *inside* the HAPI container, not the host;
+// `host.docker.internal` is Docker Desktop's route back to the host.
+const SUBSCRIPTION_CALLBACK_URL =
+  process.env.SUBSCRIPTION_CALLBACK_URL ?? `http://host.docker.internal:${PORT}/api/fhir/subscription-hook`;
 
 const app = express();
 app.use(cors());
@@ -48,10 +57,30 @@ if (require.main === module) {
   // `orchestrate` is passed explicitly (not defaulted) since it now sits
   // before `db` in the parameter list.
   app.use('/api/patients', createAnalysisRouter(fhirService, orchestrate, db));
+  // S5 A2 — Director-only population dashboard aggregates (W02).
+  app.use('/api/population', createPopulationRouter(fhirService, db));
+  // S6 A1 — Director-scoped Task assignment.
+  app.use('/api/tasks', createTasksRouter(fhirService));
+  // S6 A3 — the client relay (`/api/events`) and HAPI's webhook target
+  // (`/api/fhir/subscription-hook`) share one in-process hub instance.
+  const eventHub = createEventHub();
+  app.use('/api/events', createEventsRouter(eventHub));
+  app.use('/api/fhir', createSubscriptionWebhookRouter(eventHub));
 
   app.listen(PORT, () => {
     console.log(`API listening on :${PORT}`);
   });
+
+  // S6 A2 — idempotent at every boot; non-fatal on failure (e.g. HAPI not
+  // yet reachable, or rest-hook delivery unsupported in this environment) —
+  // logged and the server still starts, per the plan's honest-staging note.
+  ensureTaskSubscription(FHIR_BASE_URL, SUBSCRIPTION_CALLBACK_URL)
+    .then((result) => {
+      console.log(`FHIR Task Subscription ${result.created ? 'created' : 'already exists'}: ${result.id}`);
+    })
+    .catch((err) => {
+      console.error('Could not ensure FHIR Task Subscription (continuing without live delivery):', err);
+    });
 }
 
 export default app;

@@ -1,4 +1,10 @@
-import { ALL_PATIENTS, COORDINATOR_PANEL_GROUP_ID, SeedPatient } from '../fhir-data/seed-patients';
+import { generatePopulation } from '../fhir-data/population';
+import { ALL_PATIENTS, COORDINATOR_PANEL_GROUP_ID, RaceEthnicity, SeedPatient } from '../fhir-data/seed-patients';
+
+// The S5 procedural population cohort (~500 patients) generated once at
+// module load so buildBundle() and the Coordinator Group stay in sync; see
+// fhir-data/population.ts for the generator and its determinism guarantee.
+const POPULATION_PATIENTS = generatePopulation();
 
 const FHIR_BASE_URL = process.env.FHIR_BASE_URL ?? 'http://localhost:8080/fhir';
 
@@ -16,10 +22,36 @@ async function waitForHapi(maxAttempts = 30, delayMs = 2000): Promise<void> {
   throw new Error('HAPI FHIR did not become healthy in time');
 }
 
+function raceEthnicityExtensions(re: RaceEthnicity) {
+  return [
+    {
+      url: 'http://hl7.org/fhir/us/core/StructureDefinition/us-core-race',
+      extension: [
+        {
+          url: 'ombCategory',
+          valueCoding: { system: 'urn:oid:2.16.840.1.113883.6.238', code: re.raceCode, display: re.raceDisplay },
+        },
+        { url: 'text', valueString: re.raceDisplay },
+      ],
+    },
+    {
+      url: 'http://hl7.org/fhir/us/core/StructureDefinition/us-core-ethnicity',
+      extension: [
+        {
+          url: 'ombCategory',
+          valueCoding: { system: 'urn:oid:2.16.840.1.113883.6.238', code: re.ethnicityCode, display: re.ethnicityDisplay },
+        },
+        { url: 'text', valueString: re.ethnicityDisplay },
+      ],
+    },
+  ];
+}
+
 function patientResource(p: SeedPatient) {
   return {
     resourceType: 'Patient',
     id: p.id,
+    ...(p.raceEthnicity ? { extension: raceEthnicityExtensions(p.raceEthnicity) } : {}),
     name: [{ given: p.name.given, family: p.name.family }],
     gender: p.gender,
     birthDate: p.birthDate,
@@ -145,7 +177,10 @@ function putEntry(resource: any) {
 
 function buildBundle(): any {
   const entries: any[] = [];
-  for (const p of ALL_PATIENTS) {
+  // Hero/panel patients plus the deterministic S5 population cohort share
+  // the same per-patient resource shape, so they're imported together;
+  // only the curated Coordinator Group below stays scoped to ALL_PATIENTS.
+  for (const p of [...ALL_PATIENTS, ...POPULATION_PATIENTS]) {
     entries.push(putEntry(patientResource(p)));
     for (const c of p.conditions) entries.push(putEntry(conditionResource(p.id, c)));
     for (const o of p.observations ?? []) entries.push(putEntry(observationResource(p.id, o)));
@@ -158,8 +193,16 @@ function buildBundle(): any {
   return { resourceType: 'Bundle', type: 'batch', entry: entries };
 }
 
-async function importBundle(): Promise<void> {
-  const bundle = buildBundle();
+// The full cohort (~500 population patients + hero patients) is several
+// thousand entries. A single $batch POST of that size keeps HAPI busy long
+// enough that undici's default headers timeout fires before the response
+// arrives — even though HAPI commits every entry — so the command reports a
+// spurious failure. Chunk into smaller batches: each POST returns quickly, the
+// import stays idempotent (PUT entries), and progress is visible.
+const BATCH_CHUNK_SIZE = 250;
+
+async function postBatch(entries: any[]): Promise<void> {
+  const bundle = { resourceType: 'Bundle', type: 'batch', entry: entries };
   const res = await fetch(FHIR_BASE_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/fhir+json' },
@@ -173,7 +216,17 @@ async function importBundle(): Promise<void> {
   if (failed.length > 0) {
     throw new Error(`FHIR $batch import had ${failed.length} failing entries: ${JSON.stringify(failed)}`);
   }
-  console.log(`Imported ${bundle.entry.length} resources into HAPI FHIR.`);
+}
+
+async function importBundle(): Promise<void> {
+  const { entry } = buildBundle();
+  let imported = 0;
+  for (let i = 0; i < entry.length; i += BATCH_CHUNK_SIZE) {
+    const chunk = entry.slice(i, i + BATCH_CHUNK_SIZE);
+    await postBatch(chunk);
+    imported += chunk.length;
+    console.log(`Imported ${imported}/${entry.length} resources into HAPI FHIR.`);
+  }
 }
 
 async function main() {

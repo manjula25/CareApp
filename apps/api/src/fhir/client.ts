@@ -11,6 +11,23 @@ export class ScopeDeniedError extends Error {
   }
 }
 
+/**
+ * Role-level (not domain-level) denial: `hasScope`/`guard` below check
+ * per-domain access (demographic/clinical/sdoh), but director AND coordinator
+ * both hold clinical scope, so a Director-only action (e.g. S6 task
+ * assignment, S5 population aggregates) can't be expressed as a missing
+ * domain. This is the one shared class for that "role above domain" case —
+ * `population/service.ts`'s `assertDirector` was the first caller and
+ * originally defined this locally; it now imports it from here so there is
+ * still exactly one Director-only error type, not two parallel ones.
+ */
+export class DirectorOnlyError extends Error {
+  constructor(role: string, action: string) {
+    super(`Role '${role}' cannot ${action} (Director-only)`);
+    this.name = 'DirectorOnlyError';
+  }
+}
+
 export interface PatientSummary {
   id: string;
   name: string;
@@ -34,6 +51,14 @@ export interface TaskSummary {
   status: string;
 }
 
+// S6 A3 — TaskSummary plus the two fields the subscription webhook needs to
+// route a notification: which patient the Task is for, and which coordinator
+// (app `users.id`, via the logical `owner.identifier` reference) now owns it.
+export interface TaskWithOwner extends TaskSummary {
+  patientId?: string;
+  ownerId?: string;
+}
+
 const FHIR_PRIORITY_TO_DISPLAY: Record<string, TaskPriority> = {
   stat: 'critical',
   urgent: 'high',
@@ -54,6 +79,40 @@ const ACTION_PLANNER_PRIORITY_TO_FHIR: Record<string, string> = {
 // Every CareSync-authored Task carries this tag so replacePatientTasks can
 // scope deletes to exactly the Tasks it created, never a seed/Synthea Task.
 const CARESYNC_TASK_TAG = { system: 'https://caresync.demo/fhir/tags', code: 'ai-generated-task' } as const;
+
+// S6 A1 — Task.owner identifier system for assignment. A *logical* reference
+// (`{ identifier: { system, value } }`) rather than a literal
+// `{ reference: 'Practitioner/{id}' }`: this POC has no Practitioner
+// resources in HAPI, and HAPI enforces referential integrity on literal
+// references by default (confirmed against the local instance — POSTing a
+// Task with `owner.reference` pointing at a nonexistent Practitioner is
+// rejected with HAPI-1094 "not found"). An identifier-only reference has
+// nothing to resolve, so HAPI accepts it, and `coordinatorId` (the app's own
+// `users.id`, not a FHIR id) round-trips exactly as assigned.
+const COORDINATOR_OWNER_IDENTIFIER_SYSTEM = 'https://caresync.demo/fhir/coordinators';
+
+/**
+ * S6 A3 — maps a raw FHIR Task resource (as pushed by HAPI's subscription
+ * webhook — see fhir/subscription.ts's `payload: 'application/fhir+json'`
+ * note for why the webhook receives the full resource body, not just an id)
+ * to the shape `routes/events.ts` needs: which patient it's for and which
+ * coordinator (app `users.id`, via the logical `owner.identifier` reference
+ * `assignTask` writes) now owns it. A standalone function, not a service
+ * method — the webhook already has the resource in hand and needs no
+ * further FHIR read (and thus no `writeAudit` call; the assignment itself
+ * was already audited by `assignTask`).
+ */
+export function mapTaskResource(task: any): TaskWithOwner {
+  return {
+    id: task.id,
+    title: task.description,
+    priority: FHIR_PRIORITY_TO_DISPLAY[task.priority] ?? 'medium',
+    due: task.restriction?.period?.end,
+    status: FHIR_STATUS_TO_DISPLAY[task.status] ?? 'Open',
+    patientId: task.for?.reference?.split('/')[1],
+    ownerId: task.owner?.identifier?.value,
+  };
+}
 
 export interface ActionPlannerTaskInput {
   title: string;
@@ -97,8 +156,27 @@ interface FhirBundleEntry<T> {
 interface FhirBundle<T> {
   entry?: FhirBundleEntry<T>[];
 }
+interface PageableBundle<T> extends FhirBundle<T> {
+  link?: { relation: string; url: string }[];
+}
 
 const COORDINATOR_PANEL_GROUP_ID = 'coordinator-demo-panel';
+
+// S5 A2 — population aggregate reads. HAPI defaults to _count=20 per page;
+// a single _count=1000 request comfortably covers the ~500-patient cohort
+// (plus the handful of hero/panel patients) in one round trip. `fetchPages`
+// below still follows any `link[rel=next]` HAPI returns anyway — belt and
+// suspenders against a server-side page-size cap lower than this value —
+// so growing the cohort past 1000 doesn't silently truncate results.
+const POPULATION_FETCH_COUNT = 1000;
+
+export interface PopulationRiskProfile {
+  patientId: string;
+  riskScore: number;
+  /** Hours between now and this patient's most recent Encounter.period.end;
+   *  undefined if no Encounter was found for the patient. */
+  hoursSinceEncounter?: number;
+}
 
 export interface AccessTokenProvider {
   getAccessToken(): Promise<string>;
@@ -121,6 +199,25 @@ export class FhirReadService {
       throw new Error(`FHIR request failed: ${init.method ?? 'GET'} ${path} -> ${res.status}`);
     }
     return (await res.json()) as T;
+  }
+
+  /**
+   * Fetches every entry of a search, following `link[rel=next]` until HAPI
+   * stops returning one — so a bulk population read never silently truncates
+   * to whatever page size the server happens to cap requests at. `path`
+   * should already include a bounding `_count` (see POPULATION_FETCH_COUNT);
+   * this only kicks in the pagination loop if the server ignores/caps it.
+   */
+  private async fetchPages<T>(path: string): Promise<FhirBundleEntry<T>[]> {
+    const entries: FhirBundleEntry<T>[] = [];
+    let nextPath: string | undefined = path;
+    while (nextPath) {
+      const bundle: PageableBundle<T> = await this.fhirFetch<PageableBundle<T>>(nextPath);
+      entries.push(...(bundle.entry ?? []));
+      const nextUrl: string | undefined = bundle.link?.find((l) => l.relation === 'next')?.url;
+      nextPath = nextUrl ? nextUrl.replace(this.baseUrl, '') : undefined;
+    }
+    return entries;
   }
 
   private guard(actor: AuthTokenPayload, domain: ResourceDomain, resource: string, action = 'read'): void {
@@ -233,6 +330,49 @@ export class FhirReadService {
   }
 
   /**
+   * S5 A2 — one bulk read backing both population dashboard endpoints
+   * (scatter + summary). Two `_count`-bounded searches (RiskAssessment,
+   * Encounter — no per-patient round trips) joined client-side on
+   * `subject`. Audited ONCE for the whole aggregate read, mirroring
+   * `getAssignedPanel` above (which also audits once despite several
+   * per-patient fetches) rather than once per resource type — the
+   * externally-observable action is "read the population", not "read
+   * RiskAssessment" then separately "read Encounter".
+   *
+   * No Patient join: the scatter/summary consumers only need id + risk +
+   * encounter recency, not demographics.
+   */
+  async getPopulationRiskProfile(actor: AuthTokenPayload): Promise<PopulationRiskProfile[]> {
+    const resource = 'Population';
+    this.guard(actor, 'clinical', resource);
+
+    const [riskEntries, encounterEntries] = await Promise.all([
+      this.fetchPages<any>(`/RiskAssessment?_count=${POPULATION_FETCH_COUNT}`),
+      this.fetchPages<any>(`/Encounter?_count=${POPULATION_FETCH_COUNT}`),
+    ]);
+    writeAudit(this.db, { actor: actor.id, action: 'read', fhirResource: resource, outcome: 'success' });
+
+    const encounterEndByPatient = new Map<string, string>();
+    for (const e of encounterEntries) {
+      const patientId = e.resource.subject?.reference?.split('/')[1];
+      const end = e.resource.period?.end;
+      if (patientId && end) encounterEndByPatient.set(patientId, end);
+    }
+
+    const now = Date.now();
+    return riskEntries
+      .map((e): PopulationRiskProfile | undefined => {
+        const patientId: string | undefined = e.resource.subject?.reference?.split('/')[1];
+        if (!patientId) return undefined;
+        const riskScore = Math.round((e.resource.prediction?.[0]?.probabilityDecimal ?? 0) * 100);
+        const encounterEnd = encounterEndByPatient.get(patientId);
+        const hoursSinceEncounter = encounterEnd ? (now - new Date(encounterEnd).getTime()) / (60 * 60 * 1000) : undefined;
+        return { patientId, riskScore, hoursSinceEncounter };
+      })
+      .filter((p): p is PopulationRiskProfile => p !== undefined);
+  }
+
+  /**
    * Creates one CareSync-authored FHIR Task, tagged with CARESYNC_TASK_TAG so
    * a later replacePatientTasks run can find and replace it without ever
    * touching a seed/Synthea Task (which carries no such tag).
@@ -274,6 +414,34 @@ export class FhirReadService {
     });
     writeAudit(this.db, { actor: actor.id, action: 'create', fhirResource: `Task/${created.id}`, outcome: 'success' });
     return { id: created.id };
+  }
+
+  /**
+   * S6 A1 — Director-scoped Task assignment: sets `Task.owner` to a logical
+   * reference to `coordinatorId` (see COORDINATOR_OWNER_IDENTIFIER_SYSTEM)
+   * via a read-modify-PUT (FHIR's standard full-resource "update"), mirroring
+   * `createTask`'s guard-then-write-then-audit shape. Director-only rather
+   * than scope-gated: both director and coordinator hold 'clinical' scope
+   * (see DirectorOnlyError doc), so this can't be expressed as a missing
+   * domain — the same role-level exception `population/service.ts` uses.
+   */
+  async assignTask(actor: AuthTokenPayload, taskId: string, coordinatorId: string): Promise<{ id: string; owner: string }> {
+    const resource = `Task/${taskId}`;
+    if (actor.role !== 'director') {
+      writeAudit(this.db, { actor: actor.id, action: 'update', fhirResource: resource, outcome: 'denied' });
+      throw new DirectorOnlyError(actor.role, 'assign tasks');
+    }
+
+    const task = await this.fhirFetch<Record<string, unknown>>(`/${resource}`);
+    task.owner = { identifier: { system: COORDINATOR_OWNER_IDENTIFIER_SYSTEM, value: coordinatorId } };
+
+    await this.fhirFetch(`/${resource}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/fhir+json' },
+      body: JSON.stringify(task),
+    });
+    writeAudit(this.db, { actor: actor.id, action: 'update', fhirResource: resource, outcome: 'success' });
+    return { id: taskId, owner: coordinatorId };
   }
 
   /**

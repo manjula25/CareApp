@@ -44,12 +44,59 @@ describe('RoleGuard', () => {
 });
 
 describe('roleHome', () => {
+  it('sends director to the Population Dashboard', () => {
+    expect(roleHome('director')).toBe('/population');
+  });
+
   it('sends coordinator to the My Patient Panel', () => {
     expect(roleHome('coordinator')).toBe('/panel');
   });
 
-  it('sends director and social_worker to the coming-soon placeholder', () => {
-    expect(roleHome('director')).toBe('/coming-soon');
+  it('sends social_worker to the coming-soon placeholder', () => {
     expect(roleHome('social_worker')).toBe('/coming-soon');
+  });
+});
+
+function renderPopulationGuard() {
+  return render(
+    <MemoryRouter initialEntries={['/population']}>
+      <AuthProvider>
+        <Routes>
+          <Route path="/panel" element={<div>Coordinator Panel</div>} />
+          <Route
+            path="/population"
+            element={
+              <RoleGuard role="director">
+                <div>Population Dashboard</div>
+              </RoleGuard>
+            }
+          />
+        </Routes>
+      </AuthProvider>
+    </MemoryRouter>
+  );
+}
+
+function setAuthedUser(role: string) {
+  const payload = btoa(JSON.stringify({ id: 'user-1', name: 'Test User', role }));
+  localStorage.setItem('caresync_token', `header.${payload}.signature`);
+}
+
+describe('RoleGuard role restriction', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it('lets a director reach a director-only route', () => {
+    setAuthedUser('director');
+    renderPopulationGuard();
+    expect(screen.getByText('Population Dashboard')).toBeInTheDocument();
+  });
+
+  it('redirects a coordinator away from a director-only route to their own home', () => {
+    setAuthedUser('coordinator');
+    renderPopulationGuard();
+    expect(screen.getByText('Coordinator Panel')).toBeInTheDocument();
+    expect(screen.queryByText('Population Dashboard')).not.toBeInTheDocument();
   });
 });

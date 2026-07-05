@@ -16,7 +16,9 @@ type RunAnalysis = (bundle: PatientBundle) => AsyncIterable<AgentEvent>;
 type ReadCache = (db: Database.Database, patientId: string) => AnalysisCacheRow | null;
 type WriteCache = (db: Database.Database, entry: AnalysisCacheEntry) => void;
 
-function writeSseEvent(res: Response, event: string, data: unknown): void {
+// Exported (S6 A3) so the event relay hub (routes/eventHub.ts) can reuse the
+// exact same SSE framing for `/api/events` instead of re-authoring it.
+export function writeSseEvent(res: Response, event: string, data: unknown): void {
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
