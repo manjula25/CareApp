@@ -121,6 +121,10 @@ export function AgentGraph({ state }: AgentGraphProps) {
   const graphStateEnteredAtRef = useRef(performance.now());
   const prevNodesRef = useRef(state.nodes);
   const completedAtRef = useRef<Partial<Record<AgentId, number>>>({});
+  // Under prefers-reduced-motion there's no rAF loop, so a state change
+  // (e.g. idle -> dispatch) needs an explicit repaint to actually show —
+  // the mount effect below assigns this once the canvas ctx is ready.
+  const repaintOnceRef = useRef<(() => void) | null>(null);
 
   // Track "time since this graphState was entered" off a real transition
   // moment, instead of the mockup's fake single `runStart` clock.
@@ -288,7 +292,10 @@ export function AgentGraph({ state }: AgentGraphProps) {
     }
 
     if (prefersReducedMotion()) {
-      // Static final-state frame only — no continuous rAF loop.
+      // Static frame only — no continuous rAF loop. `repaintOnceRef` lets
+      // the effect below redraw this single frame whenever `state` changes,
+      // so it tracks real progress instead of freezing at the mount-time state.
+      repaintOnceRef.current = paint;
       paint();
     } else {
       const loop = () => {
@@ -301,11 +308,19 @@ export function AgentGraph({ state }: AgentGraphProps) {
     return () => {
       window.removeEventListener('resize', resize);
       if (rafId !== null) cancelAnimationFrame(rafId);
+      repaintOnceRef.current = null;
     };
-    // Intentionally run once per mount: the rAF loop reads live state via
-    // `stateRef`, so it doesn't need to restart on every state change.
+    // Intentionally run once per mount: the rAF loop (when animating) reads
+    // live state via `stateRef`, so it doesn't need to restart on every
+    // state change; the reduced-motion path is kept in sync by the effect below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Reduced-motion redraw: since there's no rAF loop in that mode, each
+  // state transition needs its own explicit repaint of the static frame.
+  useEffect(() => {
+    repaintOnceRef.current?.();
+  }, [state]);
 
   return (
     <div className="relative h-[340px] border-b border-border bg-bg">

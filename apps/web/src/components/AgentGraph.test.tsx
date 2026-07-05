@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, cleanup } from '@testing-library/react';
 import { AgentGraph } from './AgentGraph';
 import { initialAnalysisGraphState, type AnalysisGraphState } from '../lib/analysisGraph';
@@ -42,5 +42,30 @@ describe('AgentGraph', () => {
     const { container } = render(<AgentGraph state={initialAnalysisGraphState} />);
     expect(container.querySelector('canvas')).toBeInTheDocument();
     cleanup();
+  });
+
+  describe('prefers-reduced-motion', () => {
+    const originalMatchMedia = window.matchMedia;
+
+    afterEach(() => {
+      window.matchMedia = originalMatchMedia;
+    });
+
+    it('never throws across a state transition when the rAF loop is skipped (static-frame path)', () => {
+      window.matchMedia = vi.fn().mockReturnValue({ matches: true }) as unknown as typeof window.matchMedia;
+
+      const { rerender, unmount } = render(<AgentGraph state={initialAnalysisGraphState} />);
+      expect(() =>
+        rerender(
+          <AgentGraph
+            state={{
+              graphState: 'analyzing',
+              nodes: { risk: 'complete', careGap: 'analyzing', sdoh: 'pending', actionPlanner: 'pending' },
+            }}
+          />
+        )
+      ).not.toThrow();
+      expect(() => unmount()).not.toThrow();
+    });
   });
 });
