@@ -7,7 +7,7 @@ import { createAuthRouter } from './auth';
 import { createAnalysisRouter, AnalysisResultJson } from './analysis';
 import { FhirReadService } from '../fhir/client';
 import { AgentEvent, RiskOutput, CareGapOutput, SdohOutput, ActionPlannerOutput } from '../agents/agent';
-import { readAnalysisCache, writeAnalysisCache } from '../db/analysisCache';
+import { readAnalysisCache, writeAnalysisCache, AnalysisCacheRow } from '../db/analysisCache';
 
 // Deliberately NOT 'maria-chen': fhir/client.test.ts (B2) already exercises
 // Task create/replace against 'maria-chen', and Jest runs different test
@@ -111,12 +111,16 @@ function oneValidTaskAgent(): () => AsyncIterable<AgentEvent> {
   };
 }
 
-function buildApp(db: Database.Database, stub: (bundle: any) => AsyncIterable<AgentEvent>) {
+function buildApp(
+  db: Database.Database,
+  stub: (bundle: any) => AsyncIterable<AgentEvent>,
+  readCache?: (db: Database.Database, patientId: string) => AnalysisCacheRow | null
+) {
   const app = express();
   app.use(express.json());
   const fhirService = new FhirReadService(db, FHIR_BASE_URL);
   app.use('/api/auth', createAuthRouter(db));
-  app.use('/api/patients', createAnalysisRouter(fhirService, stub, db));
+  app.use('/api/patients', createAnalysisRouter(fhirService, stub, db, readCache));
   return app;
 }
 
@@ -447,6 +451,35 @@ describe('analysis routes — cache-aware live/replay (S4 A2)', () => {
     // Cache row itself must be untouched by the denial.
     const row = readAnalysisCache(db, PATIENT_ID);
     expect(row!.createdTs).toBe('2020-01-01T00:00:00.000Z');
+  });
+
+  it('(e) emits an `error` SSE event — not a hang — if a malformed cached row fails to replay', async () => {
+    const orchestratorSpy = jest.fn(stubOrchestrate);
+    // Injected in place of the real readAnalysisCache: returns a row whose
+    // resultJson is missing every expected agent key, so replayCachedAnalysis
+    // throws reading `result.risk.findings`. Mirrors a legacy/corrupted row
+    // shape without needing to hand-corrupt real SQLite storage.
+    const brokenReadCache = jest.fn(
+      (): AnalysisCacheRow => ({
+        patientId: PATIENT_ID,
+        resultJson: {} as unknown,
+        modelVersion: 'gpt-5.5',
+        createdTs: '2020-01-01T00:00:00.000Z',
+      })
+    );
+    const brokenApp = buildApp(db, orchestratorSpy, brokenReadCache);
+
+    const token = await loginAs(brokenApp, 'coordinator@caresync.demo');
+    const res = await request(brokenApp).post(`/api/patients/${PATIENT_ID}/analysis`).set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(orchestratorSpy).not.toHaveBeenCalled();
+
+    const events = parseSse(res.text);
+    expect(events.find((e) => e.event === 'error')).toBeDefined();
+    // Same convention the live path's error boundary already establishes:
+    // no `done` fires on a failed run — its absence is itself the signal.
+    expect(events.find((e) => e.event === 'done')).toBeUndefined();
   });
 
   it('(b) ?live=1 always invokes the orchestrator and overwrites the cache row, even when one already exists', async () => {

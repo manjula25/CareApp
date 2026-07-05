@@ -2,8 +2,6 @@ import { Router, Response } from 'express';
 import Database from 'better-sqlite3';
 import { requireAuth } from '../middleware/auth';
 import { FhirReadService, PatientBundle, ScopeDeniedError } from '../fhir/client';
-import { hasScope } from '../auth/scopes';
-import { writeAudit } from '../db/audit';
 import { orchestrate } from '../agents/orchestrator';
 import { AgentEvent, AgentId } from '../agents/agent';
 import { validateCitations, validateCitationList, createNarrationBuffer, NarrationBuffer, AgentFlag } from '../agents/citationValidator';
@@ -136,18 +134,20 @@ export function createAnalysisRouter(
       if (cached) {
         // Replay skips `getPatientBundle` entirely (no HAPI call), but that
         // method is also the ONLY place role→scope enforcement + audit
-        // logging happens for this data (`FhirReadService.guard`, private).
-        // Skipping the fetch must not silently skip the scope gate too — a
-        // role denied 'clinical' scope on the live path (e.g. Social Worker)
-        // must be denied here as well, and the denial must still be audited,
-        // even though this check is a local role comparison and makes no
-        // HAPI request itself.
-        const resource = `Patient/${patientId}/$everything`;
-        if (!hasScope(req.auth!.role, 'clinical')) {
-          writeAudit(db, { actor: req.auth!.id, action: 'read', fhirResource: resource, outcome: 'denied' });
-          const err = new ScopeDeniedError(req.auth!.role, 'clinical');
-          res.status(403).json({ error: err.message });
-          return;
+        // logging happens for this data. `assertScope` is the same guard
+        // `getPatientBundle` runs internally, called directly so the
+        // invariant can't drift between the live and replay code paths —
+        // it's a local role comparison (+ a denial audit write), no HAPI
+        // request, so calling it here doesn't cost the HAPI round-trip
+        // replay exists to avoid.
+        try {
+          fhirService.assertScope(req.auth!, 'clinical', `Patient/${patientId}/$everything`);
+        } catch (err) {
+          if (err instanceof ScopeDeniedError) {
+            res.status(403).json({ error: err.message });
+            return;
+          }
+          throw err;
         }
 
         res.writeHead(200, {
@@ -155,7 +155,15 @@ export function createAnalysisRouter(
           'Cache-Control': 'no-cache',
           Connection: 'keep-alive',
         });
-        replayCachedAnalysis(res, cached.resultJson as AnalysisResultJson);
+        try {
+          replayCachedAnalysis(res, cached.resultJson as AnalysisResultJson);
+        } catch {
+          // Same error-boundary convention the live path uses below: headers
+          // are already sent by this point, so an SSE `error` event is the
+          // only way left to signal failure (e.g. a malformed/legacy cached
+          // shape) — no `done` fires on this path either.
+          writeSseEvent(res, 'error', { message: 'Analysis failed' });
+        }
         res.end();
         return;
       }
