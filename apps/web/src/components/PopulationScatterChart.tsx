@@ -4,9 +4,11 @@ import {
   projectPoint,
   scatterDotRadius,
   scatterPointColor,
+  pixelToQuadrant,
   SCATTER_COLOR_RGB,
   SCATTER_PADDING,
   SCATTER_TICKS,
+  type Quadrant,
 } from '../lib/populationScatterGeometry';
 
 /**
@@ -18,8 +20,11 @@ import {
  * `AgentGraph.tsx`/`paintFrame`.
  *
  * Presentational only: takes `points` from the caller (the `Population` page,
- * fed by `getPopulationScatter()`) and paints them. Click-to-drill-in is
- * task B3, not wired here.
+ * fed by `getPopulationScatter()`) and paints them. Click-to-drill-in (Task
+ * B3) is wired via the optional `onQuadrantClick` prop — this component only
+ * detects which risk/urgency quadrant a click landed in (via
+ * `pixelToQuadrant`, `../lib/populationScatterGeometry.ts`); filtering the
+ * population and navigating is the caller's job (`Population.tsx`).
  *
  * Deliberately dropped from the mockup for this task:
  * - the pulsing `.glow-layer` overlay on critical-risk dots and the hover
@@ -37,6 +42,8 @@ import {
  */
 export interface PopulationScatterChartProps {
   points: ScatterPoint[];
+  /** Fired with the risk/urgency band a click landed in (Task B3 drill-in). */
+  onQuadrantClick?: (quadrant: Quadrant) => void;
 }
 
 const GRID_STROKE = 'rgba(26,52,80,.45)';
@@ -126,7 +133,7 @@ export function paintScatterFrame(
   });
 }
 
-export function PopulationScatterChart({ points }: PopulationScatterChartProps) {
+export function PopulationScatterChart({ points, onQuadrantClick }: PopulationScatterChartProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const pointsRef = useRef(points);
   pointsRef.current = points;
@@ -156,5 +163,23 @@ export function PopulationScatterChart({ points }: PopulationScatterChartProps) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [points]);
 
-  return <canvas ref={canvasRef} className="block w-full h-full" />;
+  /**
+   * Click hit-testing uses the canvas's own CSS-pixel size (`clientWidth`/
+   * `clientHeight` — the same values `draw()` above passes to
+   * `paintScatterFrame`/`projectPoint`) and the click's `offsetX`/`offsetY`
+   * (canvas-relative CSS pixels, matching the coordinate space `draw()`
+   * paints in — no devicePixelRatio scaling needed since neither is in
+   * backing-store pixels). `pixelToQuadrant` inverts the same projection
+   * `paintScatterFrame` uses, so the hit-test can't drift from the paint.
+   */
+  function handleClick(event: React.MouseEvent<HTMLCanvasElement>) {
+    if (!onQuadrantClick) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const { offsetX, offsetY } = event.nativeEvent;
+    const quadrant = pixelToQuadrant({ x: offsetX, y: offsetY }, canvas.clientWidth, canvas.clientHeight);
+    onQuadrantClick(quadrant);
+  }
+
+  return <canvas ref={canvasRef} onClick={handleClick} className="block w-full h-full" />;
 }

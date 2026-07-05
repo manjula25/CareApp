@@ -1,6 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
-import { getPopulationScatter, getPopulationSummary } from '../api/client';
+import { useNavigate } from 'react-router-dom';
+import { getPopulationScatter, getPopulationSummary, type ScatterPoint } from '../api/client';
 import { riskDotColor } from '../lib/patient';
+import { scatterPointQuadrant, QUADRANT_LABEL, type Quadrant } from '../lib/populationScatterGeometry';
 import { PopulationScatterChart } from '../components/PopulationScatterChart';
 
 /**
@@ -33,8 +35,9 @@ import { PopulationScatterChart } from '../components/PopulationScatterChart';
  *   tags/days-since-contact): the population aggregate API returns only
  *   `{ id, riskScore, urgency, x, y }` per patient — no identity or
  *   condition data. Rendered as the top-N highest-risk points by id/score
- *   instead of fabricating names; the "View all" mockup link is inert
- *   (no target) since drill-in navigation is task B3, not this task.
+ *   instead of fabricating names; the "View all" mockup link stays inert —
+ *   B3's drill-in is wired from the scatter's quadrant click, not from this
+ *   top-N list, so there's no single filter this link would target.
  * - "Run Batch Analysis" / "Deploy All Agents" buttons: no backing batch
  *   endpoint exists in S5 — omitted rather than shipped as inert buttons.
  * - Care Team / HEDIS Progress / Activity Feed panels: chrome only, each
@@ -47,8 +50,26 @@ import { PopulationScatterChart } from '../components/PopulationScatterChart';
 
 const HIGH_RISK_BANDS = new Set(['red', 'amber']);
 
+/**
+ * Navigation `state` handed to `/population/patients` (Task B3 drill-in).
+ * Carries only ids + a `riskScore` lookup, not the full `ScatterPoint`s or a
+ * long id list in the URL — `getPatient(id)` (the existing `/api/patients/:id`
+ * endpoint) doesn't return `riskScore`, so it's threaded through here instead
+ * of adding a new backend field/endpoint just to re-derive it.
+ */
+export interface PopulationPatientListState {
+  patientIds: string[];
+  riskScoreById: Record<string, number>;
+  label: string;
+}
+
 function formatCurrencyUSD(value: number): string {
   return `$${Math.round(value).toLocaleString('en-US')}`;
+}
+
+/** Filters the already-fetched scatter array down to one quadrant, client-side — no new backend call (Task B3). */
+function pointsInQuadrant(points: ScatterPoint[], quadrant: Quadrant): ScatterPoint[] {
+  return points.filter((p) => scatterPointQuadrant(p) === quadrant);
 }
 
 function KpiTile({
@@ -89,6 +110,7 @@ function PlaceholderPanel({ title, badge }: { title: string; badge?: string }) {
 }
 
 export function Population() {
+  const navigate = useNavigate();
   const summaryQuery = useQuery({ queryKey: ['population-summary'], queryFn: getPopulationSummary });
   const scatterQuery = useQuery({ queryKey: ['population-scatter'], queryFn: getPopulationScatter });
 
@@ -102,6 +124,23 @@ export function Population() {
   const totalPatients = summary?.teamKpis.totalPatients ?? scatter.length;
 
   const criticalList = [...scatter].sort((a, b) => b.riskScore - a.riskScore).slice(0, 8);
+
+  /**
+   * Drill-in click handler (Task B3): "cluster" = a risk/urgency quadrant
+   * (`scatterPointQuadrant`), not pixel-proximity clustering. Filters the
+   * already-fetched `scatter` array client-side (no new backend call) and
+   * navigates with only ids + a riskScore lookup in `state` — never a long
+   * id list in the URL query string.
+   */
+  function handleQuadrantClick(quadrant: Quadrant) {
+    const filtered = pointsInQuadrant(scatter, quadrant);
+    const state: PopulationPatientListState = {
+      patientIds: filtered.map((p) => p.id),
+      riskScoreById: Object.fromEntries(filtered.map((p) => [p.id, p.riskScore])),
+      label: QUADRANT_LABEL[quadrant],
+    };
+    navigate('/population/patients', { state });
+  }
 
   return (
     <div>
@@ -150,7 +189,7 @@ export function Population() {
                 </span>
               </div>
               <div className="relative flex-1 min-h-[280px] m-1.5">
-                <PopulationScatterChart points={scatter} />
+                <PopulationScatterChart points={scatter} onQuadrantClick={handleQuadrantClick} />
               </div>
             </div>
 
@@ -179,7 +218,7 @@ export function Population() {
                 ))}
               </div>
               <div className="flex-none flex items-center justify-between px-3.5 py-2 border-t border-border">
-                {/* Inert on purpose: drill-in navigation is task B3. */}
+                {/* Inert on purpose — see the top-of-file deviation note. */}
                 <span className="text-label text-text-dim">View all {summary.criticalZoneCount} →</span>
               </div>
             </div>

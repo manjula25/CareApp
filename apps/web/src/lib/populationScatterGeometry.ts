@@ -91,3 +91,78 @@ export const SCATTER_COLOR_RGB: Record<RiskDotColor, string> = {
 export function scatterPointColor(point: ScatterPoint): RiskDotColor {
   return riskDotColor(point.riskScore);
 }
+
+// --- quadrant drill-in (Task B3) --------------------------------------------
+//
+// "Cluster" is defined as a risk/urgency quadrant, not pixel-proximity
+// clustering (see apps/web/src/pages/Population.tsx / PopulationScatterChart
+// click handler). Two thresholds split the shared 0-100 domain into 4 bands:
+//   - riskScore >= 60 = "high risk" (reuses lib/patient.ts's `riskDotColor`
+//     amber cutoff, so "high risk" here means the same thing it means for the
+//     dot color everywhere else in the app).
+//   - urgency >= 60 = "high urgency" (recent-encounter decay hasn't fully
+//     worn off yet — see apps/api/src/population/service.ts's `urgencyFor`).
+export const QUADRANT_RISK_THRESHOLD = 60;
+export const QUADRANT_URGENCY_THRESHOLD = 60;
+
+export type Quadrant = 'critical' | 'monitor' | 'stable' | 'watch';
+
+/** Mockup quadrant label text (`reference-materials/caresync-population.html` lines ~522-539), keyed by the band it now maps to for the real risk(x)/urgency(y) axes. */
+export const QUADRANT_LABEL: Record<Quadrant, string> = {
+  critical: 'Critical — Act Now',
+  monitor: 'Monitor — Trending Up',
+  stable: 'Stable — Routine',
+  watch: 'Watch — Overdue Contact',
+};
+
+/**
+ * Which quadrant a data-space point (`x`=riskScore, `y`=urgency, both 0-100)
+ * falls into. Both threshold comparisons are inclusive on the high side, so a
+ * point exactly on a threshold counts as "high" for that axis.
+ */
+export function scatterPointQuadrant(point: { x: number; y: number }): Quadrant {
+  const highRisk = point.x >= QUADRANT_RISK_THRESHOLD;
+  const highUrgency = point.y >= QUADRANT_URGENCY_THRESHOLD;
+  if (highRisk && highUrgency) return 'critical';
+  if (!highRisk && highUrgency) return 'monitor';
+  if (!highRisk && !highUrgency) return 'stable';
+  return 'watch';
+}
+
+/**
+ * Inverse of `projectPoint`: maps a pixel back to the 0-100 risk/urgency data
+ * space. `interpolate(v, min, max, a, b)` linearly maps `[min,max] -> [a,b]`;
+ * calling it with the pixel bounds as the "domain" and the data bounds as the
+ * "range" (i.e. the same two ranges `projectPoint` uses, just swapped) is
+ * exactly its inverse — no separate un-projection formula to keep in sync.
+ */
+export function unprojectPoint(
+  pixel: PixelPoint,
+  width: number,
+  height: number,
+  padding: ChartPadding = SCATTER_PADDING
+): { x: number; y: number } {
+  const x0 = padding.left;
+  const x1 = width - padding.right;
+  const y0 = height - padding.bottom;
+  const y1 = padding.top;
+  return {
+    x: interpolate(pixel.x, x0, x1, SCATTER_DOMAIN_MIN, SCATTER_DOMAIN_MAX),
+    y: interpolate(pixel.y, y0, y1, SCATTER_DOMAIN_MIN, SCATTER_DOMAIN_MAX),
+  };
+}
+
+/**
+ * Which quadrant a click pixel landed in, using the exact same
+ * padding/interpolation `paintScatterFrame` paints with (via `projectPoint`'s
+ * inverse) so the click hit-test and the paint code can never disagree about
+ * where a quadrant boundary pixel is — no duplicated thresholds/magic numbers.
+ */
+export function pixelToQuadrant(
+  pixel: PixelPoint,
+  width: number,
+  height: number,
+  padding: ChartPadding = SCATTER_PADDING
+): Quadrant {
+  return scatterPointQuadrant(unprojectPoint(pixel, width, height, padding));
+}

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, fireEvent } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Population } from './Population';
 import * as client from '../api/client';
@@ -8,6 +9,12 @@ import type { PopulationSummary, ScatterPoint } from '../api/client';
 vi.mock('../api/client', async () => {
   const actual = await vi.importActual<typeof import('../api/client')>('../api/client');
   return { ...actual, getPopulationScatter: vi.fn(), getPopulationSummary: vi.fn() };
+});
+
+const mockNavigate = vi.fn();
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+  return { ...actual, useNavigate: () => mockNavigate };
 });
 
 // Deliberately NOT 23 / $247,400 — the mockup's hardcoded KPI values — so a
@@ -29,7 +36,9 @@ function renderPopulation() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
-      <Population />
+      <MemoryRouter>
+        <Population />
+      </MemoryRouter>
     </QueryClientProvider>
   );
 }
@@ -81,5 +90,59 @@ describe('Population — W02 dashboard', () => {
     vi.mocked(client.getPopulationSummary).mockReturnValue(new Promise(() => {}));
     renderPopulation();
     expect(screen.getByText(/loading population/i)).toBeInTheDocument();
+  });
+});
+
+describe('Population — quadrant click drill-in (Task B3)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(client.getPopulationSummary).mockResolvedValue(MOCK_SUMMARY);
+    vi.mocked(client.getPopulationScatter).mockResolvedValue(MOCK_SCATTER);
+  });
+
+  /** Same 300x200 CSS-pixel fixture used by the geometry + scatter-chart click tests. */
+  function sizeCanvas(canvas: HTMLCanvasElement, width: number, height: number) {
+    Object.defineProperty(canvas, 'clientWidth', { value: width, configurable: true });
+    Object.defineProperty(canvas, 'clientHeight', { value: height, configurable: true });
+  }
+
+  it('navigates to /population/patients with the ids/risk scores/label for the clicked quadrant only', async () => {
+    const { container } = renderPopulation();
+    const chart = await screen.findByTestId('population-scatter-chart');
+    const canvas = chart.querySelector('canvas')!;
+    sizeCanvas(canvas, 300, 200);
+
+    // p1 (riskScore 87, urgency 90) is the only MOCK_SCATTER point in the
+    // critical (high risk/high urgency) band; p2 (65/40) is "watch", p3
+    // (20/5) is "stable" — clicking the critical corner must filter down to
+    // just p1, not the whole population.
+    fireEvent.click(canvas, { clientX: 250, clientY: 40 });
+
+    expect(mockNavigate).toHaveBeenCalledWith('/population/patients', {
+      state: {
+        patientIds: ['p1'],
+        riskScoreById: { p1: 87 },
+        label: 'Critical — Act Now',
+      },
+    });
+    expect(container).toBeInTheDocument();
+  });
+
+  it('filters to a different id set for a different quadrant', async () => {
+    renderPopulation();
+    const chart = await screen.findByTestId('population-scatter-chart');
+    const canvas = chart.querySelector('canvas')!;
+    sizeCanvas(canvas, 300, 200);
+
+    // High risk (x=250 -> risk ~85), low urgency (y=150 -> urgency ~11) = "watch" -> only p2.
+    fireEvent.click(canvas, { clientX: 250, clientY: 150 });
+
+    expect(mockNavigate).toHaveBeenCalledWith('/population/patients', {
+      state: {
+        patientIds: ['p2'],
+        riskScoreById: { p2: 65 },
+        label: 'Watch — Overdue Contact',
+      },
+    });
   });
 });

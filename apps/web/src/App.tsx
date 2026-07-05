@@ -5,6 +5,7 @@ import { Login } from './pages/Login';
 import { PatientPanel } from './pages/PatientPanel';
 import { PatientDetail } from './pages/PatientDetail';
 import { Population } from './pages/Population';
+import { PopulationPatientList } from './pages/PopulationPatientList';
 import { ComingSoon } from './pages/ComingSoon';
 
 function App() {
@@ -25,6 +26,14 @@ function App() {
           element={
             <RoleGuard role="director">
               <Population />
+            </RoleGuard>
+          }
+        />
+        <Route
+          path="/population/patients"
+          element={
+            <RoleGuard role="director">
+              <PopulationPatientList />
             </RoleGuard>
           }
         />

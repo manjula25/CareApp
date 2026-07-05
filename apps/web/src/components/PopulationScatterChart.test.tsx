@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, cleanup } from '@testing-library/react';
+import { render, cleanup, fireEvent } from '@testing-library/react';
 import { PopulationScatterChart, paintScatterFrame } from './PopulationScatterChart';
 import type { ScatterPoint } from '../api/client';
 
@@ -62,6 +62,53 @@ describe('PopulationScatterChart — mount/unmount guard (no real canvas context
     const { unmount, container } = render(<PopulationScatterChart points={POINTS} />);
     expect(container.querySelector('canvas')).toBeInTheDocument();
     expect(() => unmount()).not.toThrow();
+  });
+});
+
+describe('PopulationScatterChart — click-to-drill-in quadrant detection (Task B3)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    cleanup();
+  });
+
+  /**
+   * Fixes the canvas's CSS-pixel size to the same 300x200 fixture used by
+   * `populationScatterGeometry.test.ts`'s `pixelToQuadrant` cases, since
+   * jsdom's real `clientWidth`/`clientHeight` are always 0 (no layout).
+   */
+  function sizeCanvas(canvas: HTMLCanvasElement, width: number, height: number) {
+    Object.defineProperty(canvas, 'clientWidth', { value: width, configurable: true });
+    Object.defineProperty(canvas, 'clientHeight', { value: height, configurable: true });
+  }
+
+  it('fires onQuadrantClick with "critical" for a click in the high-risk/high-urgency corner', () => {
+    const onQuadrantClick = vi.fn();
+    const { container } = render(<PopulationScatterChart points={POINTS} onQuadrantClick={onQuadrantClick} />);
+    const canvas = container.querySelector('canvas')!;
+    sizeCanvas(canvas, 300, 200);
+
+    fireEvent.click(canvas, { clientX: 250, clientY: 40 });
+
+    expect(onQuadrantClick).toHaveBeenCalledWith('critical');
+  });
+
+  it('fires onQuadrantClick with "watch" for a click in the high-risk/low-urgency corner', () => {
+    const onQuadrantClick = vi.fn();
+    const { container } = render(<PopulationScatterChart points={POINTS} onQuadrantClick={onQuadrantClick} />);
+    const canvas = container.querySelector('canvas')!;
+    sizeCanvas(canvas, 300, 200);
+
+    fireEvent.click(canvas, { clientX: 250, clientY: 150 });
+
+    expect(onQuadrantClick).toHaveBeenCalledWith('watch');
+  });
+
+  it('does not throw when clicked with no onQuadrantClick handler wired up', () => {
+    const { container } = render(<PopulationScatterChart points={POINTS} />);
+    const canvas = container.querySelector('canvas')!;
+    sizeCanvas(canvas, 300, 200);
+
+    expect(() => fireEvent.click(canvas, { clientX: 250, clientY: 40 })).not.toThrow();
   });
 });
 
