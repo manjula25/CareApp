@@ -97,8 +97,27 @@ interface FhirBundleEntry<T> {
 interface FhirBundle<T> {
   entry?: FhirBundleEntry<T>[];
 }
+interface PageableBundle<T> extends FhirBundle<T> {
+  link?: { relation: string; url: string }[];
+}
 
 const COORDINATOR_PANEL_GROUP_ID = 'coordinator-demo-panel';
+
+// S5 A2 — population aggregate reads. HAPI defaults to _count=20 per page;
+// a single _count=1000 request comfortably covers the ~500-patient cohort
+// (plus the handful of hero/panel patients) in one round trip. `fetchPages`
+// below still follows any `link[rel=next]` HAPI returns anyway — belt and
+// suspenders against a server-side page-size cap lower than this value —
+// so growing the cohort past 1000 doesn't silently truncate results.
+const POPULATION_FETCH_COUNT = 1000;
+
+export interface PopulationRiskProfile {
+  patientId: string;
+  riskScore: number;
+  /** Hours between now and this patient's most recent Encounter.period.end;
+   *  undefined if no Encounter was found for the patient. */
+  hoursSinceEncounter?: number;
+}
 
 export interface AccessTokenProvider {
   getAccessToken(): Promise<string>;
@@ -121,6 +140,25 @@ export class FhirReadService {
       throw new Error(`FHIR request failed: ${init.method ?? 'GET'} ${path} -> ${res.status}`);
     }
     return (await res.json()) as T;
+  }
+
+  /**
+   * Fetches every entry of a search, following `link[rel=next]` until HAPI
+   * stops returning one — so a bulk population read never silently truncates
+   * to whatever page size the server happens to cap requests at. `path`
+   * should already include a bounding `_count` (see POPULATION_FETCH_COUNT);
+   * this only kicks in the pagination loop if the server ignores/caps it.
+   */
+  private async fetchPages<T>(path: string): Promise<FhirBundleEntry<T>[]> {
+    const entries: FhirBundleEntry<T>[] = [];
+    let nextPath: string | undefined = path;
+    while (nextPath) {
+      const bundle: PageableBundle<T> = await this.fhirFetch<PageableBundle<T>>(nextPath);
+      entries.push(...(bundle.entry ?? []));
+      const nextUrl: string | undefined = bundle.link?.find((l) => l.relation === 'next')?.url;
+      nextPath = nextUrl ? nextUrl.replace(this.baseUrl, '') : undefined;
+    }
+    return entries;
   }
 
   private guard(actor: AuthTokenPayload, domain: ResourceDomain, resource: string, action = 'read'): void {
@@ -230,6 +268,49 @@ export class FhirReadService {
         };
       })
     );
+  }
+
+  /**
+   * S5 A2 — one bulk read backing both population dashboard endpoints
+   * (scatter + summary). Two `_count`-bounded searches (RiskAssessment,
+   * Encounter — no per-patient round trips) joined client-side on
+   * `subject`. Audited ONCE for the whole aggregate read, mirroring
+   * `getAssignedPanel` above (which also audits once despite several
+   * per-patient fetches) rather than once per resource type — the
+   * externally-observable action is "read the population", not "read
+   * RiskAssessment" then separately "read Encounter".
+   *
+   * No Patient join: the scatter/summary consumers only need id + risk +
+   * encounter recency, not demographics.
+   */
+  async getPopulationRiskProfile(actor: AuthTokenPayload): Promise<PopulationRiskProfile[]> {
+    const resource = 'Population';
+    this.guard(actor, 'clinical', resource);
+
+    const [riskEntries, encounterEntries] = await Promise.all([
+      this.fetchPages<any>(`/RiskAssessment?_count=${POPULATION_FETCH_COUNT}`),
+      this.fetchPages<any>(`/Encounter?_count=${POPULATION_FETCH_COUNT}`),
+    ]);
+    writeAudit(this.db, { actor: actor.id, action: 'read', fhirResource: resource, outcome: 'success' });
+
+    const encounterEndByPatient = new Map<string, string>();
+    for (const e of encounterEntries) {
+      const patientId = e.resource.subject?.reference?.split('/')[1];
+      const end = e.resource.period?.end;
+      if (patientId && end) encounterEndByPatient.set(patientId, end);
+    }
+
+    const now = Date.now();
+    return riskEntries
+      .map((e): PopulationRiskProfile | undefined => {
+        const patientId: string | undefined = e.resource.subject?.reference?.split('/')[1];
+        if (!patientId) return undefined;
+        const riskScore = Math.round((e.resource.prediction?.[0]?.probabilityDecimal ?? 0) * 100);
+        const encounterEnd = encounterEndByPatient.get(patientId);
+        const hoursSinceEncounter = encounterEnd ? (now - new Date(encounterEnd).getTime()) / (60 * 60 * 1000) : undefined;
+        return { patientId, riskScore, hoursSinceEncounter };
+      })
+      .filter((p): p is PopulationRiskProfile => p !== undefined);
   }
 
   /**

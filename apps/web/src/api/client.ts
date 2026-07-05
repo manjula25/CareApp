@@ -54,6 +54,35 @@ export function getPatient(id: string): Promise<PatientDetail> {
   return apiFetch(`/api/patients/${id}`);
 }
 
+/** One plotted patient in the W02 population scatter — `x` is riskScore, `y` is urgency (both 0-100), matching `apps/api/src/population/service.ts`'s `ScatterPoint`. */
+export interface ScatterPoint {
+  id: string;
+  riskScore: number;
+  urgency: number;
+  x: number;
+  y: number;
+}
+
+export function getPopulationScatter(): Promise<ScatterPoint[]> {
+  return apiFetch('/api/population/scatter');
+}
+
+/** Real-but-not-yet-sliced-by-team counts — see `PopulationSummaryResult.teamKpis` in `apps/api/src/population/service.ts`. */
+export interface TeamKpis {
+  criticalZonePatients: number;
+  totalPatients: number;
+}
+
+export interface PopulationSummary {
+  criticalZoneCount: number;
+  projectedCostAvoidance: number;
+  teamKpis: TeamKpis;
+}
+
+export function getPopulationSummary(): Promise<PopulationSummary> {
+  return apiFetch('/api/population/summary');
+}
+
 export type AgentId = 'risk' | 'careGap' | 'sdoh' | 'actionPlanner';
 
 /**

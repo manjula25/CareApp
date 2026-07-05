@@ -193,8 +193,16 @@ function buildBundle(): any {
   return { resourceType: 'Bundle', type: 'batch', entry: entries };
 }
 
-async function importBundle(): Promise<void> {
-  const bundle = buildBundle();
+// The full cohort (~500 population patients + hero patients) is several
+// thousand entries. A single $batch POST of that size keeps HAPI busy long
+// enough that undici's default headers timeout fires before the response
+// arrives — even though HAPI commits every entry — so the command reports a
+// spurious failure. Chunk into smaller batches: each POST returns quickly, the
+// import stays idempotent (PUT entries), and progress is visible.
+const BATCH_CHUNK_SIZE = 250;
+
+async function postBatch(entries: any[]): Promise<void> {
+  const bundle = { resourceType: 'Bundle', type: 'batch', entry: entries };
   const res = await fetch(FHIR_BASE_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/fhir+json' },
@@ -208,7 +216,17 @@ async function importBundle(): Promise<void> {
   if (failed.length > 0) {
     throw new Error(`FHIR $batch import had ${failed.length} failing entries: ${JSON.stringify(failed)}`);
   }
-  console.log(`Imported ${bundle.entry.length} resources into HAPI FHIR.`);
+}
+
+async function importBundle(): Promise<void> {
+  const { entry } = buildBundle();
+  let imported = 0;
+  for (let i = 0; i < entry.length; i += BATCH_CHUNK_SIZE) {
+    const chunk = entry.slice(i, i + BATCH_CHUNK_SIZE);
+    await postBatch(chunk);
+    imported += chunk.length;
+    console.log(`Imported ${imported}/${entry.length} resources into HAPI FHIR.`);
+  }
 }
 
 async function main() {

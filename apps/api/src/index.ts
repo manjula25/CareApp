@@ -5,6 +5,7 @@ import { getDb } from './db';
 import { createAuthRouter } from './routes/auth';
 import { createPatientsRouter } from './routes/patients';
 import { createAnalysisRouter } from './routes/analysis';
+import { createPopulationRouter } from './routes/population';
 import { orchestrate } from './agents/orchestrator';
 import { FhirReadService } from './fhir/client';
 import { generateKeyPair } from './smart/keys';
@@ -48,6 +49,8 @@ if (require.main === module) {
   // `orchestrate` is passed explicitly (not defaulted) since it now sits
   // before `db` in the parameter list.
   app.use('/api/patients', createAnalysisRouter(fhirService, orchestrate, db));
+  // S5 A2 — Director-only population dashboard aggregates (W02).
+  app.use('/api/population', createPopulationRouter(fhirService, db));
 
   app.listen(PORT, () => {
     console.log(`API listening on :${PORT}`);
