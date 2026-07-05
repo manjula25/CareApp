@@ -12,6 +12,8 @@ import {
 } from '../api/client';
 import { ageSexLabel } from '../lib/patient';
 import { PRIORITY_LABEL, dueLabel } from '../lib/task';
+import { useAnalysisGraph } from '../lib/analysisGraph';
+import { AgentGraph } from '../components/AgentGraph';
 
 const PRIORITY_CLASS: Record<TaskSummary['priority'], string> = {
   critical: 'text-red bg-red-dim border-red',
@@ -209,18 +211,33 @@ export function PatientDetail() {
   const [running, setRunning] = useState(false);
   const [feeds, setFeeds] = useState<Record<AgentId, AgentFeedState>>(() => makeFeeds(false));
   const [createdTasks, setCreatedTasks] = useState<AnalysisTask[]>([]);
+  const [graphState, dispatchGraph] = useAnalysisGraph();
 
   async function handleRunAnalysis() {
     if (!id || running) return;
     setRunning(true);
     setFeeds(makeFeeds(true));
     setCreatedTasks([]);
+    dispatchGraph({ event: 'start' });
     try {
       await streamAnalysis(id, {
-        onToken: (agentId, text) => setFeeds((prev) => withText(prev, agentId, text)),
-        onFinding: (flag) => setFeeds((prev) => withFinding(prev, flag)),
-        onComplete: (summary) => setFeeds((prev) => withSummary(prev, summary)),
-        onTask: (task) => setCreatedTasks((prev) => [...prev, task]),
+        onToken: (agentId, text) => {
+          setFeeds((prev) => withText(prev, agentId, text));
+          dispatchGraph({ event: 'token', agentId });
+        },
+        onFinding: (flag) => {
+          setFeeds((prev) => withFinding(prev, flag));
+          dispatchGraph({ event: 'finding', agentId: flag.agentId });
+        },
+        onComplete: (summary) => {
+          setFeeds((prev) => withSummary(prev, summary));
+          dispatchGraph({ event: 'complete', agentId: summary.agentId });
+        },
+        onTask: (task) => {
+          setCreatedTasks((prev) => [...prev, task]);
+          dispatchGraph({ event: 'task', agentId: task.agentId });
+        },
+        onDone: () => dispatchGraph({ event: 'done' }),
       });
     } finally {
       setRunning(false);
@@ -264,10 +281,17 @@ export function PatientDetail() {
             </button>
           </div>
 
-          {/* Feeds grid now fully matches reference-materials/caresync-ai.html's .feeds —
-              all four agents (Risk/Care Gap/SDOH/Action Planner) stream live. The
-              agent-graph canvas above the grid in the mockup remains the one recorded
-              deviation, deferred to a future slice (S4); it is not built here. */}
+          {/* Agent-graph canvas — matches reference-materials/caresync-ai.html's
+              .canvas-wrap sitting directly above .feeds (S4 closes the last
+              recorded W03 deviation). Presentational: PatientDetail owns the
+              analysis-graph state (live SSE or, in a future slice, cache
+              replay) and passes it down. */}
+          <div className="mb-6">
+            <AgentGraph state={graphState} />
+          </div>
+
+          {/* Feeds grid matches reference-materials/caresync-ai.html's .feeds —
+              all four agents (Risk/Care Gap/SDOH/Action Planner) stream live. */}
           <div className="grid grid-cols-4 gap-2.5 mb-6">
             {FEED_DEFS.map(({ id: agentId, label, accent }) => (
               <FeedBox key={agentId} label={label} accent={accent} state={agentFeedState(feeds[agentId], running)}>
