@@ -312,30 +312,30 @@ Cache is a single SQLite table — deletable without affecting HAPI; `docker com
 
 ### Phase A — Population data + aggregate API (backend, test-first)
 
-- [ ] **A1. Synthea import (~500).** Generate the diabetes+CHF+depression cohort and bulk-import via `$batch` into the same HAPI, alongside the curated hero bundles. Extend the existing import script; idempotent/re-runnable.
+- [x] **A1. Synthea import (~500).** Generate the diabetes+CHF+depression cohort and bulk-import via `$batch` into the same HAPI, alongside the curated hero bundles. Extend the existing import script; idempotent/re-runnable.
   - *ponytail:* the population's **only** consumer is this dashboard (why S1 skipped it); generate once, commit the seed or the generation command.
   - *Verify:* HAPI holds ~500 patients with RiskAssessment + demographics; hero patients still resolve.
 
-- [ ] **A2. Population aggregate service (audited).** `getPopulationScatter(actor)` → per-patient `{id, riskScore, urgency, x, y}`; `getPopulationSummary(actor)` → `{criticalZoneCount, projectedCostAvoidance, teamKpis}`. Director-scoped (aggregate). Cost-avoidance from a **recorded formula** over real risk counts. Routes `GET /api/population/scatter`, `GET /api/population/summary`.
+- [x] **A2. Population aggregate service (audited).** `getPopulationScatter(actor)` → per-patient `{id, riskScore, urgency, x, y}`; `getPopulationSummary(actor)` → `{criticalZoneCount, projectedCostAvoidance, teamKpis}`. Director-scoped (aggregate). Cost-avoidance from a **recorded formula** over real risk counts. Routes `GET /api/population/scatter`, `GET /api/population/summary`.
   - *Domain rule:* critical-zone count + cost-avoidance computed from patient data, not hardcoded (S5 acceptance, GD12 spirit); every read audited.
   - *Test (Supertest vs test HAPI):* scatter returns ~500 points over seeded data; summary counts match the seeded critical cohort; the cost formula is asserted against a fixed small fixture.
 
 ### Phase B — Director routing + W02 dashboard (frontend, mockup fidelity)
 
-- [ ] **B1. Director home route.** Extend role→home so Director lands on `/population` (not the Coordinator `/panel`); guard it Director-only. *Story 1.*
+- [x] **B1. Director home route.** Extend role→home so Director lands on `/population` (not the Coordinator `/panel`); guard it Director-only. *Story 1.*
   - *Domain rule:* home screen derived from role, not user-chosen (GD5).
   - *Test (Vitest):* Director → `/population`; Coordinator still → `/panel`.
 
-- [ ] **B2. W02 Population Dashboard (`reference-materials/caresync-population.html`, `#scatter` canvas).** Native Canvas risk scatter (risk × urgency), critical-zone count tile, cost-avoidance tile, team KPI tiles — from A2. Port design tokens/structure per the mockup (`html-mockup-fidelity`, ≥80%).
+- [x] **B2. W02 Population Dashboard (`reference-materials/caresync-population.html`, `#scatter` canvas).** Native Canvas risk scatter (risk × urgency), critical-zone count tile, cost-avoidance tile, team KPI tiles — from A2. Port design tokens/structure per the mockup (`html-mockup-fidelity`, ≥80%).
   - *Domain rule:* native Canvas, no chart library (GD10).
   - *Test (Vitest, mocked API):* renders the summary tiles from data; scatter receives the points.
 
-- [ ] **B3. Drill-in.** Click a scatter cluster → filtered patient list → `PatientDetail`. Reuse the existing list/detail screens with a filter param.
+- [x] **B3. Drill-in.** Click a scatter cluster → filtered patient list → `PatientDetail`. Reuse the existing list/detail screens with a filter param.
   - *Verify:* cluster → filtered list → detail navigation works (S5 acceptance).
 
 ### Phase C — Verification
-- [ ] **C1.** `npm run test:api` (population aggregates) + `npm run test:web` green.
-- [ ] **C2. Frontend E2E (`frontend-e2e-verification`).** Director login → W02 renders scatter + computed tiles → drill cluster → filtered list → open Maria.
+- [x] **C1.** `npm run test:api` (population aggregates) + `npm run test:web` green.
+- [x] **C2. Frontend E2E (`frontend-e2e-verification`).** Director login → W02 renders scatter + computed tiles → drill cluster → filtered list → open Maria.
 
 ### Rollback / safety
 Synthea data lives only in the disposable HAPI (`docker compose down -v` resets). Aggregates are read-only. Cost-avoidance formula is documented in the slice notes so the number is defensible/honest (not a magic figure).

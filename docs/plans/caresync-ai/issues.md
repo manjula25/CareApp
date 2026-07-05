@@ -122,11 +122,11 @@ aggregate API over HAPI. Clicking a cluster drills to a filtered patient list an
 then into a patient detail view.
 
 ### Acceptance criteria
-- [ ] Director login routes to W02 (not the Coordinator panel).
-- [ ] Scatter renders ~500 patients from real HAPI-derived aggregates (native Canvas, no chart library).
-- [ ] Critical-zone count and cost-avoidance figure are computed from patient data, not hardcoded.
-- [ ] Drill-down: cluster → filtered list → patient detail navigation works.
-- [ ] API-boundary tests for the population aggregate endpoints over seeded data.
+- [x] Director login routes to W02 (not the Coordinator panel).
+- [x] Scatter renders ~500 patients from real HAPI-derived aggregates (native Canvas, no chart library).
+- [x] Critical-zone count and cost-avoidance figure are computed from patient data, not hardcoded.
+- [x] Drill-down: cluster → filtered list → patient detail navigation works.
+- [x] API-boundary tests for the population aggregate endpoints over seeded data.
 
 ### Blocked by
 - S1
