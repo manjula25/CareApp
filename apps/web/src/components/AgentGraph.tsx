@@ -36,8 +36,28 @@ export interface AgentGraphProps {
 
 const AGENT_IDS: AgentId[] = AGENTS.map((a) => a.agentId);
 
+/**
+ * A large elapsed value used only for the reduced-motion *static* frame, so
+ * every time-since-transition animation reads as fully settled: the "✓
+ * Analysis complete" text is at full alpha, the orchestrator/node completion
+ * rings are fully drawn, and the orchestrator's settle-pulse glow has
+ * already faded off — i.e. the true resting end state the plan asks a
+ * reduced-motion user to see, not the mid-settle frame at elapsed≈0.
+ */
+const SETTLED_ELAPSED_SEC = 1000;
+
 function prefersReducedMotion(): boolean {
   return typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+}
+
+/** Timing inputs for one painted frame — the only per-frame varying data `paintFrame` needs beyond the graph state itself. */
+export interface FrameTiming {
+  /** Seconds since mount, for continuous breathing/oscillation that doesn't care when a state was entered. */
+  tSec: number;
+  /** Seconds since the current `graphState` was entered, for one-shot fade/burst/settle animations. */
+  elapsedInStateSec: number;
+  /** Seconds since each agent node individually became `complete` (null if it isn't complete / unknown), for per-node completion rings. */
+  completeElapsedByAgent: Record<AgentId, number | null>;
 }
 
 function drawNode(
@@ -112,6 +132,141 @@ function drawLabel(
   ctx.fillText(txt, x, y);
 }
 
+/**
+ * Paints exactly one frame of the agent graph. Pure with respect to the DOM
+ * (it only touches the passed `ctx`) — extracted from the component's effect
+ * so the draw logic is directly exercisable in tests with a stub 2D context,
+ * and so the mount effect stays small. Ports the mockup's `draw()` body:
+ * radar rings, edges + particles, agent nodes, orchestrator, INIT floating
+ * text, COMPLETE checkmark — see `agentGraphGeometry.ts` for the math.
+ */
+export function paintFrame(
+  ctx: CanvasRenderingContext2D,
+  W: number,
+  H: number,
+  state: AnalysisGraphState,
+  timing: FrameTiming
+): void {
+  const graphState: GraphState = state.graphState;
+  const { tSec, elapsedInStateSec } = timing;
+
+  ctx.clearRect(0, 0, W, H);
+  const cx = W / 2;
+  const cy = H / 2;
+
+  /* --- radar rings (always on, very faint) --- */
+  for (let k = 0; k < 3; k++) {
+    const rr = (tSec * 22 + k * 40) % 120;
+    const ra = 0.05 * (1 - rr / 120);
+    if (ra > 0.002) {
+      ctx.strokeStyle = hexToRgba(COL.cyan, ra);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(cx, cy, ORCHESTRATOR_RADIUS + rr, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  const graphActiveWindow = graphState === 'dispatch' || graphState === 'analyzing' || graphState === 'synthesizing';
+
+  /* --- edges + particles --- */
+  AGENTS.forEach((agent: AgentNodeGeometry, i: number) => {
+    const nodeStatus: NodeStatus = state.nodes[agent.agentId];
+    const g = edgeGeom(cx, cy, agent);
+    const edgeActive = graphActiveWindow && nodeStatus !== 'complete';
+
+    ctx.beginPath();
+    ctx.moveTo(g.p0.x, g.p0.y);
+    ctx.quadraticCurveTo(g.c.x, g.c.y, g.p1.x, g.p1.y);
+    if (edgeActive) {
+      ctx.save();
+      ctx.shadowColor = agent.color;
+      ctx.shadowBlur = 10;
+      ctx.strokeStyle = hexToRgba(agent.color, 0.55);
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+      ctx.restore();
+    } else {
+      ctx.strokeStyle = hexToRgba('#244A6A', graphState === 'complete' ? 0.55 : 0.4);
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+    }
+
+    let particleTs: number[] = [];
+    if (edgeActive) {
+      if (graphState === 'dispatch') particleTs = dispatchParticleT(elapsedInStateSec);
+      else if (graphState === 'analyzing') particleTs = analyzingParticleT(tSec, i);
+      else if (graphState === 'synthesizing') particleTs = synthesizingParticleT(elapsedInStateSec);
+    }
+    particleTs.forEach((pt) => {
+      const p = bez(g.p0, g.c, g.p1, pt);
+      ctx.save();
+      ctx.shadowColor = agent.color;
+      ctx.shadowBlur = 12;
+      ctx.fillStyle = '#FFFFFF';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 2.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = hexToRgba(agent.color, 0.9);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 1.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    });
+  });
+
+  /* --- agent nodes --- */
+  AGENTS.forEach((agent: AgentNodeGeometry, i: number) => {
+    const x = cx + agent.dx;
+    const y = cy + agent.dy;
+    const nodeStatus: NodeStatus = state.nodes[agent.agentId];
+    const completeElapsedSec = timing.completeElapsedByAgent[agent.agentId];
+    const visual = agentNodeVisual(nodeStatus, graphState, tSec, i, completeElapsedSec);
+
+    drawNode(ctx, x, y, AGENT_RADIUS, agent.color, {
+      alpha: visual.alpha,
+      scale: visual.scale,
+      glow: visual.glow,
+      ringAlpha: visual.ringAlpha,
+    });
+
+    const lc = nodeStatus === 'pending' ? COL.textMuted : COL.text;
+    if (agent.label === 'above') drawLabel(ctx, agent.name, x, y - AGENT_RADIUS - 14, 'center', lc);
+    if (agent.label === 'below') drawLabel(ctx, agent.name, x, y + AGENT_RADIUS + 14, 'center', lc);
+    if (agent.label === 'right') drawLabel(ctx, agent.name, x + AGENT_RADIUS + 10, y, 'left', lc);
+    if (agent.label === 'left') drawLabel(ctx, agent.name, x - AGENT_RADIUS - 10, y, 'right', lc);
+  });
+
+  /* --- orchestrator node --- */
+  const orchestrator = orchestratorVisual(graphState, tSec, elapsedInStateSec);
+  drawNode(ctx, cx, cy, ORCHESTRATOR_RADIUS, COL.cyan, {
+    alpha: 1,
+    scale: orchestrator.scale,
+    glow: orchestrator.glow,
+    ringAlpha: orchestrator.ringAlpha,
+  });
+  drawLabel(ctx, 'Orchestrator', cx, cy + ORCHESTRATOR_RADIUS + 18, 'center', COL.text, 11.5);
+
+  /* --- INIT floating text --- */
+  if (graphState === 'init') {
+    const { alpha, yOffset } = initFloatingText(elapsedInStateSec);
+    ctx.globalAlpha = alpha;
+    drawLabel(ctx, 'Analyzing patient…', cx, cy - ORCHESTRATOR_RADIUS - 22 + yOffset, 'center', COL.cyan, 12);
+    ctx.globalAlpha = 1;
+  }
+
+  /* --- COMPLETE checkmark hint --- */
+  if (graphState === 'complete') {
+    const alpha = checkmarkAlpha(elapsedInStateSec);
+    if (alpha > 0) {
+      ctx.globalAlpha = alpha;
+      drawLabel(ctx, '✓ Analysis complete', cx, H - 14, 'center', COL.emerald, 11);
+      ctx.globalAlpha = 1;
+    }
+  }
+}
+
 export function AgentGraph({ state }: AgentGraphProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stateRef = useRef(state);
@@ -122,9 +277,10 @@ export function AgentGraph({ state }: AgentGraphProps) {
   const prevNodesRef = useRef(state.nodes);
   const completedAtRef = useRef<Partial<Record<AgentId, number>>>({});
   // Under prefers-reduced-motion there's no rAF loop, so a state change
-  // (e.g. idle -> dispatch) needs an explicit repaint to actually show —
-  // the mount effect below assigns this once the canvas ctx is ready.
-  const repaintOnceRef = useRef<(() => void) | null>(null);
+  // (e.g. idle -> dispatch) or a window resize needs an explicit repaint of
+  // the single static frame — the mount effect assigns this once the canvas
+  // ctx is ready, and the `[state]` effect below invokes it on each change.
+  const repaintStaticRef = useRef<(() => void) | null>(null);
 
   // Track "time since this graphState was entered" off a real transition
   // moment, instead of the mockup's fake single `runStart` clock.
@@ -151,7 +307,41 @@ export function AgentGraph({ state }: AgentGraphProps) {
     const ctx = canvas.getContext('2d');
     if (!ctx) return; // jsdom / unsupported-canvas guard.
 
+    const reduced = prefersReducedMotion();
     let rafId: number | null = null;
+
+    /** Per-frame timing for the live animation path (real clocks). */
+    function liveTiming(): FrameTiming {
+      const now = performance.now();
+      const completeElapsedByAgent = {} as Record<AgentId, number | null>;
+      for (const agentId of AGENT_IDS) {
+        const completedAt = completedAtRef.current[agentId];
+        completeElapsedByAgent[agentId] = completedAt != null ? (now - completedAt) / 1000 : null;
+      }
+      return {
+        tSec: (now - mountedAtRef.current) / 1000,
+        elapsedInStateSec: (now - graphStateEnteredAtRef.current) / 1000,
+        completeElapsedByAgent,
+      };
+    }
+
+    /**
+     * Timing for the reduced-motion static frame: no motion (`tSec` 0), and
+     * every one-shot animation reads as fully settled so the resting end
+     * state (rings, checkmark, glow-off) is shown rather than elapsed≈0.
+     */
+    function settledTiming(): FrameTiming {
+      const completeElapsedByAgent = {} as Record<AgentId, number | null>;
+      for (const agentId of AGENT_IDS) {
+        completeElapsedByAgent[agentId] =
+          stateRef.current.nodes[agentId] === 'complete' ? SETTLED_ELAPSED_SEC : null;
+      }
+      return { tSec: 0, elapsedInStateSec: SETTLED_ELAPSED_SEC, completeElapsedByAgent };
+    }
+
+    function renderStatic() {
+      paintFrame(ctx!, canvas!.clientWidth, canvas!.clientHeight, stateRef.current, settledTiming());
+    }
 
     function resize() {
       const dpr = window.devicePixelRatio || 1;
@@ -160,146 +350,20 @@ export function AgentGraph({ state }: AgentGraphProps) {
       canvas!.width = Math.round(w * dpr);
       canvas!.height = Math.round(h * dpr);
       ctx!.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // Resizing clears the backing store; the animate path repaints on the
+      // next rAF frame, but the reduced-motion path must repaint here or the
+      // canvas stays blank until the next state change.
+      if (reduced) renderStatic();
     }
     resize();
     window.addEventListener('resize', resize);
 
-    function paint() {
-      const W = canvas!.clientWidth;
-      const H = canvas!.clientHeight;
-      const cur = stateRef.current;
-      const graphState: GraphState = cur.graphState;
-      const now = performance.now();
-      const tSec = (now - mountedAtRef.current) / 1000;
-      const elapsedInStateSec = (now - graphStateEnteredAtRef.current) / 1000;
-
-      ctx!.clearRect(0, 0, W, H);
-      const cx = W / 2;
-      const cy = H / 2;
-
-      /* --- radar rings (always on, very faint) --- */
-      for (let k = 0; k < 3; k++) {
-        const rr = (tSec * 22 + k * 40) % 120;
-        const ra = 0.05 * (1 - rr / 120);
-        if (ra > 0.002) {
-          ctx!.strokeStyle = hexToRgba(COL.cyan, ra);
-          ctx!.lineWidth = 1;
-          ctx!.beginPath();
-          ctx!.arc(cx, cy, ORCHESTRATOR_RADIUS + rr, 0, Math.PI * 2);
-          ctx!.stroke();
-        }
-      }
-
-      const graphActiveWindow = graphState === 'dispatch' || graphState === 'analyzing' || graphState === 'synthesizing';
-
-      /* --- edges + particles --- */
-      AGENTS.forEach((agent: AgentNodeGeometry, i: number) => {
-        const nodeStatus: NodeStatus = cur.nodes[agent.agentId];
-        const g = edgeGeom(cx, cy, agent);
-        const edgeActive = graphActiveWindow && nodeStatus !== 'complete';
-
-        ctx!.beginPath();
-        ctx!.moveTo(g.p0.x, g.p0.y);
-        ctx!.quadraticCurveTo(g.c.x, g.c.y, g.p1.x, g.p1.y);
-        if (edgeActive) {
-          ctx!.save();
-          ctx!.shadowColor = agent.color;
-          ctx!.shadowBlur = 10;
-          ctx!.strokeStyle = hexToRgba(agent.color, 0.55);
-          ctx!.lineWidth = 1.6;
-          ctx!.stroke();
-          ctx!.restore();
-        } else {
-          ctx!.strokeStyle = hexToRgba('#244A6A', graphState === 'complete' ? 0.55 : 0.4);
-          ctx!.lineWidth = 1.2;
-          ctx!.stroke();
-        }
-
-        let particleTs: number[] = [];
-        if (edgeActive) {
-          if (graphState === 'dispatch') particleTs = dispatchParticleT(elapsedInStateSec);
-          else if (graphState === 'analyzing') particleTs = analyzingParticleT(tSec, i);
-          else if (graphState === 'synthesizing') particleTs = synthesizingParticleT(elapsedInStateSec);
-        }
-        particleTs.forEach((pt) => {
-          const p = bez(g.p0, g.c, g.p1, pt);
-          ctx!.save();
-          ctx!.shadowColor = agent.color;
-          ctx!.shadowBlur = 12;
-          ctx!.fillStyle = '#FFFFFF';
-          ctx!.beginPath();
-          ctx!.arc(p.x, p.y, 2.6, 0, Math.PI * 2);
-          ctx!.fill();
-          ctx!.shadowBlur = 0;
-          ctx!.fillStyle = hexToRgba(agent.color, 0.9);
-          ctx!.beginPath();
-          ctx!.arc(p.x, p.y, 1.4, 0, Math.PI * 2);
-          ctx!.fill();
-          ctx!.restore();
-        });
-      });
-
-      /* --- agent nodes --- */
-      AGENTS.forEach((agent: AgentNodeGeometry, i: number) => {
-        const x = cx + agent.dx;
-        const y = cy + agent.dy;
-        const nodeStatus: NodeStatus = cur.nodes[agent.agentId];
-        const completedAt = completedAtRef.current[agent.agentId];
-        const completeElapsedSec = completedAt != null ? (now - completedAt) / 1000 : null;
-        const visual = agentNodeVisual(nodeStatus, graphState, tSec, i, completeElapsedSec);
-
-        drawNode(ctx!, x, y, AGENT_RADIUS, agent.color, {
-          alpha: visual.alpha,
-          scale: visual.scale,
-          glow: visual.glow,
-          ringAlpha: visual.ringAlpha,
-        });
-
-        const lc = nodeStatus === 'pending' ? COL.textMuted : COL.text;
-        if (agent.label === 'above') drawLabel(ctx!, agent.name, x, y - AGENT_RADIUS - 14, 'center', lc);
-        if (agent.label === 'below') drawLabel(ctx!, agent.name, x, y + AGENT_RADIUS + 14, 'center', lc);
-        if (agent.label === 'right') drawLabel(ctx!, agent.name, x + AGENT_RADIUS + 10, y, 'left', lc);
-        if (agent.label === 'left') drawLabel(ctx!, agent.name, x - AGENT_RADIUS - 10, y, 'right', lc);
-      });
-
-      /* --- orchestrator node --- */
-      const orchestrator = orchestratorVisual(graphState, tSec, elapsedInStateSec);
-      drawNode(ctx!, cx, cy, ORCHESTRATOR_RADIUS, COL.cyan, {
-        alpha: 1,
-        scale: orchestrator.scale,
-        glow: orchestrator.glow,
-        ringAlpha: orchestrator.ringAlpha,
-      });
-      drawLabel(ctx!, 'Orchestrator', cx, cy + ORCHESTRATOR_RADIUS + 18, 'center', COL.text, 11.5);
-
-      /* --- INIT floating text --- */
-      if (graphState === 'init') {
-        const { alpha, yOffset } = initFloatingText(elapsedInStateSec);
-        ctx!.globalAlpha = alpha;
-        drawLabel(ctx!, 'Analyzing patient…', cx, cy - ORCHESTRATOR_RADIUS - 22 + yOffset, 'center', COL.cyan, 12);
-        ctx!.globalAlpha = 1;
-      }
-
-      /* --- COMPLETE checkmark hint --- */
-      if (graphState === 'complete') {
-        const alpha = checkmarkAlpha(elapsedInStateSec);
-        if (alpha > 0) {
-          ctx!.globalAlpha = alpha;
-          drawLabel(ctx!, '✓ Analysis complete', cx, H - 14, 'center', COL.emerald, 11);
-          ctx!.globalAlpha = 1;
-        }
-      }
-    }
-
-    if (prefersReducedMotion()) {
-      // Static frame only — no continuous rAF loop. `repaintOnceRef` lets
-      // the effect below redraw this single frame whenever `state` changes,
-      // so it tracks real progress instead of freezing at the mount-time state.
-      repaintOnceRef.current = paint;
-      paint();
+    if (reduced) {
+      repaintStaticRef.current = renderStatic;
+      renderStatic();
     } else {
       const loop = () => {
-        paint();
+        paintFrame(ctx!, canvas!.clientWidth, canvas!.clientHeight, stateRef.current, liveTiming());
         rafId = requestAnimationFrame(loop);
       };
       rafId = requestAnimationFrame(loop);
@@ -308,7 +372,7 @@ export function AgentGraph({ state }: AgentGraphProps) {
     return () => {
       window.removeEventListener('resize', resize);
       if (rafId !== null) cancelAnimationFrame(rafId);
-      repaintOnceRef.current = null;
+      repaintStaticRef.current = null;
     };
     // Intentionally run once per mount: the rAF loop (when animating) reads
     // live state via `stateRef`, so it doesn't need to restart on every
@@ -316,10 +380,11 @@ export function AgentGraph({ state }: AgentGraphProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Reduced-motion redraw: since there's no rAF loop in that mode, each
-  // state transition needs its own explicit repaint of the static frame.
+  // Reduced-motion redraw: since there's no rAF loop in that mode, each state
+  // transition needs its own explicit repaint of the static frame. No-op
+  // (null ref) on the animate path, where the rAF loop already tracks state.
   useEffect(() => {
-    repaintOnceRef.current?.();
+    repaintStaticRef.current?.();
   }, [state]);
 
   return (
