@@ -128,7 +128,10 @@ export interface MetricsReport {
 
 // Risk agent's riskLevel enum values (riskAgent.ts's REPORT_RISK_TOOL schema)
 // treated as "high risk" for the binary classification this eval performs.
-const HIGH_RISK_LEVELS = new Set(['high', 'critical']);
+// Exported so errorAnalysis.ts shares this single definition of "high risk"
+// rather than re-deriving it — a threshold change (e.g. adding 'severe')
+// only needs to happen here.
+export const HIGH_RISK_LEVELS = new Set(['high', 'critical']);
 
 /**
  * Tallies expected/predicted boolean pairs into a confusion matrix. Exported

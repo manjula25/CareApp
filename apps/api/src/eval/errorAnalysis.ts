@@ -1,4 +1,4 @@
-import { LabelRow, PatientFindings } from './computeMetrics';
+import { LabelRow, PatientFindings, HIGH_RISK_LEVELS } from './computeMetrics';
 
 /**
  * S9 B1 — pure extraction of the specific misses (false negatives) and false
@@ -18,13 +18,6 @@ import { LabelRow, PatientFindings } from './computeMetrics';
  * and not double-counted per dimension — "no run, no comparison," but the
  * report must still say why that patient contributed nothing.
  */
-
-// Duplicated from computeMetrics.ts rather than imported: that module
-// intentionally keeps this constant private (S9 A2 was reviewed/approved as-
-// is), and this is small enough (a two-value set, from riskAgent.ts's
-// REPORT_RISK_TOOL schema) that re-declaring it here is cheaper than widening
-// Phase A's export surface for a Phase B convenience.
-const HIGH_RISK_LEVELS = new Set(['high', 'critical']);
 
 export interface CareGapErrorEntry {
   patientId: string;
