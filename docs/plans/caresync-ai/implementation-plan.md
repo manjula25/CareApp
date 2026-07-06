@@ -485,28 +485,28 @@ Task writes audited + reversible via HAPI reset. The GD4 decision is recorded be
 
 ### Phase A — Governance aggregates (backend, test-first)
 
-- [ ] **A1. Audit trail endpoint.** `GET /api/governance/audit` paging the S1 `audit_log` (ts, actor, action, resource, outcome).
+- [x] **A1. Audit trail endpoint.** `GET /api/governance/audit` paging the S1 `audit_log` (ts, actor, action, resource, outcome).
   - *Domain rule:* live audit trail of every FHIR read/write with timestamp + user (story 15); reuses the S1 spine.
   - *Test (Supertest):* after some reads/writes, the trail lists them with actor + timestamp.
 
-- [ ] **A2. Model performance + confidence distribution.** `GET /api/governance/model` → model version + timestamp per analysis and a confidence distribution derived from S4 cached agent outputs.
+- [x] **A2. Model performance + confidence distribution.** `GET /api/governance/model` → model version + timestamp per analysis and a confidence distribution derived from S4 cached agent outputs.
   - *Domain rule:* each analysis shows model version + timestamp (story 12); confidence distribution derived from actual outputs (S8 acceptance).
   - *Test:* distribution computed from seeded cache rows matches expected buckets.
 
-- [ ] **A3. Demographic parity (computed — GD12).** `GET /api/governance/parity` → risk scores stratified by age/sex/race/ethnicity, joining cached analyses to real Synthea demographics from HAPI.
+- [x] **A3. Demographic parity (computed — GD12).** `GET /api/governance/parity` → risk scores stratified by age/sex/race/ethnicity, joining cached analyses to real Synthea demographics from HAPI.
   - *Domain rule:* parity computed from real Synthea demographics, not static (GD12, story 14).
   - *Test (Supertest vs test HAPI):* strata reflect the seeded demographics; a known-imbalanced fixture yields the expected disparity direction.
 
 ### Phase B — W06 Governance view (frontend, mockup fidelity)
 
-- [ ] **B1. W06 port (`reference-materials/caresync-governance.html`).** Audit trail table, Model Performance (`#confChart`), Demographic Equity Monitor (`#radarChart`) — native Canvas (GD10) — from A1–A3. ≥80% fidelity.
-- [ ] **B2. Eval headline tile (graceful placeholder).** Reads the S9 JSON summary if present, else an empty/loading state.
+- [x] **B1. W06 port (`reference-materials/caresync-governance.html`).** Audit trail table, Model Performance (`#confChart`), Demographic Equity Monitor (`#radarChart`) — native Canvas (GD10) — from A1–A3. ≥80% fidelity. Also added a tiny `GET /api/governance/eval` endpoint (reads `docs/eval-report.json` if present) needed to back B2.
+- [x] **B2. Eval headline tile (graceful placeholder).** Reads the S9 JSON summary if present, else an empty/loading state.
   - *Domain rule:* eval tile renders graceful empty/loading until S9 provides data (S8 acceptance) — honest staging.
   - *Test (Vitest):* renders parity/confidence/audit from data; eval tile shows empty state with no S9 data and the headline once present.
 
 ### Phase C — Verification
-- [ ] **C1.** `npm run test:api` (audit/model/parity) + `npm run test:web`.
-- [ ] **C2. Frontend E2E (`frontend-e2e-verification`).** Director → W06 → audit rows, model version, confidence chart, parity radar all render from real data; eval tile shows its empty state.
+- [x] **C1.** `npm run test:api` (audit/model/parity/eval) + `npm run test:web`.
+- [x] **C2. Frontend E2E (`frontend-e2e-verification`).** Director → W06 → audit rows, model version, confidence chart, parity radar all render from real data; eval tile shows its empty state.
 
 ### Rollback / safety
 All reads over existing SQLite + HAPI — no new writable state. Parity/confidence are computed at request time (no cache to invalidate). The eval tile never fabricates numbers (honest staging).

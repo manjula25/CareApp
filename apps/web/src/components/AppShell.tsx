@@ -104,6 +104,16 @@ export function AppShell() {
                 Task Center
               </Link>
             )}
+            {/* S8 B3 — the Director's only nav affordance to reach W06 from
+                anywhere other than their post-login home (`/population`);
+                Coordinator/Social Worker have no PRD story for this screen,
+                so no link for those roles (mirrors the Tasks/Task Center
+                links above, which are likewise scoped to their own roles). */}
+            {user.role === 'director' && (
+              <Link to="/governance" className="text-label text-text-muted hover:text-text transition-colors">
+                Governance
+              </Link>
+            )}
             <BellIcon className="text-text-muted w-4 h-4" />
             <span
               className="w-7 h-7 rounded-full bg-surface-raised border border-border-light text-cyan text-xs font-bold flex items-center justify-center"

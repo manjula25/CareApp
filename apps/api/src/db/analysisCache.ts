@@ -30,6 +30,29 @@ export function writeAnalysisCache(db: Database.Database, entry: AnalysisCacheEn
   });
 }
 
+/**
+ * S8 A2 — reads every cached analysis row (not just one patient), backing
+ * the W06 governance dashboard's model-performance view. Same row mapping as
+ * readAnalysisCache; no ordering guarantee is needed by any current caller
+ * (governance/service.ts aggregates across all rows rather than displaying
+ * them in a particular order).
+ */
+export function readAllAnalysisCache(db: Database.Database): AnalysisCacheRow[] {
+  const rows = db.prepare('SELECT * FROM analysis_cache').all() as {
+    patient_id: string;
+    result_json: string;
+    model_version: string;
+    created_ts: string;
+  }[];
+
+  return rows.map((row) => ({
+    patientId: row.patient_id,
+    resultJson: JSON.parse(row.result_json),
+    modelVersion: row.model_version,
+    createdTs: row.created_ts,
+  }));
+}
+
 export function readAnalysisCache(db: Database.Database, patientId: string): AnalysisCacheRow | null {
   const row = db.prepare('SELECT * FROM analysis_cache WHERE patient_id = ?').get(patientId) as
     | { patient_id: string; result_json: string; model_version: string; created_ts: string }

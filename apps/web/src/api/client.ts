@@ -122,6 +122,86 @@ export function getPopulationSummary(): Promise<PopulationSummary> {
   return apiFetch('/api/population/summary');
 }
 
+// --- S8 B — governance dashboard (W06) -----------------------------------
+
+/** One row of the S1 `audit_log`, as returned by `GET /api/governance/audit` — no patient name/recommendation text/FHIR citation/confidence% (the mockup's per-entry fields): the real audit_log row only ever carries these five columns (`apps/api/src/db/audit.ts`'s `AuditTrailEntry`). */
+export interface AuditTrailEntry {
+  ts: string;
+  actor: string;
+  action: string;
+  resource: string;
+  outcome: 'success' | 'denied' | 'error';
+}
+
+export interface AuditTrailResult {
+  entries: AuditTrailEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/** Director-only, paged read of the audit trail — mirrors `apps/api/src/routes/governance.ts`'s `?limit=&offset=` query params exactly. */
+export function getAuditTrail(limit = 50, offset = 0): Promise<AuditTrailResult> {
+  return apiFetch(`/api/governance/audit?limit=${limit}&offset=${offset}`);
+}
+
+export interface AnalysisVersionEntry {
+  patientId: string;
+  modelVersion: string;
+  createdTs: string;
+}
+
+/** One of the 4 fixed confidence bands `apps/api/src/governance/service.ts`'s `CONFIDENCE_BUCKETS` derives from actual cached agent output — not the mockup's 5 hardcoded demo bands. */
+export interface ConfidenceBucket {
+  range: string;
+  count: number;
+}
+
+export interface ModelPerformanceResult {
+  analyses: AnalysisVersionEntry[];
+  confidenceDistribution: ConfidenceBucket[];
+}
+
+export function getModelPerformance(): Promise<ModelPerformanceResult> {
+  return apiFetch('/api/governance/model');
+}
+
+/** One demographic group's cached-risk-score stat within a single stratification dimension (age band / sex / race / ethnicity). */
+export interface ParityGroupStat {
+  group: string;
+  patientCount: number;
+  avgRiskScore: number;
+}
+
+export interface ParityResult {
+  byAgeBand: ParityGroupStat[];
+  bySex: ParityGroupStat[];
+  byRace: ParityGroupStat[];
+  byEthnicity: ParityGroupStat[];
+}
+
+/** Director-only demographic parity (GD12) — real, computed from cached risk scores joined to live HAPI demographics; see `apps/api/src/governance/service.ts`'s `getParityMetrics` doc. */
+export function getParityMetrics(): Promise<ParityResult> {
+  return apiFetch('/api/governance/parity');
+}
+
+/**
+ * The B2 eval headline tile's data source: a stateless read of the S9
+ * evaluation report JSON (`docs/eval-report.json`, repo root — see
+ * `apps/api/src/governance/service.ts`'s `EVAL_REPORT_PATH`). S9 doesn't
+ * exist on this branch, so `available` is `false` today and will stay that
+ * way until S9 ships; `summary`'s shape is deliberately `unknown` since S9's
+ * JSON contract isn't defined yet.
+ */
+export interface EvalSummaryResult {
+  available: boolean;
+  summary?: unknown;
+}
+
+export function getEvalSummary(): Promise<EvalSummaryResult> {
+  return apiFetch('/api/governance/eval');
+}
+
 export type AgentId = 'risk' | 'careGap' | 'sdoh' | 'actionPlanner';
 
 /**

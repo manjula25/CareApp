@@ -116,3 +116,40 @@ describe('AppShell — S6 B1 live assignment notification', () => {
     expect(unsubscribe).toHaveBeenCalled();
   });
 });
+
+// S8 B3 — the Director's only way to reach the W06 governance dashboard from
+// anywhere other than their post-login home route (`/population`).
+describe('AppShell — S8 B3 Governance nav link (Director-only)', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.clearAllMocks();
+  });
+
+  it('shows a Governance link for a Director', () => {
+    localStorage.setItem('caresync_token', tokenFor('director'));
+    const queryClient = new QueryClient();
+
+    renderShell(queryClient);
+
+    expect(screen.getByRole('link', { name: 'Governance' })).toHaveAttribute('href', '/governance');
+  });
+
+  it('does not show a Governance link for a Coordinator or Social Worker', () => {
+    localStorage.setItem('caresync_token', tokenFor('coordinator'));
+    const queryClient = new QueryClient();
+
+    renderShell(queryClient);
+
+    expect(screen.queryByRole('link', { name: 'Governance' })).not.toBeInTheDocument();
+  });
+
+  it('does not show the Tasks/Task Center links for a Director (no PRD story scopes them to that role)', () => {
+    localStorage.setItem('caresync_token', tokenFor('director'));
+    const queryClient = new QueryClient();
+
+    renderShell(queryClient);
+
+    expect(screen.queryByRole('link', { name: 'Tasks' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Task Center' })).not.toBeInTheDocument();
+  });
+});

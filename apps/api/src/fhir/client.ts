@@ -277,6 +277,34 @@ export interface AccessTokenProvider {
   getAccessToken(): Promise<string>;
 }
 
+// S8 A3 — real Synthea demographics for GD12 demographic-parity computation
+// (governance/service.ts). `birthDate`/`sex` come straight off `Patient`;
+// `race`/`ethnicity` come off the US Core race/ethnicity extensions
+// scripts/import-fhir.ts writes onto every seeded Patient (see
+// raceEthnicityExtensions there for the exact shape this mirrors). Any of the
+// four is undefined if the source Patient lacks it — age-banding/stratifying
+// an undefined field is governance/service.ts's job, not this read's.
+export interface PatientDemographics {
+  patientId: string;
+  birthDate?: string;
+  sex?: string;
+  race?: string;
+  ethnicity?: string;
+}
+
+const US_CORE_RACE_EXTENSION_URL = 'http://hl7.org/fhir/us/core/StructureDefinition/us-core-race';
+const US_CORE_ETHNICITY_EXTENSION_URL = 'http://hl7.org/fhir/us/core/StructureDefinition/us-core-ethnicity';
+
+// Reads the `ombCategory` sub-extension's `valueCoding.display` off a
+// top-level US Core race/ethnicity extension — the exact nesting
+// scripts/import-fhir.ts's raceEthnicityExtensions writes (a top-level
+// extension carrying `ombCategory` + `text` sub-extensions).
+function extractOmbCategoryDisplay(patient: any, extensionUrl: string): string | undefined {
+  const extension = (patient.extension ?? []).find((e: any) => e.url === extensionUrl);
+  const ombCategory = (extension?.extension ?? []).find((e: any) => e.url === 'ombCategory');
+  return ombCategory?.valueCoding?.display;
+}
+
 export class FhirReadService {
   constructor(
     private readonly db: Database.Database,
@@ -551,6 +579,37 @@ export class FhirReadService {
         return { patientId, riskScore, hoursSinceEncounter };
       })
       .filter((p): p is PopulationRiskProfile => p !== undefined);
+  }
+
+  /**
+   * S8 A3 — batch demographics read backing GD12 demographic-parity
+   * computation (governance/service.ts's getParityMetrics). Follows
+   * `getPopulationRiskProfile`'s bulk-read pattern just above, but scoped to
+   * exactly the given `patientIds` (a `_id=id1,id2,...` search) rather than
+   * the whole cohort — the caller only ever needs demographics for patients
+   * that have a cached analysis to join against, so fetching the full
+   * ~500-patient population here would be pure waste. Empty `patientIds`
+   * short-circuits to `[]` with no HAPI call and no audit row (there is
+   * nothing to read). Audited once for the whole batch, mirroring
+   * `getPopulationRiskProfile`/`getAssignedPanel`'s audit-once-per-aggregate-
+   * read shape rather than once per patient.
+   */
+  async getPatientDemographics(actor: AuthTokenPayload, patientIds: string[]): Promise<PatientDemographics[]> {
+    if (patientIds.length === 0) return [];
+
+    const resource = 'Population/demographics';
+    this.guard(actor, 'demographic', resource);
+
+    const entries = await this.fetchPages<any>(`/Patient?_id=${patientIds.join(',')}&_count=${patientIds.length}`);
+    writeAudit(this.db, { actor: actor.id, action: 'read', fhirResource: resource, outcome: 'success' });
+
+    return entries.map((e) => ({
+      patientId: e.resource.id,
+      birthDate: e.resource.birthDate,
+      sex: e.resource.gender,
+      race: extractOmbCategoryDisplay(e.resource, US_CORE_RACE_EXTENSION_URL),
+      ethnicity: extractOmbCategoryDisplay(e.resource, US_CORE_ETHNICITY_EXTENSION_URL),
+    }));
   }
 
   /**

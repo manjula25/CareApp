@@ -6,6 +6,7 @@ import { PatientPanel } from './pages/PatientPanel';
 import { PatientDetail } from './pages/PatientDetail';
 import { Population } from './pages/Population';
 import { PopulationPatientList } from './pages/PopulationPatientList';
+import { Governance } from './pages/Governance';
 import { TaskQueue } from './pages/TaskQueue';
 import { TaskDetail } from './pages/TaskDetail';
 import { TaskCenter } from './pages/TaskCenter';
@@ -40,6 +41,14 @@ function App() {
           element={
             <RoleGuard role="director">
               <PopulationPatientList />
+            </RoleGuard>
+          }
+        />
+        <Route
+          path="/governance"
+          element={
+            <RoleGuard role="director">
+              <Governance />
             </RoleGuard>
           }
         />
