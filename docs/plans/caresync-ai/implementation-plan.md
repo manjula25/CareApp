@@ -576,19 +576,26 @@ Read-only over HAPI + labels; outputs are generated files (`docs/eval-report.md`
 
 **Ponytail pass applied:** one discovery + one service endpoint (patient-view only — no order-select/sign), reusing the existing analysis path — no CDS-specific agent logic; cards are a **pure mapping** of already-validated findings; prefer cached analysis for demo determinism (GD2); no auth beyond what the sandbox needs (documented honest-staging).
 
+**Pre-implementation plan review (2026-07-06)** — checked against the actual S3/S4/S2 code at the tip of `feature/caresync-s9-eval-harness` before starting `subagent-driven-development`. Two corrections to the assumptions above:
+
+1. **A2's "reuse cached (or run) analysis" is scoped down to cache-only.** There is no standalone, non-streaming "run the orchestrator and give me back a validated `AnalysisResultJson`" function to call. That whole sequence — `orchestrate()` (`apps/api/src/agents/orchestrator.ts:41`) → `validateCitations`/`createNarrationBuffer` (`apps/api/src/agents/citationValidator.ts`) → `writeAnalysisCache` (`apps/api/src/db/analysisCache.ts:17`) — lives **inline inside** the SSE handler `createAnalysisRouter`'s `router.post('/:id/analysis', ...)` (`apps/api/src/routes/analysis.ts:164-364`), coupled to `res.write`/SSE framing throughout. CDS Hooks patient-view services are also expected to answer synchronously and fast (EHR-side timeout, typically low seconds) — inline-triggering a 4-agent LLM run from inside a hook response would blow that budget even if the code were extracted. **Revised A2:** on a cache hit (`readAnalysisCache`, `apps/api/src/db/analysisCache.ts:56`), map the row's `AnalysisResultJson` → cards. On a cache miss, return an **empty `cards: []`** (a valid CDS Hooks response) rather than triggering a live run — consistent with this iteration's own "prefer cached analysis for demo determinism (GD2)" line. No orchestrator-triggering code needed in `cds-hooks/`.
+2. **B1's CORS work is already done.** `apps/api/src/index.ts` already calls `app.use(cors())` with no options — i.e. already `Access-Control-Allow-Origin: *`-equivalent, no allowlist to loosen. B1 reduces to: confirm the new router isn't mounted behind `requireAuth` (unlike `analysis.ts:162`'s `router.use(requireAuth)` — the public sandbox has no session token) and document the sandbox URL/steps.
+
+`AnalysisResultJson`'s per-agent findings (`apps/api/src/routes/analysis.ts:45-76`) already carry post-citation-gate `fhirResourceId`/`fhirResources`, confirming card mapping can be a genuinely pure function over a cache row. Route tests should follow `analysis.test.ts`'s existing Supertest + in-memory `better-sqlite3` pattern (seed a cache row directly, hit the router).
+
 ### Phase A — CDS Hooks service (backend, test-first)
 
-- [ ] **A1. Discovery endpoint.** `GET /cds-services` returning the patient-view service descriptor (id, hook, title, description, prefetch).
+- [ ] **A1. Discovery endpoint.** `GET /cds-services` returning the patient-view service descriptor (id, hook, title, description, prefetch). Not behind `requireAuth` (public sandbox has no session token).
   - *Domain rule:* exposes a CDS Hooks discovery endpoint (S10 acceptance, GD6).
   - *Test:* discovery response is well-formed and lists the patient-view service.
 
-- [ ] **A2. Patient-view service + card mapping (pure).** `POST /cds-services/caresync-patient-view` → resolve the patient, reuse cached (or run) analysis, map **validated** findings → CDS cards carrying their FHIR citations. Card mapping is a pure, tested function.
+- [ ] **A2. Patient-view service + card mapping (pure).** `POST /cds-services/caresync-patient-view` → resolve the patient, read the **S4 cache** (`readAnalysisCache`) for the patient in context, map **validated** findings → CDS cards carrying their FHIR citations. Cache miss → `cards: []` (no inline live-orchestrator trigger — see plan-review note above). Card mapping is a pure, tested function. Not behind `requireAuth`.
   - *Domain rule:* returns well-formed CDS cards carrying agent findings + FHIR citations (S10 acceptance); citations already validated (GD11).
-  - *Test:* for the hero patient, the service returns cards with the expected findings + resolvable citations; card mapping unit-tested against a canned analysis.
+  - *Test:* for the hero patient (cache seeded), the service returns cards with the expected findings + resolvable citations; cache-miss case returns `cards: []`; card mapping unit-tested against a canned `AnalysisResultJson`.
 
 ### Phase B — Sandbox demo
 
-- [ ] **B1. Public sandbox wiring.** CORS/config so the public CDS Hooks sandbox can hit the running service + HAPI; document the sandbox URL/steps.
+- [ ] **B1. Public sandbox wiring.** CORS already permissive (see plan-review note) — confirm + document the sandbox URL/steps for pointing the public CDS Hooks sandbox at the running service + HAPI.
   - *Verify:* a card fires in the public CDS Hooks sandbox against the running service (labeled evidence).
 
 ### Phase C — Verification
