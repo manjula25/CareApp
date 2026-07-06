@@ -233,10 +233,13 @@ and returns them as CDS cards. Demoable by pointing the public CDS Hooks sandbox
 service + HAPI.
 
 ### Acceptance criteria
-- [ ] The service exposes a CDS Hooks discovery endpoint and a patient-view service endpoint.
-- [ ] Given a patient-view hook, it returns well-formed CDS cards carrying agent findings and their FHIR citations.
-- [ ] A card fires in the public CDS Hooks sandbox against the running service.
-- [ ] Tests for the discovery response and card generation for the hero patient.
+- [x] The service exposes a CDS Hooks discovery endpoint and a patient-view service endpoint.
+- [x] Given a patient-view hook, it returns well-formed CDS cards carrying agent findings and their FHIR citations.
+- [ ] A card fires in the public CDS Hooks sandbox against the running service. — **open**: requires
+  exposing the local server via a tunnel (e.g. `ngrok`), deliberately not done without the user's
+  sign-off; steps documented in `docs/plans/caresync-ai/cds-hooks-sandbox.md`. Local live-server curl
+  smoke test substituted in the interim (`verification-s10.md` §1).
+- [x] Tests for the discovery response and card generation for the hero patient.
 
 ### Blocked by
 - S3
