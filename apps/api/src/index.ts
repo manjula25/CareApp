@@ -72,8 +72,8 @@ if (require.main === module) {
   app.use('/api/fhir', createSubscriptionWebhookRouter(eventHub));
   // S10 A1/A2 — CDS Hooks discovery + patient-view service. Different URL
   // namespace by spec (NOT under /api) and deliberately not auth'd — see
-  // routes/cdsHooks.ts. A2 reads the same `analysis_cache` table A2 (S4)
-  // writes, via the already-available `db` instance.
+  // routes/cdsHooks.ts. S10 A2 reads the same `analysis_cache` table S4's
+  // analysis.ts writes, via the already-available `db` instance.
   app.use('/cds-services', createCdsHooksRouter(db));
 
   app.listen(PORT, () => {
