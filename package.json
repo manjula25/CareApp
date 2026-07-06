@@ -13,6 +13,7 @@
     "test:e2e": "npm run test:e2e --workspace apps/web",
     "fhir:up": "docker compose up -d hapi-fhir",
     "fhir:import": "npm run import --workspace apps/api",
+    "eval": "npm run eval --workspace apps/api",
     "migrate": "npm run migrate --workspace apps/api",
     "seed": "npm run seed --workspace apps/api"
   }
