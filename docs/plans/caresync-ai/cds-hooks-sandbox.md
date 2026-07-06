@@ -18,36 +18,46 @@ runs in the visitor's browser, not on our infrastructure, so it can only reach a
   **Run Analysis** for that patient in the CareSync AI web app at least once before the
   sandbox demo.
 
-## Steps
+## Steps (confirmed working live, 2026-07-07)
 
-1. **Start the local stack.** From the repo root: `npm run dev` (starts both
-   `apps/api` on `PORT` — default `4000` — and `apps/web`), with HAPI FHIR running via
-   `docker compose up` per the S1 setup. Confirm the analysis cache is warm for the demo
-   patient: log in as a Coordinator, open the patient, click **Run Analysis** once.
+1. **Start the local stack.** From `apps/api`: `PORT=4177 npx tsx src/index.ts` (or `npm run dev` for
+   the full stack + HAPI via `docker compose up` per the S1 setup, if you also want the web UI).
+   Confirm the analysis cache is warm for the demo patient: log in as a Coordinator, open the patient,
+   click **Run Analysis** once — or check directly: `sqlite3 apps/api/data/caresync.sqlite "select
+   patient_id from analysis_cache"`.
 
-2. **Expose the API publicly.** The sandbox needs an HTTPS URL it can reach from the
-   internet. Use a tunnel, e.g.:
+2. **Expose the API publicly.** The sandbox needs an HTTPS URL it can reach from the internet:
    ```
-   ngrok http 4000
+   ngrok http 4177
    ```
-   Note the `https://<random>.ngrok-free.app` URL ngrok prints — that's your public base
-   URL for this session (it changes every time you restart the tunnel on a free plan).
+   Note the `https://<random>.ngrok-free.app` URL ngrok prints (it changes every restart on a free
+   plan). Sanity-check it's live: `curl -H "ngrok-skip-browser-warning: true"
+   https://<random>.ngrok-free.app/cds-services`.
 
-3. **Register the service in the sandbox.** Open https://sandbox.cds-hooks.org/, add a
-   new CDS Service by its **discovery URL**:
+3. **Register the service in the sandbox.** Open https://sandbox.cds-hooks.org/. The top-right gear
+   icon's dropdown menu (not the "Select a Service" box itself — that only searches an existing list)
+   has **"Add CDS Services"**. Paste the discovery URL there and Save:
    ```
    https://<random>.ngrok-free.app/cds-services
    ```
-   The sandbox will `GET` that URL and list **"CareSync AI Patient-View Findings"**
-   (`hook: patient-view`, `id: caresync-patient-view`).
+   The sandbox `GET`s that URL, and `caresync-patient-view` becomes selectable in "Select a Service".
 
-4. **Fire the hook.** Select the `patient-view` hook and set the patient context to the
-   demo patient's FHIR `Patient` id (the same id `analysis_cache` is keyed on — the
-   CareSync patient id, not a display name). The sandbox `POST`s to
-   `https://<random>.ngrok-free.app/cds-services/caresync-patient-view` with
-   `{ context: { patientId: "<id>" } }`; the response's `cards` should show the risk,
-   care-gap, and SDOH findings from that patient's cached analysis, each with an
-   `(FHIR: ResourceType/id)` citation in its `detail`.
+4. **Fire the hook.** Selecting `caresync-patient-view` in the "Select a Service" dropdown fires the
+   hook immediately with whatever patient is currently in context — the sandbox's own "Request"/
+   "Response" accordions show the exact payload sent and the exact JSON returned.
+
+## Known limitation: the sandbox's patient picker is tied to its own reference FHIR server
+
+The gear menu's **"Change Patient"** dialog only offers patients that exist on the sandbox's
+**"Current FHIR server"** (defaults to `https://launch.smarthealthit.org/v/r2/fhir`) — it's a
+type-ahead search against *that* server's real patient roster, not a free-text field, and it has no
+overlap with our local `analysis_cache` patient ids (`maria-chen`, etc.). So firing the hook against
+whichever `launch.smarthealthit.org` patient the sandbox currently has selected will honestly return
+`cards: []` (a correct response — that patient just isn't in our cache), even though the exact same
+request against `maria-chen` returns real populated cards locally (proven via `curl` — see
+`verification-s10.md`). Getting a *populated* card to render inside the public sandbox's own UI would
+require also pointing its "Current FHIR server" at a tunneled instance of our own HAPI — out of scope
+for this smoke test.
 
 ## Honest-staging note (GD2)
 

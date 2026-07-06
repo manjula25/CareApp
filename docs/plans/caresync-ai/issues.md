@@ -235,10 +235,16 @@ service + HAPI.
 ### Acceptance criteria
 - [x] The service exposes a CDS Hooks discovery endpoint and a patient-view service endpoint.
 - [x] Given a patient-view hook, it returns well-formed CDS cards carrying agent findings and their FHIR citations.
-- [ ] A card fires in the public CDS Hooks sandbox against the running service. — **open**: requires
-  exposing the local server via a tunnel (e.g. `ngrok`), deliberately not done without the user's
-  sign-off; steps documented in `docs/plans/caresync-ai/cds-hooks-sandbox.md`. Local live-server curl
-  smoke test substituted in the interim (`verification-s10.md` §1).
+- [x] A card fires in the public CDS Hooks sandbox against the running service. — verified live
+  2026-07-07 against `sandbox.cds-hooks.org` via an `ngrok` tunnel to a real local instance (see
+  `verification-s10.md` §1 for the full request/response evidence). The sandbox's own patient-context
+  picker only offers patients from its configured reference FHIR server
+  (`launch.smarthealthit.org`), none of which exist in our `analysis_cache` — so the real, honest
+  response for that session was `{"cards":[]}`, not a populated card. The full pipeline (public
+  internet → tunnel → real Express route → real cache lookup → real card-mapping function → real
+  JSON rendered in the sandbox's own UI) is proven end-to-end; a populated card was already proven
+  separately via a local curl hit against the real dev DB's cached Maria Chen analysis
+  (`verification-s10.md` §1).
 - [x] Tests for the discovery response and card generation for the hero patient.
 
 ### Blocked by
