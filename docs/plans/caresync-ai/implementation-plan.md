@@ -585,22 +585,22 @@ Read-only over HAPI + labels; outputs are generated files (`docs/eval-report.md`
 
 ### Phase A — CDS Hooks service (backend, test-first)
 
-- [ ] **A1. Discovery endpoint.** `GET /cds-services` returning the patient-view service descriptor (id, hook, title, description, prefetch). Not behind `requireAuth` (public sandbox has no session token).
+- [x] **A1. Discovery endpoint.** `GET /cds-services` returning the patient-view service descriptor (id, hook, title, description, prefetch). Not behind `requireAuth` (public sandbox has no session token). — `apps/api/src/routes/cdsHooks.ts` (`createCdsHooksRouter`), commits `824013d`, `b14c59d` (review follow-up: exported `CDS_PATIENT_VIEW_SERVICE_ID` instead of duplicating the literal A2 also needs). Spec + code-quality review both passed.
   - *Domain rule:* exposes a CDS Hooks discovery endpoint (S10 acceptance, GD6).
-  - *Test:* discovery response is well-formed and lists the patient-view service.
+  - *Test:* discovery response is well-formed and lists the patient-view service — `apps/api/src/routes/cdsHooks.test.ts`.
 
-- [ ] **A2. Patient-view service + card mapping (pure).** `POST /cds-services/caresync-patient-view` → resolve the patient, read the **S4 cache** (`readAnalysisCache`) for the patient in context, map **validated** findings → CDS cards carrying their FHIR citations. Cache miss → `cards: []` (no inline live-orchestrator trigger — see plan-review note above). Card mapping is a pure, tested function. Not behind `requireAuth`.
+- [x] **A2. Patient-view service + card mapping (pure).** `POST /cds-services/caresync-patient-view` → resolve the patient, read the **S4 cache** (`readAnalysisCache`) for the patient in context, map **validated** findings → CDS cards carrying their FHIR citations. Cache miss → `cards: []` (no inline live-orchestrator trigger — see plan-review note above). Card mapping is a pure, tested function. Not behind `requireAuth`. — pure mapping in `apps/api/src/routes/cdsCardMapping.ts` (`mapAnalysisResultToCards`; risk/careGap/sdoh findings only, `actionPlanner` excluded), route in `apps/api/src/routes/cdsHooks.ts`, commits `bb4214c`, `17511c8` (review follow-up: fixed a garbled cross-slice comment in `index.ts`). Spec + code-quality review both passed (one Important comment-accuracy fix applied; a moderate 3-way structural duplication in the indicator-mapping functions was flagged and left as a documented judgement call, same tolerance this repo's S4/S9 reviews already applied to similar shapes).
   - *Domain rule:* returns well-formed CDS cards carrying agent findings + FHIR citations (S10 acceptance); citations already validated (GD11).
-  - *Test:* for the hero patient (cache seeded), the service returns cards with the expected findings + resolvable citations; cache-miss case returns `cards: []`; card mapping unit-tested against a canned `AnalysisResultJson`.
+  - *Test:* for the hero patient (cache seeded), the service returns cards with the expected findings + resolvable citations; cache-miss case returns `cards: []`; card mapping unit-tested against a canned `AnalysisResultJson` — `apps/api/src/routes/cdsCardMapping.test.ts` + `cdsHooks.test.ts`, 14/14.
 
 ### Phase B — Sandbox demo
 
-- [ ] **B1. Public sandbox wiring.** CORS already permissive (see plan-review note) — confirm + document the sandbox URL/steps for pointing the public CDS Hooks sandbox at the running service + HAPI.
-  - *Verify:* a card fires in the public CDS Hooks sandbox against the running service (labeled evidence).
+- [x] **B1. Public sandbox wiring.** CORS already permissive (confirmed — `app.use(cors())`, no options, no changes needed). Documented the tunnel + sandbox registration steps in `docs/plans/caresync-ai/cds-hooks-sandbox.md`, including the honest-staging caveat that the cache must be warm before a demo (this service never triggers a live run).
+  - *Verify:* a card fires in the public CDS Hooks sandbox against the running service (labeled evidence) — **not yet run**; requires an actual internet-facing tunnel (e.g. `ngrok`), which this session did not stand up unprompted (exposing a local dev server to the public internet is a call for the user to make). Local smoke-test evidence gathered instead (see C2).
 
 ### Phase C — Verification
-- [ ] **C1.** `npm run test:api` (discovery + card generation) green.
-- [ ] **C2.** Sandbox smoke: a card renders in the public sandbox for the hero patient (evidence recorded, labeled *target-environment*).
+- [x] **C1.** `npm run test:api` for the discovery + card-generation suites green (`cdsHooks.test.ts` + `cdsCardMapping.test.ts`, 14/14). The full workspace suite has 7 pre-existing failing suites unrelated to S10 — real `fetch failed` errors because the local HAPI FHIR Docker container isn't running in this environment (`docker ps` empty); neither S10 test file is among them.
+- [ ] **C2.** Sandbox smoke: a card renders in the public sandbox for the hero patient (evidence recorded, labeled *target-environment*) — **not done** (see B1). **Local mock evidence gathered instead:** ran the real API locally (`tsx src/index.ts`, no mocks) and `curl`'d it directly — `GET /cds-services` returns the well-formed descriptor; `POST /cds-services/caresync-patient-view` returns `{"cards":[]}` for an uncached patient; unknown service id → `404`; missing `context.patientId` → `400`. A genuine cache-hit round-trip wasn't smoke-tested against the real dev DB (would require either writing a synthetic row into the shared `apps/api/data/caresync.sqlite` or bringing HAPI up to run a real analysis first — deferred rather than mutating shared dev state; the cache-hit path already has real Supertest+in-memory-DB coverage in C1).
 
 ### Rollback / safety
 Read-only/derived — no new writable state. The sandbox is external: record what it exercised vs local. If the public sandbox can't reach a local service in the demo network, record the honest-staging limitation (screenshot/recorded fallback per GD2).
