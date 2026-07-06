@@ -142,7 +142,7 @@ export function mapTaskResource(task: any): TaskWithOwner {
     title: task.description,
     priority: FHIR_PRIORITY_TO_DISPLAY[task.priority] ?? 'medium',
     due: task.restriction?.period?.end,
-    status: FHIR_STATUS_TO_DISPLAY[task.status] ?? 'Open',
+    status: displayStatus(task),
     domain: extractTaskDomain(task),
     patientId: task.for?.reference?.split('/')[1],
     ownerId: task.owner?.identifier?.value,
@@ -170,6 +170,24 @@ const FHIR_STATUS_TO_DISPLAY: Record<string, string> = {
   completed: 'Done',
   cancelled: 'Cancelled',
 };
+
+// S7 A2 — the transitions `transitionTask` accepts. FHIR R4 Task.status has
+// no native "deferred"/"escalated" value (see transitionTask's doc), so only
+// 'complete' maps directly onto a status change; 'defer'/'escalate' are
+// expressed via Task.businessStatus (+ priority for escalate).
+export type TaskStatusTransition = 'complete' | 'defer' | 'escalate';
+
+/**
+ * S7 A2 — read-side counterpart to `transitionTask`: prefers a human-readable
+ * `businessStatus.text` (set by 'defer'/'escalate') over the generic
+ * FHIR_STATUS_TO_DISPLAY mapping, so a deferred/escalated Task shows a
+ * distinct label ('Deferred'/'Escalated') in the queue instead of falling
+ * back to 'Open'/'In progress'. Applied consistently everywhere
+ * FHIR_STATUS_TO_DISPLAY was previously read directly.
+ */
+function displayStatus(task: any): string {
+  return task.businessStatus?.text ?? FHIR_STATUS_TO_DISPLAY[task.status] ?? 'Open';
+}
 
 export interface PanelEntry {
   id: string;
@@ -314,7 +332,7 @@ export class FhirReadService {
       title: e.resource.description,
       priority: FHIR_PRIORITY_TO_DISPLAY[e.resource.priority] ?? 'medium',
       due: e.resource.restriction?.period?.end,
-      status: FHIR_STATUS_TO_DISPLAY[e.resource.status] ?? 'Open',
+      status: displayStatus(e.resource),
       domain: extractTaskDomain(e.resource),
     }));
   }
@@ -411,7 +429,7 @@ export class FhirReadService {
           title: e.resource.description,
           priority: FHIR_PRIORITY_TO_DISPLAY[e.resource.priority] ?? 'medium',
           due: e.resource.restriction?.period?.end,
-          status: FHIR_STATUS_TO_DISPLAY[e.resource.status] ?? 'Open',
+          status: displayStatus(e.resource),
           domain: extractTaskDomain(e.resource),
         }))
     );
@@ -537,6 +555,64 @@ export class FhirReadService {
     });
     writeAudit(this.db, { actor: actor.id, action: 'update', fhirResource: resource, outcome: 'success' });
     return { id: taskId, owner: coordinatorId };
+  }
+
+  /**
+   * S7 A2 — audited status-transition write for a Task's own domain-scoped
+   * actor (Social Worker completing/deferring/escalating their own sdoh
+   * tasks, Coordinator/Director working their queue). Deliberately NOT
+   * `this.guard(actor, 'clinical', ...)` like `assignTask`/`createTask` —
+   * that would incorrectly block a Social Worker (no 'clinical' scope) from
+   * acting on their own sdoh Tasks. Instead generalizes A1's per-task domain
+   * filter (see `listTasks`) to a write: fetch the Task, extract its domain,
+   * and deny only if the domain is defined and the actor's role lacks scope
+   * for it (fail-open on an undefined domain, same as A1's read filter).
+   *
+   * FHIR R4 Task.status has no native 'deferred'/'escalated' value, so:
+   * - complete  -> status = 'completed'.
+   * - defer     -> status = 'on-hold', businessStatus = { text: 'Deferred' }.
+   * - escalate  -> status left as-is (already non-terminal in the intended
+   *   caller flow), businessStatus = { text: 'Escalated' }, priority bumped
+   *   to 'urgent' (a FHIR-native field) so escalated tasks also sort higher
+   *   in any priority-ordered view.
+   *
+   * Read-modify-PUT, mirroring `assignTask`'s shape exactly.
+   */
+  async transitionTask(
+    actor: AuthTokenPayload,
+    taskId: string,
+    transition: TaskStatusTransition
+  ): Promise<{ id: string; status: string }> {
+    const resource = `Task/${taskId}`;
+    const task = await this.fhirFetch<Record<string, any>>(`/${resource}`);
+
+    const domain = extractTaskDomain(task);
+    if (domain !== undefined && !hasScope(actor.role, domain)) {
+      writeAudit(this.db, { actor: actor.id, action: 'update', fhirResource: resource, outcome: 'denied' });
+      throw new ScopeDeniedError(actor.role, domain);
+    }
+
+    switch (transition) {
+      case 'complete':
+        task.status = 'completed';
+        break;
+      case 'defer':
+        task.status = 'on-hold';
+        task.businessStatus = { text: 'Deferred' };
+        break;
+      case 'escalate':
+        task.businessStatus = { text: 'Escalated' };
+        task.priority = 'urgent';
+        break;
+    }
+
+    await this.fhirFetch(`/${resource}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/fhir+json' },
+      body: JSON.stringify(task),
+    });
+    writeAudit(this.db, { actor: actor.id, action: 'update', fhirResource: resource, outcome: 'success' });
+    return { id: taskId, status: task.status as string };
   }
 
   /**

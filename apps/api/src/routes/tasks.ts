@@ -1,6 +1,8 @@
 import { Router } from 'express';
-import { DirectorOnlyError, FhirReadService, ScopeDeniedError } from '../fhir/client';
+import { DirectorOnlyError, FhirReadService, ScopeDeniedError, TaskStatusTransition } from '../fhir/client';
 import { requireAuth } from '../middleware/auth';
+
+const VALID_TRANSITIONS: TaskStatusTransition[] = ['complete', 'defer', 'escalate'];
 
 /**
  * S6 A1 — Director-scoped Task assignment. `assignTask` on `FhirReadService`
@@ -29,6 +31,28 @@ export function createTasksRouter(fhirService: FhirReadService): Router {
 
     try {
       const result = await fhirService.assignTask(req.auth!, req.params.id, coordinatorId);
+      res.json(result);
+    } catch (err) {
+      if (err instanceof DirectorOnlyError || err instanceof ScopeDeniedError) {
+        res.status(403).json({ error: err.message });
+        return;
+      }
+      throw err;
+    }
+  });
+
+  // S7 A2 — audited status-transition write. `transitionTask` does the
+  // actual per-task domain-scope check + transition (see its doc in
+  // client.ts); this stays a thin shell, matching the assign route above.
+  router.patch('/:id/status', async (req, res) => {
+    const { transition } = (req.body ?? {}) as { transition?: string };
+    if (!transition || !VALID_TRANSITIONS.includes(transition as TaskStatusTransition)) {
+      res.status(400).json({ error: `transition must be one of: ${VALID_TRANSITIONS.join(', ')}` });
+      return;
+    }
+
+    try {
+      const result = await fhirService.transitionTask(req.auth!, req.params.id, transition as TaskStatusTransition);
       res.json(result);
     } catch (err) {
       if (err instanceof DirectorOnlyError || err instanceof ScopeDeniedError) {

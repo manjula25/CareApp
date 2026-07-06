@@ -429,9 +429,11 @@ Subscription + Tasks live in the disposable HAPI. The relay hub is in-memory (dr
   - *Test (Supertest):* Social Worker listing excludes categorized non-SDOH Tasks but includes uncategorized ones; Coordinator sees all types. **Done — 126/126 API tests pass (serial run).**
   - *Follow-up note:* `getAssignedPanel`'s `taskCount` still reads via `Task?subject=...` search and has the same latent lag risk; out of scope for A1, flagged for a future slice if panel task counts are ever observed stale after a write.
 
-- [ ] **A2. Status-transition endpoints (audited).** `PATCH /api/tasks/:id/status` handling complete/defer/escalate → FHIR Task status/businessStatus in HAPI via the S3 write client.
-  - *Domain rule:* transitions PATCH the FHIR Task status and reflect back (S7 acceptance); each write audited.
-  - *Test (Supertest vs test HAPI):* each transition sets the expected FHIR status; reflected on read; audit row written.
+- [x] **A2. Status-transition endpoints (audited).** `PATCH /api/tasks/:id/status` handling complete/defer/escalate → FHIR Task status/businessStatus in HAPI via the S3 write client. **Done.**
+  - FHIR R4 `Task.status` has no native "deferred"/"escalated" value: `complete` → `status: 'completed'`; `defer` → `status: 'on-hold'` + `businessStatus: { text: 'Deferred' }`; `escalate` → status unchanged, `businessStatus: { text: 'Escalated' }`, `priority: 'urgent'`. Read side (`mapTaskResource`/`getTasks`/`listTasks`) now prefers `businessStatus.text` over the generic status map, so the queue shows "Deferred"/"Escalated" distinctly.
+  - Authorization generalizes A1's per-task domain filter to a write (`transitionTask` in `client.ts`): fetch the Task, extract its domain, deny (403 + denied audit row) only if the domain is defined and the actor's role lacks scope for it — fail-open on undefined, same rule as A1. Not a `guard(actor, 'clinical', ...)` gate (that would incorrectly block a Social Worker from their own sdoh tasks).
+  - *Domain rule:* transitions PATCH the FHIR Task status and reflect back (S7 acceptance); each write audited. **Done.**
+  - *Test (Supertest vs test HAPI):* each transition sets the expected FHIR status; reflected on read; audit row written. **Done — 136/136 API tests pass (serial run); `tsc --noEmit` clean.**
 
 ### Phase B — M02 queue + M03 detail + W13 (frontend, mockup fidelity)
 

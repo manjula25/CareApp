@@ -171,4 +171,160 @@ describe('tasks routes', () => {
       expect(ids).toContain(uncategorizedId);
     });
   });
+
+  describe('PATCH /api/tasks/:id/status (S7 A2 — status transitions)', () => {
+    it('requires auth', async () => {
+      const res = await request(app).patch('/api/tasks/some-id/status').send({ transition: 'complete' });
+      expect(res.status).toBe(401);
+    });
+
+    it('rejects a missing/invalid transition with 400', async () => {
+      const taskId = await createProbeTask();
+      const token = await loginAs(app, 'coordinator@caresync.demo');
+
+      const missing = await request(app)
+        .patch(`/api/tasks/${taskId}/status`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({});
+      expect(missing.status).toBe(400);
+
+      const invalid = await request(app)
+        .patch(`/api/tasks/${taskId}/status`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ transition: 'bogus' });
+      expect(invalid.status).toBe(400);
+    });
+
+    it('complete sets FHIR Task.status to completed, reflected on read-back, and audits success', async () => {
+      const taskId = await createProbeTask();
+      const token = await loginAs(app, 'coordinator@caresync.demo');
+
+      const res = await request(app)
+        .patch(`/api/tasks/${taskId}/status`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ transition: 'complete' });
+
+      expect(res.status).toBe(200);
+
+      const fetched = (await (await fetch(`${FHIR_BASE_URL}/Task/${taskId}`)).json()) as any;
+      expect(fetched.status).toBe('completed');
+
+      const rows = db
+        .prepare(`SELECT * FROM audit_log WHERE fhir_resource = ? AND outcome = 'success'`)
+        .all(`Task/${taskId}`) as any[];
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows[0]).toMatchObject({ action: 'update' });
+    });
+
+    it("defer sets Task.status to on-hold and businessStatus to 'Deferred', reflected on read-back", async () => {
+      const taskId = await createProbeTask();
+      const token = await loginAs(app, 'coordinator@caresync.demo');
+
+      const res = await request(app)
+        .patch(`/api/tasks/${taskId}/status`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ transition: 'defer' });
+
+      expect(res.status).toBe(200);
+
+      const fetched = (await (await fetch(`${FHIR_BASE_URL}/Task/${taskId}`)).json()) as any;
+      expect(fetched.status).toBe('on-hold');
+      expect(fetched.businessStatus?.text).toBe('Deferred');
+    });
+
+    it("escalate sets businessStatus to 'Escalated' and bumps priority to urgent without terminating status", async () => {
+      const taskId = await createProbeTask();
+      const token = await loginAs(app, 'coordinator@caresync.demo');
+
+      const res = await request(app)
+        .patch(`/api/tasks/${taskId}/status`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ transition: 'escalate' });
+
+      expect(res.status).toBe(200);
+
+      const fetched = (await (await fetch(`${FHIR_BASE_URL}/Task/${taskId}`)).json()) as any;
+      expect(fetched.businessStatus?.text).toBe('Escalated');
+      expect(fetched.priority).toBe('urgent');
+      expect(fetched.status).toBe('requested'); // unchanged, not a terminal status
+
+      const rows = db
+        .prepare(`SELECT * FROM audit_log WHERE fhir_resource = ? AND outcome = 'success'`)
+        .all(`Task/${taskId}`) as any[];
+      expect(rows.length).toBeGreaterThan(0);
+    });
+
+    it('a Social Worker can transition an sdoh-domain task', async () => {
+      const taskId = await createProbeTaskWithDomain('sdoh');
+      const token = await loginAs(app, 'socialworker@caresync.demo');
+
+      const res = await request(app)
+        .patch(`/api/tasks/${taskId}/status`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ transition: 'complete' });
+
+      expect(res.status).toBe(200);
+      const fetched = (await (await fetch(`${FHIR_BASE_URL}/Task/${taskId}`)).json()) as any;
+      expect(fetched.status).toBe('completed');
+    });
+
+    it('a Social Worker can transition an uncategorized (domainless) task', async () => {
+      const taskId = await createProbeTaskWithDomain(undefined);
+      const token = await loginAs(app, 'socialworker@caresync.demo');
+
+      const res = await request(app)
+        .patch(`/api/tasks/${taskId}/status`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ transition: 'complete' });
+
+      expect(res.status).toBe(200);
+    });
+
+    it('a Social Worker is denied (403) transitioning a clinical-domain task, and a denial audit row is written', async () => {
+      const taskId = await createProbeTaskWithDomain('clinical');
+      const token = await loginAs(app, 'socialworker@caresync.demo');
+
+      const res = await request(app)
+        .patch(`/api/tasks/${taskId}/status`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ transition: 'complete' });
+
+      expect(res.status).toBe(403);
+
+      const fetched = (await (await fetch(`${FHIR_BASE_URL}/Task/${taskId}`)).json()) as any;
+      expect(fetched.status).toBe('requested'); // unchanged
+
+      const rows = db
+        .prepare(`SELECT * FROM audit_log WHERE fhir_resource = ? AND outcome = 'denied'`)
+        .all(`Task/${taskId}`) as any[];
+      expect(rows.length).toBeGreaterThan(0);
+    });
+
+    it('a Director can transition a clinical-domain task', async () => {
+      const taskId = await createProbeTaskWithDomain('clinical');
+      const token = await loginAs(app, 'director@caresync.demo');
+
+      const res = await request(app)
+        .patch(`/api/tasks/${taskId}/status`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ transition: 'complete' });
+
+      expect(res.status).toBe(200);
+    });
+
+    it('a deferred task shows a distinct status label in the role-filtered listing', async () => {
+      const taskId = await createProbeTask();
+      const token = await loginAs(app, 'coordinator@caresync.demo');
+
+      const patchRes = await request(app)
+        .patch(`/api/tasks/${taskId}/status`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ transition: 'defer' });
+      expect(patchRes.status).toBe(200);
+
+      const listRes = await request(app).get('/api/tasks').set('Authorization', `Bearer ${token}`);
+      const found = (listRes.body as Array<{ id: string; status: string }>).find((t) => t.id === taskId);
+      expect(found?.status).toBe('Deferred');
+    });
+  });
 });
