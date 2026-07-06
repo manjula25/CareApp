@@ -490,13 +490,7 @@ export class FhirReadService {
     const allTasks: TaskListEntry[] = perPatientBundles.flatMap((bundle, i) => {
       const patientId = patientIds[i];
       const entries = bundle.entry ?? [];
-      const patientResource = entries.find((e) => e.resource.resourceType === 'Patient')?.resource;
-      const name = patientResource?.name?.[0];
-      const patientName = [name?.given?.join(' '), name?.family].filter(Boolean).join(' ');
-      const firstCondition = entries.find((e) => e.resource.resourceType === 'Condition')?.resource;
-      const conditionTag = firstCondition
-        ? shortConditionTag(firstCondition.code?.coding?.[0]?.code, firstCondition.code?.text ?? '')
-        : undefined;
+      const { patientName, conditionTag } = this.patientContextFromBundle(entries);
 
       return entries
         .filter((e) => e.resource.resourceType === 'Task')
@@ -702,6 +696,29 @@ export class FhirReadService {
   }
 
   /**
+   * S7 B1/B2 — pulls the name/condition-tag/phone display fields `listTasks`
+   * and `getTaskDetail` both need out of a patient's `$everything` bundle
+   * (already fetched by each caller for its own reasons — see their docs).
+   * Only the first condition is used — one tag, not `getAssignedPanel`'s
+   * two-tag panel-row list.
+   */
+  private patientContextFromBundle(entries: FhirBundleEntry<any>[]): {
+    patientName: string;
+    conditionTag: string | undefined;
+    patientPhone: string | undefined;
+  } {
+    const patientResource = entries.find((e) => e.resource.resourceType === 'Patient')?.resource;
+    const name = patientResource?.name?.[0];
+    const patientName = [name?.given?.join(' '), name?.family].filter(Boolean).join(' ');
+    const firstCondition = entries.find((e) => e.resource.resourceType === 'Condition')?.resource;
+    const conditionTag = firstCondition
+      ? shortConditionTag(firstCondition.code?.coding?.[0]?.code, firstCondition.code?.text ?? '')
+      : undefined;
+    const patientPhone: string | undefined = patientResource?.telecom?.find((t: any) => t.system === 'phone')?.value;
+    return { patientName, conditionTag, patientPhone };
+  }
+
+  /**
    * S7 B2 — resolves one Task.input citation entry's `valueReference` into a
    * short human-readable display string, reusing the same field-reading
    * conventions already established elsewhere in this file: Condition reads
@@ -751,14 +768,7 @@ export class FhirReadService {
       ? await this.fhirFetch<FhirBundle<any>>(`/Patient/${patientId}/$everything`)
       : undefined;
     const entries = bundle?.entry ?? [];
-    const patientResource = entries.find((e) => e.resource.resourceType === 'Patient')?.resource;
-    const name = patientResource?.name?.[0];
-    const patientName = [name?.given?.join(' '), name?.family].filter(Boolean).join(' ');
-    const firstCondition = entries.find((e) => e.resource.resourceType === 'Condition')?.resource;
-    const conditionTag = firstCondition
-      ? shortConditionTag(firstCondition.code?.coding?.[0]?.code, firstCondition.code?.text ?? '')
-      : undefined;
-    const patientPhone: string | undefined = patientResource?.telecom?.find((t: any) => t.system === 'phone')?.value;
+    const { patientName, conditionTag, patientPhone } = this.patientContextFromBundle(entries);
 
     const citationInputs: any[] = (task.input ?? []).filter(
       (i: any) => i.type?.text === TASK_CITATION_INPUT_TYPE && i.valueReference?.reference
