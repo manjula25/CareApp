@@ -74,6 +74,11 @@ export function createSubscriptionWebhookRouter(hub: EventHub): Router {
       if (task.ownerId) {
         hub.publish(task.ownerId, 'assignment', task);
       }
+      // S7 B3 — cross-surface sync: every Task webhook fire, assigned or
+      // not, also broadcasts to every connected client (unlike `assignment`
+      // above, which stays owner-scoped) so any open view of that task
+      // (e.g. PatientDetail) can live-update.
+      hub.publishAll('task-updated', task);
     }
     res.status(200).end();
   });

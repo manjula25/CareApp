@@ -1,10 +1,12 @@
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, Link } from 'react-router-dom';
 import {
   getPatient,
   streamAnalysis,
+  subscribeToEvents,
   type AgentId,
+  type AssignedTaskEvent,
   type TaskSummary,
   type AnalysisFinding,
   type AnalysisSummary,
@@ -196,11 +198,32 @@ function fromAnalysisTask(task: AnalysisTask): DisplayTask {
 
 export function PatientDetail() {
   const { id } = useParams<{ id: string }>();
+  const queryClient = useQueryClient();
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['patient', id],
     queryFn: () => getPatient(id!),
     enabled: !!id,
   });
+
+  // S7 B3 — cross-surface sync: every role can view PatientDetail (unlike
+  // AppShell's coordinator-only assignment toast), so this subscription
+  // isn't role-gated. A `task-updated` broadcast for THIS patient (matched
+  // by id, not by task ownership) invalidates the patient query so the task
+  // list refetches live — mirrors AppShell's subscribeToEvents + cleanup
+  // pattern, targeting `['patient', id]` instead of `['assigned-panel']`.
+  useEffect(() => {
+    if (!id) return;
+
+    const unsubscribe = subscribeToEvents({
+      onTaskUpdated: (task: AssignedTaskEvent) => {
+        if (task.patientId === id) {
+          queryClient.invalidateQueries({ queryKey: ['patient', id] });
+        }
+      },
+    });
+
+    return unsubscribe;
+  }, [id, queryClient]);
 
   const [running, setRunning] = useState(false);
   const [feeds, setFeeds] = useState<Record<AgentId, AgentFeedState>>(() => makeFeeds(false));

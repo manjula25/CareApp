@@ -166,11 +166,11 @@ status in HAPI and syncs back. **This slice triggers the GD4 mobile-stack decisi
 
 ### Acceptance criteria
 - [x] GD4 mobile-stack decision recorded before implementation begins. (2026-07-05: PWA/responsive web, see `plan.md` §1 GD4)
-- [ ] Social Worker queue shows only SDOH-domain tasks; Coordinator sees all task types.
-- [ ] Task detail shows the justifying patient context and citations.
-- [ ] Complete/Defer/Escalate transitions PATCH the FHIR Task status in HAPI and reflect back in the UI.
-- [ ] Completing a task on the mobile-shaped view syncs to the web view (via S6 relay).
-- [ ] API-boundary tests for role-filtered listing and each status transition.
+- [x] Social Worker queue shows only SDOH-domain tasks; Coordinator sees all task types. (A1 + B1, `implementation-plan.md` Iteration 7)
+- [x] Task detail shows the justifying patient context and citations. (B2)
+- [x] Complete/Defer/Escalate transitions PATCH the FHIR Task status in HAPI and reflect back in the UI. (A2 + B2)
+- [x] Completing a task on the mobile-shaped view syncs to the web view (via S6 relay). (B3 — via `PatientDetail.tsx`, not W13 itself; see `implementation-plan.md` B3's GD9 scope note)
+- [x] API-boundary tests for role-filtered listing and each status transition. (A1/A2 Jest suites, 147/147)
 
 ### Blocked by
 - S3

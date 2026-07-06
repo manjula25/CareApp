@@ -257,4 +257,41 @@ describe('subscribeToEvents', () => {
 
     expect(onAssignment).not.toHaveBeenCalled();
   });
+
+  // S7 B3 — cross-surface sync: a `task-updated` broadcast reaches every
+  // connected client (unlike `assignment`, which is owner-scoped), so a
+  // second recognized event/handler pair is needed alongside onAssignment.
+  it('dispatches a task-updated event to onTaskUpdated with the parsed task', async () => {
+    const body = sseStream([
+      'event: connected\ndata: {}\n\n',
+      'event: task-updated\ndata: {"id":"task-1","title":"Med rec follow-up","priority":"high","status":"Done","patientId":"maria-chen"}\n\n',
+    ]);
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(body));
+
+    const onTaskUpdated = vi.fn();
+    unsubscribe = subscribeToEvents({ onTaskUpdated });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(onTaskUpdated).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'task-1', title: 'Med rec follow-up', status: 'Done', patientId: 'maria-chen' })
+    );
+  });
+
+  it('does not dispatch task-updated to onAssignment, or vice versa', async () => {
+    const body = sseStream([
+      'event: assignment\ndata: {"id":"task-1","title":"Assigned","priority":"high","status":"Open"}\n\n',
+      'event: task-updated\ndata: {"id":"task-2","title":"Updated","priority":"low","status":"Done"}\n\n',
+    ]);
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(body));
+
+    const onAssignment = vi.fn();
+    const onTaskUpdated = vi.fn();
+    unsubscribe = subscribeToEvents({ onAssignment, onTaskUpdated });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(onAssignment).toHaveBeenCalledTimes(1);
+    expect(onAssignment).toHaveBeenCalledWith(expect.objectContaining({ id: 'task-1' }));
+    expect(onTaskUpdated).toHaveBeenCalledTimes(1);
+    expect(onTaskUpdated).toHaveBeenCalledWith(expect.objectContaining({ id: 'task-2' }));
+  });
 });

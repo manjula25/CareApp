@@ -97,6 +97,13 @@ export function AppShell() {
                 Tasks
               </Link>
             )}
+            {/* S7 B3 — W13's nav-only shell (per GD9); PRD story 24 scopes it to
+                the Coordinator. */}
+            {user.role === 'coordinator' && (
+              <Link to="/task-center" className="text-label text-text-muted hover:text-text transition-colors">
+                Task Center
+              </Link>
+            )}
             <BellIcon className="text-text-muted w-4 h-4" />
             <span
               className="w-7 h-7 rounded-full bg-surface-raised border border-border-light text-cyan text-xs font-bold flex items-center justify-center"

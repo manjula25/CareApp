@@ -261,7 +261,13 @@ export interface AssignedTaskEvent {
  * Returns an unsubscribe function that stops the read loop and any pending
  * reconnect.
  */
-export function subscribeToEvents(handlers: { onAssignment?: (task: AssignedTaskEvent) => void }): () => void {
+export function subscribeToEvents(handlers: {
+  onAssignment?: (task: AssignedTaskEvent) => void;
+  // S7 B3 — cross-surface sync: fires on every Task webhook (assigned or
+  // not), unlike `onAssignment` (owner-scoped). Same `AssignedTaskEvent`
+  // shape — the wire payload is the same mapped Task either way.
+  onTaskUpdated?: (task: AssignedTaskEvent) => void;
+}): () => void {
   let stopped = false;
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -293,6 +299,7 @@ export function subscribeToEvents(handlers: { onAssignment?: (task: AssignedTask
           else if (line.startsWith('data: ')) data = line.slice('data: '.length);
         }
         if (event === 'assignment' && data) handlers.onAssignment?.(JSON.parse(data));
+        else if (event === 'task-updated' && data) handlers.onTaskUpdated?.(JSON.parse(data));
       }
     }
   }
