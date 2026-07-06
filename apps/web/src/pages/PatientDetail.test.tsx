@@ -1,14 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { act, render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { PatientDetail } from './PatientDetail';
 import * as client from '../api/client';
-import type { AnalysisHandlers } from '../api/client';
+import type { AnalysisHandlers, AssignedTaskEvent } from '../api/client';
 
 vi.mock('../api/client', async () => {
   const actual = await vi.importActual<typeof import('../api/client')>('../api/client');
-  return { ...actual, getPatient: vi.fn(), streamAnalysis: vi.fn() };
+  return { ...actual, getPatient: vi.fn(), streamAnalysis: vi.fn(), subscribeToEvents: vi.fn() };
 });
 
 const mockPatient = {
@@ -50,6 +50,7 @@ function startRun() {
 describe('PatientDetail — Run Analysis + four-feed grid', () => {
   beforeEach(() => {
     vi.mocked(client.getPatient).mockResolvedValue(mockPatient);
+    vi.mocked(client.subscribeToEvents).mockReturnValue(vi.fn());
   });
 
   it('shows all four feeds idle before any run', async () => {
@@ -356,5 +357,84 @@ describe('PatientDetail — Run Analysis + four-feed grid', () => {
     // Original task still renders alongside the new one.
     expect(screen.getByText('Existing follow-up')).toBeInTheDocument();
     expect(screen.getByText('2 open')).toBeInTheDocument();
+  });
+});
+
+// S7 B3 — cross-surface sync: PatientDetail subscribes to the relay (every
+// role, unlike AppShell's coordinator-only toast) and, on a `task-updated`
+// event for THIS patient, invalidates its own `['patient', id]` query so the
+// task list refetches live — no page reload, no manual refresh button.
+describe('PatientDetail — S7 B3 live task-updated relay', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(client.getPatient).mockResolvedValue(mockPatient);
+  });
+
+  function captureSubscription() {
+    let captured: { onTaskUpdated?: (task: AssignedTaskEvent) => void } | undefined;
+    const unsubscribe = vi.fn();
+    vi.mocked(client.subscribeToEvents).mockImplementation((handlers) => {
+      captured = handlers;
+      return unsubscribe;
+    });
+    return { handlers: () => captured!, unsubscribe };
+  }
+
+  it('subscribes to the relay on mount', async () => {
+    captureSubscription();
+    renderPatientDetail();
+    await screen.findByText('Maria Chen');
+
+    expect(client.subscribeToEvents).toHaveBeenCalledTimes(1);
+  });
+
+  it('refetches the patient when a task-updated event matches this patient id', async () => {
+    const sub = captureSubscription();
+    renderPatientDetail();
+    await screen.findByText('Maria Chen');
+    expect(client.getPatient).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      sub.handlers().onTaskUpdated?.({
+        id: 't1',
+        title: 'Existing follow-up',
+        priority: 'high',
+        status: 'Done',
+        patientId: 'maria-1',
+      });
+    });
+
+    await waitFor(() => expect(client.getPatient).toHaveBeenCalledTimes(2));
+  });
+
+  it('ignores a task-updated event for a different patient', async () => {
+    const sub = captureSubscription();
+    renderPatientDetail();
+    await screen.findByText('Maria Chen');
+    expect(client.getPatient).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      sub.handlers().onTaskUpdated?.({
+        id: 't2',
+        title: 'Someone else\'s task',
+        priority: 'low',
+        status: 'Done',
+        patientId: 'someone-else',
+      });
+    });
+
+    // Give any (incorrect) refetch a chance to happen before asserting it didn't.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(client.getPatient).toHaveBeenCalledTimes(1);
+  });
+
+  it('unsubscribes on unmount', async () => {
+    const sub = captureSubscription();
+    const { unmount } = renderPatientDetail();
+    await screen.findByText('Maria Chen');
+
+    unmount();
+
+    expect(sub.unsubscribe).toHaveBeenCalled();
   });
 });

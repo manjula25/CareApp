@@ -12,6 +12,13 @@ export interface EventHub {
   register(userId: string, res: Response): void;
   unregister(userId: string, res: Response): void;
   publish(userId: string, event: string, data: unknown): void;
+  /**
+   * S7 B3 — broadcasts to every open connection across every registered
+   * user (unlike `publish`, which is scoped to one user's connections).
+   * Used for cross-surface sync events (e.g. `task-updated`) that every
+   * connected client should see, not just a task's owner.
+   */
+  publishAll(event: string, data: unknown): void;
 }
 
 export function createEventHub(): EventHub {
@@ -41,6 +48,14 @@ export function createEventHub(): EventHub {
     publish(userId, event, data) {
       for (const res of connections.get(userId) ?? []) {
         writeSseEvent(res, event, data);
+      }
+    },
+
+    publishAll(event, data) {
+      for (const conns of connections.values()) {
+        for (const res of conns) {
+          writeSseEvent(res, event, data);
+        }
       }
     },
   };

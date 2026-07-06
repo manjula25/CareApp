@@ -63,7 +63,11 @@ describe('events routes — webhook to relay', () => {
     expect(res.status).toBe(200);
     expect(coordinatorConn.chunks.join('')).toContain('event: assignment');
     expect(coordinatorConn.chunks.join('')).toContain('task-123');
-    expect(otherConn.chunks).toHaveLength(0);
+    // S7 B3 — `assignment` (owner-scoped) is unchanged; `task-updated` is a
+    // separate broadcast every connection receives, including a non-owner's.
+    expect(otherConn.chunks.join('')).not.toContain('event: assignment');
+    expect(otherConn.chunks.join('')).toContain('event: task-updated');
+    expect(otherConn.chunks.join('')).toContain('task-123');
   });
 
   it('also accepts a bare POST to the endpoint (e.g. a create delivery)', async () => {
@@ -89,7 +93,7 @@ describe('events routes — webhook to relay', () => {
     expect(coordinatorConn.chunks.join('')).toContain('event: assignment');
   });
 
-  it('is a no-op when the pushed Task has no owner (unassigned Task changed)', async () => {
+  it('skips the owner-scoped assignment event but still broadcasts task-updated when the pushed Task has no owner (unassigned Task changed)', async () => {
     const pushedTask = {
       resourceType: 'Task',
       id: 'task-456',
@@ -99,11 +103,17 @@ describe('events routes — webhook to relay', () => {
       for: { reference: 'Patient/maria-chen' },
     };
 
+    const anyConn = fakeRes();
+    hub.register('some-connected-user', anyConn);
+
     const res = await request(app)
       .post('/api/fhir/subscription-hook')
       .set('Content-Type', 'application/fhir+json')
       .send(JSON.stringify(pushedTask));
 
     expect(res.status).toBe(200);
+    expect(anyConn.chunks.join('')).not.toContain('event: assignment');
+    expect(anyConn.chunks.join('')).toContain('event: task-updated');
+    expect(anyConn.chunks.join('')).toContain('task-456');
   });
 });

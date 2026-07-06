@@ -66,6 +66,7 @@ export interface AnalysisResultJson {
       title: string;
       description: string;
       priority: string;
+      domain?: 'clinical' | 'sdoh';
       assignTo?: string;
       dueInDays?: number;
       fhirResources: string[];
@@ -336,6 +337,7 @@ export function createAnalysisRouter(
               title: source.title,
               description: source.description,
               priority: source.priority,
+              domain: source.domain,
               assignTo: source.assignTo,
               dueInDays: source.dueInDays,
               fhirResources: source.fhirResources,

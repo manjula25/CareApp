@@ -59,8 +59,8 @@ async function* stubOrchestrate(): AsyncIterable<AgentEvent> {
   yield { type: 'token', agentId: 'actionPlanner', text: 'Synthesizing worklist...' };
   const actionPlannerOutput: ActionPlannerOutput = {
     tasks: [
-      { title: 'Schedule cardiology follow-up', description: 'Address CHF readmission risk', priority: 'high', dueInDays: 5, fhirResources: [VALID_ID] },
-      { title: 'Bogus outreach task', description: 'Cites nothing real', priority: 'medium', fhirResources: ['Condition/does-not-exist'] },
+      { title: 'Schedule cardiology follow-up', description: 'Address CHF readmission risk', priority: 'high', domain: 'clinical', dueInDays: 5, fhirResources: [VALID_ID] },
+      { title: 'Bogus outreach task', description: 'Cites nothing real', priority: 'medium', domain: 'sdoh', fhirResources: ['Condition/does-not-exist'] },
     ],
   };
   yield { type: 'result', agentId: 'actionPlanner', output: actionPlannerOutput };
@@ -93,8 +93,8 @@ function twoValidTasksAgent(): () => AsyncIterable<AgentEvent> {
     yield { type: 'token', agentId: 'actionPlanner', text: 'Planning...' };
     const output: ActionPlannerOutput = {
       tasks: [
-        { title: 'Run 1 Task A', description: 'first', priority: 'high', fhirResources: [VALID_ID] },
-        { title: 'Run 1 Task B', description: 'second', priority: 'medium', fhirResources: [VALID_ID] },
+        { title: 'Run 1 Task A', description: 'first', priority: 'high', domain: 'clinical', fhirResources: [VALID_ID] },
+        { title: 'Run 1 Task B', description: 'second', priority: 'medium', domain: 'clinical', fhirResources: [VALID_ID] },
       ],
     };
     yield { type: 'result', agentId: 'actionPlanner', output };
@@ -105,7 +105,7 @@ function oneValidTaskAgent(): () => AsyncIterable<AgentEvent> {
   return async function* () {
     yield { type: 'token', agentId: 'actionPlanner', text: 'Planning...' };
     const output: ActionPlannerOutput = {
-      tasks: [{ title: 'Run 2 Task C', description: 'only survivor', priority: 'high', fhirResources: [VALID_ID] }],
+      tasks: [{ title: 'Run 2 Task C', description: 'only survivor', priority: 'high', domain: 'clinical', fhirResources: [VALID_ID] }],
     };
     yield { type: 'result', agentId: 'actionPlanner', output };
   };
@@ -158,6 +158,7 @@ function cachedResultFromStub(taskId: string): AnalysisResultJson {
           title: 'Schedule cardiology follow-up',
           description: 'Address CHF readmission risk',
           priority: 'high',
+          domain: 'clinical',
           dueInDays: 5,
           fhirResources: [VALID_ID],
         },

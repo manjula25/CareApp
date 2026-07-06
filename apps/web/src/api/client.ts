@@ -44,6 +44,45 @@ export interface TaskSummary {
   status: string;
 }
 
+// S7 B1 — TaskSummary plus the fields the M02 task-queue card needs: which
+// patient the task belongs to, a display name, and a short condition tag.
+// Mirrors `TaskListEntry` in apps/api/src/fhir/client.ts, returned only by
+// `GET /api/tasks` (listTasks) — not by `getPatient`'s embedded tasks.
+export interface TaskListEntry extends TaskSummary {
+  patientId: string;
+  patientName: string;
+  conditionTag?: string;
+}
+
+export function listTasks(): Promise<TaskListEntry[]> {
+  return apiFetch('/api/tasks');
+}
+
+// S7 B2 — TaskListEntry plus the fields the M03 task-detail screen needs:
+// resolved citations and the patient's phone (for the Call action). Mirrors
+// `TaskDetail` in apps/api/src/fhir/client.ts, returned only by
+// `GET /api/tasks/:id` (getTaskDetail).
+export interface TaskDetail extends TaskListEntry {
+  citations: Array<{ reference: string; display: string }>;
+  patientPhone?: string;
+}
+
+export function getTaskDetail(id: string): Promise<TaskDetail> {
+  return apiFetch(`/api/tasks/${id}`);
+}
+
+export type TaskStatusTransition = 'complete' | 'defer' | 'escalate';
+
+/** S7 B2 — the M03 task-detail screen's Complete/Defer/Escalate buttons all PATCH the same endpoint with a different transition. */
+export function transitionTask(id: string, transition: TaskStatusTransition): Promise<{ id: string; status: string }> {
+  return apiFetch(`/api/tasks/${id}/status`, { method: 'PATCH', body: JSON.stringify({ transition }) });
+}
+
+/** S7 B1 — the M02 queue's only wired action; a thin sibling of `transitionTask` kept for the existing call sites. */
+export function completeTask(id: string): Promise<{ id: string; status: string }> {
+  return transitionTask(id, 'complete');
+}
+
 export interface PatientDetail {
   patient: { id: string; name: string; gender: string; birthDate: string };
   conditions: Array<{ id: string; code: string; display: string }>;
@@ -222,7 +261,13 @@ export interface AssignedTaskEvent {
  * Returns an unsubscribe function that stops the read loop and any pending
  * reconnect.
  */
-export function subscribeToEvents(handlers: { onAssignment?: (task: AssignedTaskEvent) => void }): () => void {
+export function subscribeToEvents(handlers: {
+  onAssignment?: (task: AssignedTaskEvent) => void;
+  // S7 B3 — cross-surface sync: fires on every Task webhook (assigned or
+  // not), unlike `onAssignment` (owner-scoped). Same `AssignedTaskEvent`
+  // shape — the wire payload is the same mapped Task either way.
+  onTaskUpdated?: (task: AssignedTaskEvent) => void;
+}): () => void {
   let stopped = false;
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -254,6 +299,7 @@ export function subscribeToEvents(handlers: { onAssignment?: (task: AssignedTask
           else if (line.startsWith('data: ')) data = line.slice('data: '.length);
         }
         if (event === 'assignment' && data) handlers.onAssignment?.(JSON.parse(data));
+        else if (event === 'task-updated' && data) handlers.onTaskUpdated?.(JSON.parse(data));
       }
     }
   }

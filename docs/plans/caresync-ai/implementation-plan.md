@@ -402,50 +402,72 @@ Subscription + Tasks live in the disposable HAPI. The relay hub is in-memory (dr
 
 ## Iteration 7 — S7 Role-filtered task queue + task actions — 2026-07-04
 
-**Spec:** `prd.md` (stories 24, 25, 27–29, 31) · **Slice:** S7 (M02/M03 + W13) · **Decisions:** GD4 (**mobile-stack decision — resolve before starting**; recommendation on record: PWA/responsive web), GD5 (role filtering). **Blocked by S3 + the GD4 decision.**
+**Spec:** `prd.md` (stories 24, 25, 27–29, 31) · **Slice:** S7 (M02/M03 + W13) · **Decisions:** GD4 (**resolved 2026-07-05: PWA/responsive web**, see `plan.md` §1), GD5 (role filtering). **Blocked by S3 (shipped).**
 
 **Goal:** The queue and its actions, built responsive per GD4. The queue **filters by role** — a Social Worker sees only SDOH-domain tasks, a Coordinator sees all. Opening a task shows the justifying patient context + citations; the user can **Complete / Defer / Escalate** (and Call), each PATCHing the FHIR Task status in HAPI and syncing back. Completing on the mobile-shaped view syncs to web via the S6 relay.
 
-**Pre-work (gate):** **Record the GD4 mobile-stack decision** (`plan.md` §8 / a short ADR) before implementation — recommendation is PWA/responsive web (one codebase, phone-frame demo). This slice assumes that unless overridden.
+**Pre-work (gate):** ~~Record the GD4 mobile-stack decision before implementation~~ — **done 2026-07-05**, PWA/responsive web (one codebase, phone-frame demo), see `plan.md` §1 GD4.
 
-**Architecture:** Backend gains a **role-filtered task listing** (`GET /api/tasks?role-scoped` — Social Worker → SDOH-domain Tasks only via the S1 scope map + Task category, Coordinator → all) and **status-transition endpoints** (`PATCH /api/tasks/:id/status` for complete/defer/escalate) on the audited write client. Frontend builds the M02 **task queue** and M03 **task detail** as responsive views (`reference-materials/caresync-mobile.html`), plus the W13 Task Management Center on web; status changes reflect back and, via the S6 relay, cross-surface (mobile→web).
+**Architecture:** Backend first adds the missing **Task domain field** (A0 — Task carries no domain signal today; stored as a `meta.tag` coding since FHIR R4 `Task` has no `category` element — see A0 below), then a **role-filtered task listing** (`GET /api/tasks?role-scoped` — Social Worker → SDOH-domain Tasks only via the S1 scope map + the new domain field, Coordinator → all) and **status-transition endpoints** (`PATCH /api/tasks/:id/status` for complete/defer/escalate) on the audited write client. Frontend builds the M02 **task queue** and M03 **task detail** as responsive views (`reference-materials/caresync-mobile.html`), plus the W13 Task Management Center on web; status changes reflect back and, via the S6 relay, cross-surface (mobile→web).
 
-**Tech Stack (delta):** role-filtered Task query (scope map + Task.category) · Task status PATCH endpoints · responsive/PWA views (M02/M03) reusing the design system · reuses the S6 relay for cross-surface sync.
+**Tech Stack (delta):** Action Planner schema gains a `domain` field · Task write path gains a domain `meta.tag` (not `Task.category` — no such R4 element) · role-filtered Task query (scope map + `TaskSummary.domain`, fail-open for uncategorized legacy Tasks) · Task status PATCH endpoints · responsive/PWA views (M02/M03) reusing the design system · reuses the S6 relay for cross-surface sync.
 
-**Ponytail pass applied:** filtering is the S1 role→domain scope map applied to Task.category — not a new permission system; complete/defer/escalate are **Task.status/businessStatus updates**, not a state-machine service; one responsive codebase (PWA) per the GD4 recommendation — no React Native toolchain unless the decision overrides; cross-surface sync **reuses the S6 relay** (no new channel); "Call" is a `tel:` link, not telephony integration.
+**Ponytail pass applied:** domain is reported by the Action Planner itself (it already knows the source finding per task) and reuses the existing `ResourceDomain` vocabulary — not a new taxonomy or a citation-cross-referencing inference step; filtering is the S1 role→domain scope map applied to that field — not a new permission system; complete/defer/escalate are **Task.status/businessStatus updates**, not a state-machine service; one responsive codebase (PWA) per the GD4 recommendation — no React Native toolchain unless the decision overrides; cross-surface sync **reuses the S6 relay** (no new channel); "Call" is a `tel:` link, not telephony integration.
 
 ### Phase A — Role-filtered listing + transitions (backend, test-first)
 
-- [ ] **A1. Role-filtered task listing.** `GET /api/tasks` scoped by role: Social Worker → SDOH-domain Tasks only (scope map + Task.category), Coordinator → all. Audited.
-  - *Domain rule:* Social Worker sees only SDOH-domain tasks; Coordinator sees all (S7 acceptance, GD5).
-  - *Test (Supertest):* Social Worker listing excludes non-SDOH Tasks; Coordinator sees all types.
+- [x] **A0. Task domain field (new — plan-review finding, 2026-07-05; implemented 2026-07-06).** Today's `Task` (`fhir/client.ts` `createTask`) carries no field distinguishing SDOH from clinical work, and the Action Planner's per-task `fhirResources` citation IDs (which *implicitly* trace to whichever upstream agent produced them) are explicitly dropped before the HAPI write (see the doc comment at `client.ts:380-388` on why no custom extension was added). A1's role filter needs a real field to key off, so this precedes it:
+  - Add `domain: 'clinical' | 'sdoh'` (reusing the existing `ResourceDomain` vocabulary from `auth/scopes.ts`, not a new taxonomy) to the Action Planner's `plan_tasks` structured-output schema (`actionPlannerAgent.ts`) — the model already knows which upstream finding each task synthesizes, so it self-reports domain per task rather than deriving it post-hoc from citations. **Done.**
+  - Thread it through `ActionPlannerTaskInput` → `createTask`'s write. **Storage-mechanism correction (implementation finding):** the plan originally said `Task.category`, but **FHIR R4 `Task` has no `category` element** (HAPI 7.2.0 silently drops it, verified — it never round-trips), so the domain is stored as a second `meta.tag` coding under system `https://caresync.demo/fhir/task-domain`, directly mirroring the existing `CARESYNC_TASK_TAG` pattern. Externally-visible contract is unchanged: domain surfaces as `TaskSummary.domain`. **Done.**
+  - Read it back in `mapTaskResource`/`getTasks` (shared `extractTaskDomain` helper); add `domain?: TaskDomain` to `TaskSummary`; thread `domain` through the analysis SSE `task` event. **Done.**
+  - *Domain rule:* Tasks created **before** this field existed carry no domain tag — read mapping returns `domain: undefined` (never a default), so A1 filtering can **fail open** (an uncategorized Task is visible to every role). **Done.**
+  - *Tests (Jest + real HAPI):* `createTask` writes the domain `meta.tag` (verified by read-back-by-id); `mapTaskResource` extracts it and returns `undefined` when absent; `getTasks` maps the untagged seed Task to `undefined`. All existing `ActionPlannerOutput` fixtures updated for the now-required `domain`. **Done — 123/123 API tests pass (serial run; see verification note re: parallel-run HAPI contention).**
 
-- [ ] **A2. Status-transition endpoints (audited).** `PATCH /api/tasks/:id/status` handling complete/defer/escalate → FHIR Task status/businessStatus in HAPI via the S3 write client.
-  - *Domain rule:* transitions PATCH the FHIR Task status and reflect back (S7 acceptance); each write audited.
-  - *Test (Supertest vs test HAPI):* each transition sets the expected FHIR status; reflected on read; audit row written.
+- [x] **A1. Role-filtered task listing.** `GET /api/tasks` scoped by role: Social Worker → SDOH-domain Tasks only (via `hasScope(role, 'sdoh')` + A0's `TaskSummary.domain`; `domain: undefined` fails open per A0), Coordinator → all. Audited. **Done.**
+  - `FhirReadService.listTasks` (client.ts) reads every panel member (`COORDINATOR_PANEL_GROUP_ID`, same fixed panel `getAssignedPanel` uses) via `Patient/{id}/$everything` — not `Task?subject=...` search, which was verified against the real local HAPI to lag behind a just-written Task; `$everything` reads the compartment directly and doesn't. Audited once for the whole read. `GET /api/tasks` in `routes/tasks.ts` is a thin shell over it.
+  - *Domain rule:* Social Worker sees only SDOH-domain tasks (plus any uncategorized legacy tasks); Coordinator sees all (S7 acceptance, GD5). **Done.**
+  - *Test (Supertest):* Social Worker listing excludes categorized non-SDOH Tasks but includes uncategorized ones; Coordinator sees all types. **Done — 126/126 API tests pass (serial run).**
+  - *Follow-up note:* `getAssignedPanel`'s `taskCount` still reads via `Task?subject=...` search and has the same latent lag risk; out of scope for A1, flagged for a future slice if panel task counts are ever observed stale after a write.
+
+- [x] **A2. Status-transition endpoints (audited).** `PATCH /api/tasks/:id/status` handling complete/defer/escalate → FHIR Task status/businessStatus in HAPI via the S3 write client. **Done.**
+  - FHIR R4 `Task.status` has no native "deferred"/"escalated" value: `complete` → `status: 'completed'`; `defer` → `status: 'on-hold'` + `businessStatus: { text: 'Deferred' }`; `escalate` → status unchanged, `businessStatus: { text: 'Escalated' }`, `priority: 'urgent'`. Read side (`mapTaskResource`/`getTasks`/`listTasks`) now prefers `businessStatus.text` over the generic status map, so the queue shows "Deferred"/"Escalated" distinctly.
+  - Authorization generalizes A1's per-task domain filter to a write (`transitionTask` in `client.ts`): fetch the Task, extract its domain, deny (403 + denied audit row) only if the domain is defined and the actor's role lacks scope for it — fail-open on undefined, same rule as A1. Not a `guard(actor, 'clinical', ...)` gate (that would incorrectly block a Social Worker from their own sdoh tasks).
+  - *Domain rule:* transitions PATCH the FHIR Task status and reflect back (S7 acceptance); each write audited. **Done.**
+  - *Test (Supertest vs test HAPI):* each transition sets the expected FHIR status; reflected on read; audit row written. **Done — 136/136 API tests pass (serial run); `tsc --noEmit` clean.**
 
 ### Phase B — M02 queue + M03 detail + W13 (frontend, mockup fidelity)
 
-- [ ] **B1. M02 Task Queue (responsive, `reference-materials/caresync-mobile.html`).** Role-filtered queue with priority sort + due dates; phone-frame responsive per GD4. *Stories 24, 27.*
-- [ ] **B2. M03 Task Detail + actions.** Justifying patient context + citations; Complete/Defer/Escalate wired to A2; Call as `tel:`. *Stories 28, 29, 31.*
-  - *Domain rule:* task detail shows justifying context + citations (S7 acceptance).
-- [ ] **B3. W13 Task Management Center (web) + cross-surface sync.** Web queue view; completing on the mobile-shaped view syncs to web via the S6 relay.
-  - *Test (Vitest):* role-filtered rendering; a status action calls the transition; a relayed change updates the other surface.
+- [x] **B1. M02 Task Queue (responsive, `reference-materials/caresync-mobile.html`).** Role-filtered queue with priority sort + due dates; phone-frame responsive per GD4. *Stories 24, 27.* **Done.**
+  - New `/tasks` route (`TaskQueue.tsx`); Social Worker's `roleHome` now points here (was `/coming-soon`, always a placeholder for this screen); Coordinator reaches it via a new header nav link. `listTasks` (A1) extended with `patientId`/`patientName`/`conditionTag` per task (free — already in the fetched `$everything` bundle) so cards can show "who" alongside "what".
+  - Chrome scope (recorded per `html-mockup-fidelity`): phone-frame + decorative status bar built for GD4 visual identity; segment tabs, bottom tab bar, bell/badge, back button, and the pinned Patient Risk Summary sheet omitted (no backing data/screens yet). "Done" (→ A2 complete transition) is the only wired card action; Call and Defer/Escalate stay scoped to B2's task-detail screen per the plan's own architecture note, even though the mockup shows Call on the list card too.
+  - *Test:* new Playwright spec (`task-queue.spec.ts`) — Social Worker sees sdoh/uncategorized only and completes one via "Done"; Coordinator sees the full unfiltered set. `social-worker-denied.spec.ts` updated for the new redirect target. **Done — API 137/137, web unit 116/116, Playwright 11/11 (serial), `tsc --noEmit` clean in both apps.**
+- [x] **B2. M03 Task Detail + actions.** Justifying patient context + citations; Complete/Defer/Escalate wired to A2; Call as `tel:`. *Stories 28, 29, 31.* **Done.**
+  - **Citation persistence revisited (plan-review finding):** S3's `createTask` deliberately did not persist citations onto the FHIR Task (SSE-only). B2 needed them readable later, so this reverses that call — `task.fhirResources` now writes as `Task.input` entries (`{ type: { text: 'citation' }, valueReference: { reference } }`), one per citation. `Task.reasonReference` was tried first (seemed like the obvious native fit) and rejected: FHIR R4 defines it `0..1`, and HAPI 7.2.0 silently keeps only the first entry of a multi-value array on write (verified by direct probe) — exactly the kind of silent data loss GD11 exists to prevent. `Task.input` (`0..*`, native `valueReference` support) was verified the same way to round-trip every entry intact.
+  - No mockup exists for M03; built to the design tokens/patterns already established by `TaskQueue.tsx`/`PatientDetail.tsx` (citation-chip markup, priority pills) rather than inventing a new visual language, per this repo's own no-mockup rule.
+  - New `GET /api/tasks/:id` (`getTaskDetail`) resolves each citation to a display string (Condition → `code.text`; Observation → `code.text` + value/unit) and returns the patient's phone (new `Patient.telecom` seed data, S7 B2 Decision 2 — fabricated demo numbers, all seed data here is already synthetic) for the Call `tel:` link. Same fail-open domain-scope rule as A2/A1 (factored into a shared `guardTaskDomain` helper).
+  - New `/tasks/:id` route, reachable by clicking a task card in the queue (Done button uses `stopPropagation` so it doesn't also navigate).
+  - *Domain rule:* task detail shows justifying context + citations (S7 acceptance). **Done.**
+  - *Test:* new Playwright spec (`task-detail.spec.ts`) — opens a probe task with real citations from the queue, confirms citations resolve and render, defers it, confirms a working `tel:` Call link. **Done — API 144/144, web unit 116/116, Playwright 12/12 (serial), `tsc --noEmit` clean in both apps.**
+- [x] **B3. W13 Task Management Center (web) + cross-surface sync.** Web queue view; completing on the mobile-shaped view syncs to web via the S6 relay. **Done, with a scope correction.**
+  - **GD9 conflict found and resolved:** `plan.md` GD9 (locked) classifies screen W13 itself as "Shell (nav only, placeholder content)," not one of the 6 demo-critical fully-functional screens — this B3 line's own text implied full functionality, contradicting that. Resolved by honoring GD9: `/task-center` (`TaskCenter.tsx`) is an honest nav-only placeholder (matches `ComingSoon.tsx`'s pattern), reachable via a Coordinator-only nav link. No role-filtered task table or status actions were built into W13 itself.
+  - **Cross-surface sync moved to `PatientDetail.tsx`** (already demo-critical, already shows a patient's task list) instead of W13, since S7's own acceptance criteria (`issues.md`) still require it regardless of W13's tier. `EventHub` gained `publishAll` (broadcast to every connection, not just one user); the Subscription webhook now fires a `task-updated` broadcast on every Task change (assigned or not), alongside the unchanged owner-scoped `assignment` event from S6. `PatientDetail` subscribes and invalidates its own query when the event's `patientId` matches, live-updating with no reload.
+  - *Test:* new Playwright spec (`patient-detail-live-task-update.spec.ts`) — a direct status-transition PATCH (simulating a mobile-queue completion) live-updates an already-open `/patients/maria-chen` tab, no reload, seed data restored and verified after. **Done — API 147/147, web unit 122/122, Playwright 13/13 (serial), `tsc --noEmit` clean in both apps.**
 
 ### Phase C — Verification
-- [ ] **C1.** `npm run test:api` (role listing + transitions) + `npm run test:web`.
-- [ ] **C2. Frontend E2E (`frontend-e2e-verification`).** Social Worker mobile queue (SDOH-only) → open task → mark done → syncs to web (via S6). Coordinator sees all types.
+- [x] **C1.** `npm run test:api` (role listing + transitions) + `npm run test:web`. **Done — see `verification-s7.md`: API 147/147 (serial), web unit 122/122.**
+- [x] **C2. Frontend E2E (`frontend-e2e-verification`).** Social Worker mobile queue (SDOH-only) → open task → mark done → syncs to web (via S6). Coordinator sees all types. **Done — Playwright 13/13 (serial), see `verification-s7.md`.**
 
 ### Rollback / safety
 Task writes audited + reversible via HAPI reset. The GD4 decision is recorded before code so the stack isn't relitigated mid-slice. Cross-surface sync degrades to manual refresh if the relay is down (honest).
 
 ### Definition of done (S7) — maps to `issues.md`
-- GD4 mobile-stack decision recorded before implementation (pre-work gate).
-- Social Worker queue SDOH-only; Coordinator sees all (A1).
-- Task detail shows justifying context + citations (B2).
-- Complete/Defer/Escalate PATCH FHIR status and reflect back (A2, B2).
-- Mobile completion syncs to web via S6 relay (B3, C2).
-- API-boundary tests for listing + each transition (A1, A2).
+- GD4 mobile-stack decision recorded before implementation (pre-work gate). ✅ done
+- Task domain field exists (stored as `meta.tag`; `TaskSummary.domain`), fail-open for uncategorized legacy Tasks (A0). ✅ done
+- Social Worker queue SDOH-only; Coordinator sees all (A1). ✅ done
+- Task detail shows justifying context + citations (B2). ✅ done
+- Complete/Defer/Escalate PATCH FHIR status and reflect back (A2, B2). ✅ done
+- Mobile completion syncs to web via S6 relay (B3, C2). ✅ done — via `PatientDetail.tsx`, not W13 (GD9 scope correction, see B3).
+- API-boundary tests for domain tagging, listing, and each transition (A0, A1, A2). ✅ done
 
 ---
 

@@ -25,6 +25,8 @@ export interface SeedPatient {
   name: { given: string[]; family: string };
   gender: 'male' | 'female';
   birthDate: string;
+  /** S7 B2 — fabricated demo phone number (all seed data here is synthetic); threaded into Patient.telecom by import-fhir.ts for the M03 Call action. */
+  phone?: string;
   raceEthnicity?: RaceEthnicity;
   conditions: Array<{ id: string; system: 'ICD-10'; code: string; display: string; onsetDateTime?: string }>;
   observations?: Array<{
@@ -50,6 +52,7 @@ export const MARIA_CHEN: SeedPatient = {
   name: { given: ['Maria'], family: 'Chen' },
   gender: 'female',
   birthDate: '1958-04-12',
+  phone: '+1-555-0142',
   conditions: [
     { id: 'maria-chen-diabetes', system: 'ICD-10', code: 'E11.9', display: 'Type 2 diabetes mellitus without complications' },
     { id: 'maria-chen-chf', system: 'ICD-10', code: 'I50.9', display: 'Heart failure, unspecified', onsetDateTime: hoursAgo(96) },
@@ -76,6 +79,7 @@ export const PANEL_PATIENTS: SeedPatient[] = [
     name: { given: ['James'], family: 'Okafor' },
     gender: 'male',
     birthDate: '1962-11-03',
+    phone: '+1-555-0157',
     conditions: [{ id: 'james-okafor-copd', system: 'ICD-10', code: 'J44.9', display: 'Chronic obstructive pulmonary disease, unspecified' }],
     riskScore: 62,
     tasks: [{ id: 'james-okafor-task-followup', description: 'Pulmonology follow-up scheduling', priority: 'high', dueInDays: 1 }],
@@ -85,6 +89,7 @@ export const PANEL_PATIENTS: SeedPatient[] = [
     name: { given: ['Linda'], family: 'Torres' },
     gender: 'female',
     birthDate: '1970-02-19',
+    phone: '+1-555-0168',
     conditions: [{ id: 'linda-torres-ckd', system: 'ICD-10', code: 'N18.3', display: 'Chronic kidney disease, stage 3' }],
     riskScore: 71,
     tasks: [{ id: 'linda-torres-task-labs', description: 'Repeat basic metabolic panel', priority: 'medium', dueInDays: 3 }],
@@ -94,6 +99,7 @@ export const PANEL_PATIENTS: SeedPatient[] = [
     name: { given: ['Robert'], family: 'Kim' },
     gender: 'male',
     birthDate: '1948-07-25',
+    phone: '+1-555-0179',
     conditions: [{ id: 'robert-kim-hipfx', system: 'ICD-10', code: 'S72.001A', display: 'Fracture of unspecified part of neck of right femur, initial encounter' }],
     riskScore: 45,
     tasks: [],
@@ -103,6 +109,7 @@ export const PANEL_PATIENTS: SeedPatient[] = [
     name: { given: ['Angela'], family: 'Diaz' },
     gender: 'female',
     birthDate: '1975-09-08',
+    phone: '+1-555-0183',
     conditions: [
       { id: 'angela-diaz-htn', system: 'ICD-10', code: 'I10', display: 'Essential (primary) hypertension' },
       { id: 'angela-diaz-depression', system: 'ICD-10', code: 'F33.1', display: 'Major depressive disorder, recurrent, moderate' },
@@ -115,6 +122,7 @@ export const PANEL_PATIENTS: SeedPatient[] = [
     name: { given: ['Samuel'], family: 'Wright' },
     gender: 'male',
     birthDate: '1955-01-30',
+    phone: '+1-555-0194',
     conditions: [{ id: 'samuel-wright-chf', system: 'ICD-10', code: 'I50.9', display: 'Heart failure, unspecified' }],
     riskScore: 79,
     tasks: [

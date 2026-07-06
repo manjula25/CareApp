@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { migrate } from '../db';
-import { FhirReadService, ScopeDeniedError } from './client';
+import { FhirReadService, ScopeDeniedError, mapTaskResource } from './client';
 import { AuthTokenPayload } from '../auth/jwt';
 
 const coordinator: AuthTokenPayload = { id: 'coord-1', name: 'Cara Coordinator', role: 'coordinator' };
@@ -190,6 +190,73 @@ describe('FhirReadService Task writes (createTask / replacePatientTasks)', () =>
     expect(rows[0]).toMatchObject({ actor: 'coord-1', action: 'create', outcome: 'success', fhir_resource: `Task/${result.id}` });
   });
 
+  // S7 B2 — Decision 1: fhirResources (the Action Planner's citations) is now
+  // persisted onto the FHIR Task itself via Task.input (one entry per
+  // citation, type.text: 'citation', valueReference pointing at the cited
+  // resource), not just carried in the in-memory SSE payload. `Task.input` is
+  // 0..* and built to be repeated — verified empirically against the local
+  // HAPI instance to round-trip every entry intact, unlike `reasonReference`
+  // (FHIR R4's `reasonReference` is 0..1 and HAPI silently keeps only the
+  // first entry when given an array; confirmed by direct probe before this
+  // approach was chosen).
+  it('createTask persists fhirResources as Task.input citation entries, verified by reading the Task back from HAPI', async () => {
+    const result = await service.createTask(coordinator, 'maria-chen', {
+      title: 'Schedule follow-up',
+      description: 'Call patient to schedule a cardiology follow-up',
+      priority: 'high',
+      fhirResources: ['Condition/maria-chen-chf', 'Observation/maria-chen-bnp'],
+    });
+    createdTaskIds.push(result.id);
+
+    const fetched = await fetchTask(result.id);
+    expect(fetched.input).toEqual([
+      { type: { text: 'citation' }, valueReference: { reference: 'Condition/maria-chen-chf' } },
+      { type: { text: 'citation' }, valueReference: { reference: 'Observation/maria-chen-bnp' } },
+    ]);
+  });
+
+  it('createTask writes a domain coding for the given domain, verified by reading the Task back from HAPI', async () => {
+    const result = await service.createTask(coordinator, 'maria-chen', {
+      title: 'Arrange transport',
+      description: 'Coordinate a ride to the SDOH resource center',
+      priority: 'medium',
+      domain: 'sdoh',
+      fhirResources: [],
+    });
+    createdTaskIds.push(result.id);
+
+    const fetched = await fetchTask(result.id);
+    // Domain rides alongside the CareSync tag as a distinct-system meta.tag
+    // coding (FHIR R4 Task has no `category` element; HAPI drops it silently).
+    expect(fetched.meta?.tag).toEqual(
+      expect.arrayContaining([{ system: 'https://caresync.demo/fhir/task-domain', code: 'sdoh' }])
+    );
+    // ...and still carries the CareSync ownership tag.
+    expect(fetched.meta?.tag).toEqual(
+      expect.arrayContaining([{ system: 'https://caresync.demo/fhir/tags', code: 'ai-generated-task' }])
+    );
+  });
+
+  it('getTasks maps a Task with no domain tag to domain: undefined — fail-open for pre-existing (seed) Tasks', async () => {
+    // Seed Tasks (e.g. maria-chen-task-medrec) predate the domain field and
+    // carry no domain tag — getTasks must map them to `undefined`, never a
+    // default, so A1 can treat an uncategorized Task as visible to every role.
+    //
+    // This asserts only the seed Task, which the `Task?subject=` search index
+    // returns reliably. It deliberately does NOT create a fresh Task and read
+    // it back through getTasks: that search index lags writes badly on this
+    // HAPI instance (see the replacePatientTasks comment in client.ts — the
+    // reason it uses `$everything` instead), so a just-created Task is not
+    // reliably visible. The positive path — a domain tag → 'sdoh' — is covered
+    // reliably by the `createTask` read-back test above (write side) and the
+    // `mapTaskResource` unit tests below (the same `extractTaskDomain` getTasks
+    // applies to each search-result entry).
+    const tasks = await service.getTasks(coordinator, 'maria-chen');
+    const seed = tasks.find((t) => t.id === 'maria-chen-task-medrec');
+    expect(seed).toBeDefined();
+    expect(seed?.domain).toBeUndefined();
+  });
+
   it('replacePatientTasks called twice leaves exactly the second call\'s Tasks tagged for that patient', async () => {
     const firstRun = await service.replacePatientTasks(coordinator, 'maria-chen', [
       { title: 'First task A', description: 'desc A', priority: 'medium', fhirResources: [] },
@@ -238,6 +305,34 @@ describe('FhirReadService Task writes (createTask / replacePatientTasks)', () =>
     // Confirm no Task was actually created for this social worker attempt.
     const tagged = await fetchTaggedTasksFor('maria-chen');
     expect(tagged.find((t: any) => t.description?.includes('Should not be created'))).toBeUndefined();
+  });
+});
+
+describe('mapTaskResource domain extraction (S7 A0)', () => {
+  it('extracts domain from a meta.tag domain coding', () => {
+    const mapped = mapTaskResource({
+      id: 't1',
+      description: 'desc',
+      priority: 'routine',
+      status: 'requested',
+      meta: {
+        tag: [
+          { system: 'https://caresync.demo/fhir/tags', code: 'ai-generated-task' },
+          { system: 'https://caresync.demo/fhir/task-domain', code: 'sdoh' },
+        ],
+      },
+    });
+    expect(mapped.domain).toBe('sdoh');
+  });
+
+  it('returns domain: undefined for a Task with no domain tag — fail-open (never a default)', () => {
+    const mapped = mapTaskResource({
+      id: 't2',
+      description: 'desc',
+      priority: 'routine',
+      status: 'requested',
+    });
+    expect(mapped.domain).toBeUndefined();
   });
 });
 

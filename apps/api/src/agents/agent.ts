@@ -43,6 +43,11 @@ export interface ActionPlannerOutput {
     title: string;
     description: string;
     priority: string;
+    // Which access-scope domain this task belongs to. The model self-reports
+    // it per task (it knows which upstream agent's finding each task
+    // synthesizes); consumed downstream to write a Task.meta.tag coding —
+    // not Task.category, which FHIR R4's Task has no element for (S7 A0).
+    domain: 'clinical' | 'sdoh';
     assignTo?: string;
     dueInDays?: number;
     fhirResources: string[];

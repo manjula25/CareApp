@@ -55,6 +55,8 @@ function patientResource(p: SeedPatient) {
     name: [{ given: p.name.given, family: p.name.family }],
     gender: p.gender,
     birthDate: p.birthDate,
+    // S7 B2 — fabricated demo phone number for the M03 task-detail Call action.
+    telecom: p.phone ? [{ system: 'phone', value: p.phone }] : undefined,
   };
 }
 

@@ -28,6 +28,22 @@ export class DirectorOnlyError extends Error {
   }
 }
 
+/**
+ * S7 B2 — distinguishes "the FHIR resource genuinely doesn't exist" (HAPI
+ * 404) from any other upstream FHIR failure, so `getTaskDetail`'s route can
+ * map it to a 404 instead of an opaque 500/hang. No existing caller of
+ * `fhirFetch` needed this distinction before B2 (every other 404 case here
+ * either can't happen against seed/probe data or is masked by an earlier
+ * scope check), so this is additive: every other non-ok status still throws
+ * the generic Error below, unchanged.
+ */
+export class FhirNotFoundError extends Error {
+  constructor(resource: string) {
+    super(`FHIR resource not found: ${resource}`);
+    this.name = 'FhirNotFoundError';
+  }
+}
+
 export interface PatientSummary {
   id: string;
   name: string;
@@ -43,12 +59,20 @@ export interface ConditionSummary {
 
 export type TaskPriority = 'critical' | 'high' | 'medium';
 
+// S7 A0 — the care domain a Task belongs to. Deliberately reuses the
+// access-scope vocabulary (see auth/scopes.ts ResourceDomain) so A1 can filter
+// with hasScope(role, 'sdoh'). Optional on reads: Tasks created before this
+// field existed carry no category and MUST map to undefined (fail-open — an
+// uncategorized Task is visible to every role), never a fabricated default.
+export type TaskDomain = 'clinical' | 'sdoh';
+
 export interface TaskSummary {
   id: string;
   title: string;
   priority: TaskPriority;
   due: string;
   status: string;
+  domain?: TaskDomain;
 }
 
 // S6 A3 — TaskSummary plus the two fields the subscription webhook needs to
@@ -57,6 +81,26 @@ export interface TaskSummary {
 export interface TaskWithOwner extends TaskSummary {
   patientId?: string;
   ownerId?: string;
+}
+
+// S7 B1 — TaskSummary plus the fields the M02 task-queue card needs to show
+// "who" alongside "what": the patient's id/name and a short condition tag
+// (e.g. "CHF"), reusing shortConditionTag exactly as getAssignedPanel's
+// conditionTags does. Scoped to `listTasks` only — `TaskSummary` itself and
+// `getTasks`/`mapTaskResource`'s existing shapes are untouched.
+export interface TaskListEntry extends TaskSummary {
+  patientId: string;
+  patientName: string;
+  conditionTag?: string;
+}
+
+// S7 B2 — TaskListEntry plus the fields the M03 task-detail screen needs:
+// the resolved citations (Task.input citation entries — see createTask's doc
+// — each paired with a human-readable display string) and the patient's
+// phone number (Patient.telecom, S7 B2 Decision 2), for the Call action.
+export interface TaskDetail extends TaskListEntry {
+  citations: Array<{ reference: string; display: string }>;
+  patientPhone?: string;
 }
 
 const FHIR_PRIORITY_TO_DISPLAY: Record<string, TaskPriority> = {
@@ -79,6 +123,37 @@ const ACTION_PLANNER_PRIORITY_TO_FHIR: Record<string, string> = {
 // Every CareSync-authored Task carries this tag so replacePatientTasks can
 // scope deletes to exactly the Tasks it created, never a seed/Synthea Task.
 const CARESYNC_TASK_TAG = { system: 'https://caresync.demo/fhir/tags', code: 'ai-generated-task' } as const;
+
+// S7 A0 — coding system for the meta.tag that records a Task's care domain
+// ('clinical' | 'sdoh'). Stored as a second `meta.tag` coding (a distinct
+// system from CARESYNC_TASK_TAG), directly mirroring that tag pattern.
+//
+// NOTE (deviation from the A0 plan text): the plan asked for a `Task.category`
+// CodeableConcept, but FHIR R4 `Task` has no `category` element and the local
+// HAPI (7.2.0) silently drops it on write (verified — it round-trips as
+// undefined), so filtering could never see it. `meta.tag` is the pattern the
+// plan itself pointed at (CARESYNC_TASK_TAG), is a proven-persistent element,
+// and keeps `Task.code` (whose FHIR meaning is "the activity to perform") free.
+// The externally-visible contract is unchanged: domain is exposed on
+// TaskSummary.domain as 'clinical' | 'sdoh', undefined when absent.
+const TASK_DOMAIN_SYSTEM = 'https://caresync.demo/fhir/task-domain';
+
+// S7 B2 — Task.input.type.text value marking an input entry as a citation
+// (see createTask's doc for why Task.input, not Task.reasonReference, is the
+// citation-storage field).
+const TASK_CITATION_INPUT_TYPE = 'citation';
+
+/**
+ * Extracts a Task's care domain from its `meta.tag` codings, or undefined if
+ * the Task carries no CareSync domain coding. Fail-open by design: Tasks
+ * created before this field existed carry no domain tag and map to undefined,
+ * never a default like 'clinical' (A1 filtering treats undefined as visible
+ * to every role).
+ */
+function extractTaskDomain(task: any): TaskDomain | undefined {
+  const coding = (task.meta?.tag ?? []).find((t: any) => t.system === TASK_DOMAIN_SYSTEM);
+  return coding ? (coding.code as TaskDomain) : undefined;
+}
 
 // S6 A1 — Task.owner identifier system for assignment. A *logical* reference
 // (`{ identifier: { system, value } }`) rather than a literal
@@ -108,7 +183,8 @@ export function mapTaskResource(task: any): TaskWithOwner {
     title: task.description,
     priority: FHIR_PRIORITY_TO_DISPLAY[task.priority] ?? 'medium',
     due: task.restriction?.period?.end,
-    status: FHIR_STATUS_TO_DISPLAY[task.status] ?? 'Open',
+    status: displayStatus(task),
+    domain: extractTaskDomain(task),
     patientId: task.for?.reference?.split('/')[1],
     ownerId: task.owner?.identifier?.value,
   };
@@ -118,6 +194,7 @@ export interface ActionPlannerTaskInput {
   title: string;
   description: string;
   priority: string;
+  domain?: TaskDomain;
   assignTo?: string;
   dueInDays?: number;
   fhirResources: string[];
@@ -134,6 +211,24 @@ const FHIR_STATUS_TO_DISPLAY: Record<string, string> = {
   completed: 'Done',
   cancelled: 'Cancelled',
 };
+
+// S7 A2 — the transitions `transitionTask` accepts. FHIR R4 Task.status has
+// no native "deferred"/"escalated" value (see transitionTask's doc), so only
+// 'complete' maps directly onto a status change; 'defer'/'escalate' are
+// expressed via Task.businessStatus (+ priority for escalate).
+export type TaskStatusTransition = 'complete' | 'defer' | 'escalate';
+
+/**
+ * S7 A2 — read-side counterpart to `transitionTask`: prefers a human-readable
+ * `businessStatus.text` (set by 'defer'/'escalate') over the generic
+ * FHIR_STATUS_TO_DISPLAY mapping, so a deferred/escalated Task shows a
+ * distinct label ('Deferred'/'Escalated') in the queue instead of falling
+ * back to 'Open'/'In progress'. Applied consistently everywhere
+ * FHIR_STATUS_TO_DISPLAY was previously read directly.
+ */
+function displayStatus(task: any): string {
+  return task.businessStatus?.text ?? FHIR_STATUS_TO_DISPLAY[task.status] ?? 'Open';
+}
 
 export interface PanelEntry {
   id: string;
@@ -196,6 +291,7 @@ export class FhirReadService {
     }
     const res = await fetch(`${this.baseUrl}${path}`, { ...init, headers });
     if (!res.ok) {
+      if (res.status === 404) throw new FhirNotFoundError(path);
       throw new Error(`FHIR request failed: ${init.method ?? 'GET'} ${path} -> ${res.status}`);
     }
     return (await res.json()) as T;
@@ -225,6 +321,24 @@ export class FhirReadService {
       writeAudit(this.db, { actor: actor.id, action, fhirResource: resource, outcome: 'denied' });
       throw new ScopeDeniedError(actor.role, domain);
     }
+  }
+
+  /**
+   * S7 A2/B2 — the per-task (not per-role) domain-scope check shared by
+   * `transitionTask` (a write) and `getTaskDetail` (a read): deny only if the
+   * Task's own domain tag is defined and the actor's role lacks scope for it
+   * (fail-open on an undefined domain, same as A1's `listTasks` filter — see
+   * `transitionTask`'s doc for the full reasoning on why this can't be a
+   * plain `guard()` call). Returns the extracted domain so callers can also
+   * surface it (`getTaskDetail`'s response includes it via `TaskListEntry`).
+   */
+  private guardTaskDomain(actor: AuthTokenPayload, resource: string, task: any, action: string): TaskDomain | undefined {
+    const domain = extractTaskDomain(task);
+    if (domain !== undefined && !hasScope(actor.role, domain)) {
+      writeAudit(this.db, { actor: actor.id, action, fhirResource: resource, outcome: 'denied' });
+      throw new ScopeDeniedError(actor.role, domain);
+    }
+    return domain;
   }
 
   /**
@@ -278,7 +392,8 @@ export class FhirReadService {
       title: e.resource.description,
       priority: FHIR_PRIORITY_TO_DISPLAY[e.resource.priority] ?? 'medium',
       due: e.resource.restriction?.period?.end,
-      status: FHIR_STATUS_TO_DISPLAY[e.resource.status] ?? 'Open',
+      status: displayStatus(e.resource),
+      domain: extractTaskDomain(e.resource),
     }));
   }
 
@@ -330,6 +445,72 @@ export class FhirReadService {
   }
 
   /**
+   * S7 A1 — role-filtered task listing across the same fixed demo panel
+   * `getAssignedPanel` uses (COORDINATOR_PANEL_GROUP_ID; this POC's
+   * task-bearing population is that small panel, not all ~500 Synthea
+   * patients). Fetches every patient's Tasks via `Patient/{id}/$everything`
+   * (filtered client-side for `resourceType === 'Task'`), audits ONCE for the
+   * whole aggregate read (mirroring `getAssignedPanel`'s audit-once shape),
+   * then filters client-side by domain.
+   *
+   * Query note: same reasoning as `replacePatientTasks` below — a
+   * `Task?subject=Patient/{id}` search lags behind writes on the local HAPI
+   * (7.2.0) under a create-then-immediately-read pattern, so a just-created
+   * Task can be briefly invisible to this listing. That's a real correctness
+   * risk here (this is a live read path, not just a replace-then-forget
+   * write), not merely a test-fixture inconvenience, so `$everything` (which
+   * reads the patient compartment directly rather than through the
+   * search index) is the correct choice, not a workaround.
+   *
+   * Deliberately does not `guard()` on a domain: no role is *denied* this
+   * read (a hasScope gate would incorrectly 403 a Social Worker, who has no
+   * 'clinical' scope — see auth/scopes.ts). Instead this is a per-task
+   * visibility filter: a task's domain is undefined (fail-open, per A0) or a
+   * value the actor's role holds scope for. Director/Coordinator hold both
+   * 'clinical' and 'sdoh' scope, so every task passes; Social Worker holds
+   * only 'sdoh', so a 'clinical'-tagged task is dropped while 'sdoh' and
+   * untagged tasks remain.
+   */
+  async listTasks(actor: AuthTokenPayload): Promise<TaskListEntry[]> {
+    const resource = `Group/${COORDINATOR_PANEL_GROUP_ID}`;
+    const group = await this.fhirFetch<any>(`/${resource}`);
+    const patientIds: string[] = (group.member ?? []).map((m: any) => m.entity.reference.split('/')[1]);
+
+    const perPatientBundles = await Promise.all(
+      patientIds.map((id) => this.fhirFetch<FhirBundle<any>>(`/Patient/${id}/$everything`))
+    );
+    writeAudit(this.db, { actor: actor.id, action: 'read', fhirResource: 'Task', outcome: 'success' });
+
+    // S7 B1 — the same $everything bundle already fetched above (per the
+    // HAPI search-lag reasoning in this method's doc) also contains the
+    // Patient resource (name) and Condition resources (tag) for that same
+    // patient, so no extra FHIR calls are needed to fill in patientName /
+    // conditionTag. Only the first condition is used — one tag per task
+    // card, not getAssignedPanel's two-tag panel-row list.
+    const allTasks: TaskListEntry[] = perPatientBundles.flatMap((bundle, i) => {
+      const patientId = patientIds[i];
+      const entries = bundle.entry ?? [];
+      const { patientName, conditionTag } = this.patientContextFromBundle(entries);
+
+      return entries
+        .filter((e) => e.resource.resourceType === 'Task')
+        .map((e) => ({
+          id: e.resource.id,
+          title: e.resource.description,
+          priority: FHIR_PRIORITY_TO_DISPLAY[e.resource.priority] ?? 'medium',
+          due: e.resource.restriction?.period?.end,
+          status: displayStatus(e.resource),
+          domain: extractTaskDomain(e.resource),
+          patientId,
+          patientName,
+          conditionTag,
+        }));
+    });
+
+    return allTasks.filter((task) => task.domain === undefined || hasScope(actor.role, task.domain));
+  }
+
+  /**
    * S5 A2 — one bulk read backing both population dashboard endpoints
    * (scatter + summary). Two `_count`-bounded searches (RiskAssessment,
    * Encounter — no per-patient round trips) joined client-side on
@@ -377,15 +558,20 @@ export class FhirReadService {
    * a later replacePatientTasks run can find and replace it without ever
    * touching a seed/Synthea Task (which carries no such tag).
    *
-   * Citation storage: `task.fhirResources` (the Action Planner's citations for
-   * this task) is intentionally NOT persisted onto the FHIR Task. HAPI's Task
-   * resource has no native "citations" field, and bolting one on via a custom
-   * extension would invent a non-standard shape only this app understands —
-   * for a POC that's more machinery than the problem needs. The caller (the
-   * analysis route, wired in a later task) already holds the
-   * ActionPlannerOutput in memory and can carry `fhirResources` alongside the
-   * created Task id in its own SSE `task` event, so nothing is lost — it's
-   * just kept out of the FHIR resource itself.
+   * Citation storage (S7 B2): `task.fhirResources` (the Action Planner's
+   * citations for this task — often more than one; the Action Planner's own
+   * prompt requires citing "one or more" resources) is persisted onto the
+   * FHIR Task via `Task.input`, one entry per citation:
+   * `{ type: { text: 'citation' }, valueReference: { reference: ref } }`.
+   * `Task.input` is FHIR R4's native `0..*` (repeatable) element for "inputs
+   * consumed by the task" — a standard element, not a custom extension.
+   * `Task.reasonReference` was tried first and rejected: FHIR R4 defines it
+   * as `0..1` (a single Reference, not an array), and HAPI (7.2.0) accepts a
+   * multi-entry array on write with no error but silently keeps only the
+   * first entry — confirmed by direct probe. `Task.input` was verified the
+   * same way (multi-entry POST → GET) to round-trip every entry intact, so
+   * every citation a task carries now survives on the resource itself, not
+   * just in the in-memory SSE payload the caller could otherwise drop.
    */
   async createTask(actor: AuthTokenPayload, patientId: string, task: ActionPlannerTaskInput): Promise<CreatedTask> {
     const resource = `Task/${patientId}`;
@@ -405,6 +591,17 @@ export class FhirReadService {
       body.restriction = {
         period: { end: new Date(Date.now() + task.dueInDays * 24 * 60 * 60 * 1000).toISOString() },
       };
+    }
+    if (task.fhirResources.length > 0) {
+      body.input = task.fhirResources.map((ref) => ({
+        type: { text: TASK_CITATION_INPUT_TYPE },
+        valueReference: { reference: ref },
+      }));
+    }
+    // Only tag the domain when one is present — an untagged Task must stay
+    // untagged (fail-open on the read side), never carry an empty coding.
+    if (task.domain != null) {
+      body.meta = { tag: [CARESYNC_TASK_TAG, { system: TASK_DOMAIN_SYSTEM, code: task.domain }] };
     }
 
     const created = await this.fhirFetch<{ id: string }>('/Task', {
@@ -442,6 +639,162 @@ export class FhirReadService {
     });
     writeAudit(this.db, { actor: actor.id, action: 'update', fhirResource: resource, outcome: 'success' });
     return { id: taskId, owner: coordinatorId };
+  }
+
+  /**
+   * S7 A2 — audited status-transition write for a Task's own domain-scoped
+   * actor (Social Worker completing/deferring/escalating their own sdoh
+   * tasks, Coordinator/Director working their queue). Deliberately NOT
+   * `this.guard(actor, 'clinical', ...)` like `assignTask`/`createTask` —
+   * that would incorrectly block a Social Worker (no 'clinical' scope) from
+   * acting on their own sdoh Tasks. Instead generalizes A1's per-task domain
+   * filter (see `listTasks`) to a write: fetch the Task, extract its domain,
+   * and deny only if the domain is defined and the actor's role lacks scope
+   * for it (fail-open on an undefined domain, same as A1's read filter).
+   *
+   * FHIR R4 Task.status has no native 'deferred'/'escalated' value, so:
+   * - complete  -> status = 'completed'.
+   * - defer     -> status = 'on-hold', businessStatus = { text: 'Deferred' }.
+   * - escalate  -> status left as-is (already non-terminal in the intended
+   *   caller flow), businessStatus = { text: 'Escalated' }, priority bumped
+   *   to 'urgent' (a FHIR-native field) so escalated tasks also sort higher
+   *   in any priority-ordered view.
+   *
+   * Read-modify-PUT, mirroring `assignTask`'s shape exactly.
+   */
+  async transitionTask(
+    actor: AuthTokenPayload,
+    taskId: string,
+    transition: TaskStatusTransition
+  ): Promise<{ id: string; status: string }> {
+    const resource = `Task/${taskId}`;
+    const task = await this.fhirFetch<Record<string, any>>(`/${resource}`);
+
+    this.guardTaskDomain(actor, resource, task, 'update');
+
+    switch (transition) {
+      case 'complete':
+        task.status = 'completed';
+        break;
+      case 'defer':
+        task.status = 'on-hold';
+        task.businessStatus = { text: 'Deferred' };
+        break;
+      case 'escalate':
+        task.businessStatus = { text: 'Escalated' };
+        task.priority = 'urgent';
+        break;
+    }
+
+    await this.fhirFetch(`/${resource}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/fhir+json' },
+      body: JSON.stringify(task),
+    });
+    writeAudit(this.db, { actor: actor.id, action: 'update', fhirResource: resource, outcome: 'success' });
+    return { id: taskId, status: task.status as string };
+  }
+
+  /**
+   * S7 B1/B2 — pulls the name/condition-tag/phone display fields `listTasks`
+   * and `getTaskDetail` both need out of a patient's `$everything` bundle
+   * (already fetched by each caller for its own reasons — see their docs).
+   * Only the first condition is used — one tag, not `getAssignedPanel`'s
+   * two-tag panel-row list.
+   */
+  private patientContextFromBundle(entries: FhirBundleEntry<any>[]): {
+    patientName: string;
+    conditionTag: string | undefined;
+    patientPhone: string | undefined;
+  } {
+    const patientResource = entries.find((e) => e.resource.resourceType === 'Patient')?.resource;
+    const name = patientResource?.name?.[0];
+    const patientName = [name?.given?.join(' '), name?.family].filter(Boolean).join(' ');
+    const firstCondition = entries.find((e) => e.resource.resourceType === 'Condition')?.resource;
+    const conditionTag = firstCondition
+      ? shortConditionTag(firstCondition.code?.coding?.[0]?.code, firstCondition.code?.text ?? '')
+      : undefined;
+    const patientPhone: string | undefined = patientResource?.telecom?.find((t: any) => t.system === 'phone')?.value;
+    return { patientName, conditionTag, patientPhone };
+  }
+
+  /**
+   * S7 B2 — resolves one Task.input citation entry's `valueReference` into a
+   * short human-readable display string, reusing the same field-reading
+   * conventions already established elsewhere in this file: Condition reads
+   * `code.text`/`code.coding[0].display` the way `getConditions`/
+   * `shortConditionTag` callers do; Observation pairs that same code label
+   * with `valueQuantity` (see `observationResource` in scripts/import-fhir.ts
+   * for the shape). Any other resource type, or a reference that no longer
+   * resolves (e.g. a citation pointing at a deleted resource), falls back to
+   * the raw reference string rather than failing the whole detail read.
+   */
+  private async resolveCitationDisplay(reference: string): Promise<string> {
+    try {
+      const resource = await this.fhirFetch<any>(`/${reference}`);
+      const label = resource.code?.text ?? resource.code?.coding?.[0]?.display;
+      if (resource.resourceType === 'Observation' && resource.valueQuantity) {
+        const { value, unit } = resource.valueQuantity;
+        return `${label ?? reference}: ${value}${unit ? ` ${unit}` : ''}`;
+      }
+      return label ?? reference;
+    } catch {
+      return reference;
+    }
+  }
+
+  /**
+   * S7 B2 — single-Task read backing the M03 task-detail screen: the Task
+   * itself (mapped the same way `listTasks` maps each entry), its patient's
+   * name/conditionTag/phone (from the same `Patient/{id}/$everything` bundle
+   * `listTasks` uses), and its citations — `Task.input` entries tagged
+   * `TASK_CITATION_INPUT_TYPE` (see `createTask`'s doc), each resolved to a
+   * display string via `resolveCitationDisplay`.
+   *
+   * Domain-scope check reuses `guardTaskDomain` (the same rule
+   * `transitionTask` enforces for writes, applied here to a read) rather than
+   * duplicating it inline. Audited once for the whole read, mirroring
+   * `getAssignedPanel`/`listTasks`'s audit-once-per-logical-read shape — a
+   * 404 (Task doesn't exist) or a 403 (domain denial, audited by
+   * `guardTaskDomain` itself) never reaches the success audit below.
+   */
+  async getTaskDetail(actor: AuthTokenPayload, taskId: string): Promise<TaskDetail> {
+    const resource = `Task/${taskId}`;
+    const task = await this.fhirFetch<Record<string, any>>(`/${resource}`);
+    const domain = this.guardTaskDomain(actor, resource, task, 'read');
+
+    const patientId: string | undefined = task.for?.reference?.split('/')[1];
+    const bundle = patientId
+      ? await this.fhirFetch<FhirBundle<any>>(`/Patient/${patientId}/$everything`)
+      : undefined;
+    const entries = bundle?.entry ?? [];
+    const { patientName, conditionTag, patientPhone } = this.patientContextFromBundle(entries);
+
+    const citationInputs: any[] = (task.input ?? []).filter(
+      (i: any) => i.type?.text === TASK_CITATION_INPUT_TYPE && i.valueReference?.reference
+    );
+    const citations = await Promise.all(
+      citationInputs.map(async (i) => ({
+        reference: i.valueReference.reference as string,
+        display: await this.resolveCitationDisplay(i.valueReference.reference),
+      }))
+    );
+
+    writeAudit(this.db, { actor: actor.id, action: 'read', fhirResource: resource, outcome: 'success' });
+
+    return {
+      id: task.id,
+      title: task.description,
+      priority: FHIR_PRIORITY_TO_DISPLAY[task.priority] ?? 'medium',
+      due: task.restriction?.period?.end,
+      status: displayStatus(task),
+      domain,
+      patientId: patientId as string,
+      patientName,
+      conditionTag,
+      citations,
+      patientPhone,
+    };
   }
 
   /**

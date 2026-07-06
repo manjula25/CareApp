@@ -61,14 +61,19 @@ the GenAI-washing anti-gaming flag if judges probe).
 *Rejected:* pure-Synthea cherry-pick (hero data not controllable);
 curated-only (population narrative too thin for the CDO scale story).
 
-### GD4 — Mobile stack: DEFERRED (open — see §8)
-Build **web first**. Mobile stack (PWA/responsive web vs. React Native) chosen
-after the web core lands.
-- **Recommendation on record:** responsive web / **PWA**, one codebase,
-  demoed in a phone frame — zero second toolchain; a "web + mobile responsive"
-  single codebase.
-- **Risk flagged:** M02 + M03 are demo-critical and Flow 3 (Social Worker) is
-  mobile-only, so this decision **cannot slip past Phase 3**.
+### GD4 — Mobile stack: PWA / responsive web (locked 2026-07-05)
+Resolved at the S7 pre-work gate, ahead of Iteration 7. **PWA / responsive
+web, one codebase**, demoed in a phone frame — the plan's own recommendation,
+accepted as-is:
+- Zero second toolchain (no React Native/Expo build pipeline).
+- Real FHIR Subscription push (via the S6 relay) works in-browser, no native
+  push infra needed.
+- M02/M03 build against `reference-materials/caresync-mobile.html` as one
+  responsive codebase alongside web.
+
+*Rejected:* React Native (Expo) — would add a second toolchain and rework
+Iteration 7's architecture for no demo-critical benefit; Flow 3 is
+mobile-only but not native-only.
 
 ### GD5 — Auth: app JWT + SMART Backend Services (locked)
 - Users log in with email/password → **app JWT** carrying role.
@@ -295,11 +300,8 @@ Tasks 8, 11, 12, 16, 17 parallelize across developers once 5 and 7 land.
 
 ## 8. Open decision (must resolve by Phase 3)
 
-**GD4 — Mobile stack: PWA/responsive web vs. React Native (Expo).**
-- **Recommendation:** PWA / responsive web, one codebase, demoed in a phone
-  frame. Zero second toolchain; real FHIR Subscription push works in-browser.
-- **Trigger to decide:** before Task 14. M02/M03 are demo-critical and Flow 3
-  is mobile-only, so this is the one thing that can sink the demo if it drifts.
+**GD4 — Mobile stack: RESOLVED 2026-07-05 — PWA / responsive web.** See §1
+GD4 for the recorded decision. No decisions currently open.
 
 ---
 
