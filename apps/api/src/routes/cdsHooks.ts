@@ -1,4 +1,10 @@
 import { Router } from 'express';
+import Database from 'better-sqlite3';
+import { readAnalysisCache, AnalysisCacheRow } from '../db/analysisCache';
+import { mapAnalysisResultToCards } from './cdsCardMapping';
+import { AnalysisResultJson } from './analysis';
+
+type ReadCache = (db: Database.Database, patientId: string) => AnalysisCacheRow | null;
 
 /**
  * Load-bearing beyond this task: S10 A2's service endpoint is mounted at
@@ -17,7 +23,7 @@ export const CDS_PATIENT_VIEW_SERVICE_ID = 'caresync-patient-view';
  * behind `requireAuth` — the public CDS Hooks sandbox that calls this has no
  * CareSync session token, unlike every other router in this repo.
  */
-export function createCdsHooksRouter(): Router {
+export function createCdsHooksRouter(db: Database.Database, readCache: ReadCache = readAnalysisCache): Router {
   const router = Router();
 
   router.get('/', (_req, res) => {
@@ -35,6 +41,39 @@ export function createCdsHooksRouter(): Router {
         },
       ],
     });
+  });
+
+  /**
+   * S10 A2 — the patient-view service itself
+   * (https://cds-hooks.org/specification/current/#calling-a-cds-service).
+   * Cache-only (see plan's "Why cache-only" note): CDS Hooks services are
+   * called synchronously by the EHR/sandbox under a low-second timeout
+   * budget, and this codebase has no reusable non-streaming
+   * orchestrate→validate→cache function to call inline — that sequence
+   * lives coupled to SSE framing inside routes/analysis.ts. So a cache miss
+   * here returns `cards: []` (a valid CDS Hooks response) rather than
+   * triggering a live run. NOT behind `requireAuth`, same as discovery
+   * above — the calling EHR/sandbox has no CareSync session token.
+   */
+  router.post('/:id', (req, res) => {
+    if (req.params.id !== CDS_PATIENT_VIEW_SERVICE_ID) {
+      res.status(404).json({ error: `Unknown CDS service id: ${req.params.id}` });
+      return;
+    }
+
+    const patientId = req.body?.context?.patientId;
+    if (!patientId) {
+      res.status(400).json({ error: 'context.patientId is required' });
+      return;
+    }
+
+    const cached = readCache(db, patientId);
+    if (!cached) {
+      res.json({ cards: [] });
+      return;
+    }
+
+    res.json({ cards: mapAnalysisResultToCards(cached.resultJson as AnalysisResultJson) });
   });
 
   return router;

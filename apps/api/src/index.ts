@@ -70,9 +70,11 @@ if (require.main === module) {
   const eventHub = createEventHub();
   app.use('/api/events', createEventsRouter(eventHub));
   app.use('/api/fhir', createSubscriptionWebhookRouter(eventHub));
-  // S10 A1 — CDS Hooks discovery. Different URL namespace by spec (NOT
-  // under /api) and deliberately not auth'd — see routes/cdsHooks.ts.
-  app.use('/cds-services', createCdsHooksRouter());
+  // S10 A1/A2 — CDS Hooks discovery + patient-view service. Different URL
+  // namespace by spec (NOT under /api) and deliberately not auth'd — see
+  // routes/cdsHooks.ts. A2 reads the same `analysis_cache` table A2 (S4)
+  // writes, via the already-available `db` instance.
+  app.use('/cds-services', createCdsHooksRouter(db));
 
   app.listen(PORT, () => {
     console.log(`API listening on :${PORT}`);
