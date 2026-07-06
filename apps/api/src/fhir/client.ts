@@ -67,6 +67,17 @@ export interface TaskWithOwner extends TaskSummary {
   ownerId?: string;
 }
 
+// S7 B1 — TaskSummary plus the fields the M02 task-queue card needs to show
+// "who" alongside "what": the patient's id/name and a short condition tag
+// (e.g. "CHF"), reusing shortConditionTag exactly as getAssignedPanel's
+// conditionTags does. Scoped to `listTasks` only — `TaskSummary` itself and
+// `getTasks`/`mapTaskResource`'s existing shapes are untouched.
+export interface TaskListEntry extends TaskSummary {
+  patientId: string;
+  patientName: string;
+  conditionTag?: string;
+}
+
 const FHIR_PRIORITY_TO_DISPLAY: Record<string, TaskPriority> = {
   stat: 'critical',
   urgent: 'high',
@@ -411,7 +422,7 @@ export class FhirReadService {
    * only 'sdoh', so a 'clinical'-tagged task is dropped while 'sdoh' and
    * untagged tasks remain.
    */
-  async listTasks(actor: AuthTokenPayload): Promise<TaskSummary[]> {
+  async listTasks(actor: AuthTokenPayload): Promise<TaskListEntry[]> {
     const resource = `Group/${COORDINATOR_PANEL_GROUP_ID}`;
     const group = await this.fhirFetch<any>(`/${resource}`);
     const patientIds: string[] = (group.member ?? []).map((m: any) => m.entity.reference.split('/')[1]);
@@ -421,8 +432,24 @@ export class FhirReadService {
     );
     writeAudit(this.db, { actor: actor.id, action: 'read', fhirResource: 'Task', outcome: 'success' });
 
-    const allTasks: TaskSummary[] = perPatientBundles.flatMap((bundle) =>
-      (bundle.entry ?? [])
+    // S7 B1 — the same $everything bundle already fetched above (per the
+    // HAPI search-lag reasoning in this method's doc) also contains the
+    // Patient resource (name) and Condition resources (tag) for that same
+    // patient, so no extra FHIR calls are needed to fill in patientName /
+    // conditionTag. Only the first condition is used — one tag per task
+    // card, not getAssignedPanel's two-tag panel-row list.
+    const allTasks: TaskListEntry[] = perPatientBundles.flatMap((bundle, i) => {
+      const patientId = patientIds[i];
+      const entries = bundle.entry ?? [];
+      const patientResource = entries.find((e) => e.resource.resourceType === 'Patient')?.resource;
+      const name = patientResource?.name?.[0];
+      const patientName = [name?.given?.join(' '), name?.family].filter(Boolean).join(' ');
+      const firstCondition = entries.find((e) => e.resource.resourceType === 'Condition')?.resource;
+      const conditionTag = firstCondition
+        ? shortConditionTag(firstCondition.code?.coding?.[0]?.code, firstCondition.code?.text ?? '')
+        : undefined;
+
+      return entries
         .filter((e) => e.resource.resourceType === 'Task')
         .map((e) => ({
           id: e.resource.id,
@@ -431,8 +458,11 @@ export class FhirReadService {
           due: e.resource.restriction?.period?.end,
           status: displayStatus(e.resource),
           domain: extractTaskDomain(e.resource),
-        }))
-    );
+          patientId,
+          patientName,
+          conditionTag,
+        }));
+    });
 
     return allTasks.filter((task) => task.domain === undefined || hasScope(actor.role, task.domain));
   }

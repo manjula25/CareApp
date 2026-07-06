@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../auth/useAuth';
 import { subscribeToEvents } from '../api/client';
@@ -89,6 +89,14 @@ export function AppShell() {
 
         {user && (
           <div className="flex items-center gap-4">
+            {/* S7 B1 — minimal nav affordance so Coordinators (and Social Workers,
+                whose own home is now /tasks) can reach the M02 task queue.
+                Director has no PRD story for it, so no link for that role. */}
+            {(user.role === 'coordinator' || user.role === 'social_worker') && (
+              <Link to="/tasks" className="text-label text-text-muted hover:text-text transition-colors">
+                Tasks
+              </Link>
+            )}
             <BellIcon className="text-text-muted w-4 h-4" />
             <span
               className="w-7 h-7 rounded-full bg-surface-raised border border-border-light text-cyan text-xs font-bold flex items-center justify-center"

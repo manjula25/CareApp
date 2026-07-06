@@ -64,5 +64,7 @@ export function useAuth(): AuthContextValue {
 export function roleHome(role: Role): string {
   if (role === 'director') return '/population';
   if (role === 'coordinator') return '/panel';
-  return '/coming-soon';
+  // S7 B1 — the Social Worker's mobile task queue (M02) now exists;
+  // '/coming-soon' was always a placeholder for this exact screen.
+  return '/tasks';
 }

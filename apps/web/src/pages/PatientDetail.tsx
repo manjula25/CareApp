@@ -11,15 +11,9 @@ import {
   type AnalysisTask,
 } from '../api/client';
 import { ageSexLabel } from '../lib/patient';
-import { PRIORITY_LABEL, dueLabel } from '../lib/task';
+import { PRIORITY_LABEL, PRIORITY_CLASS, dueLabel } from '../lib/task';
 import { useAnalysisGraph } from '../lib/analysisGraph';
 import { AgentGraph } from '../components/AgentGraph';
-
-const PRIORITY_CLASS: Record<TaskSummary['priority'], string> = {
-  critical: 'text-red bg-red-dim border-red',
-  high: 'text-amber bg-amber-dim border-amber',
-  medium: 'text-violet bg-violet-dim border-violet',
-};
 
 const FALLBACK_PRIORITY_CLASS = 'text-text-muted bg-surface-raised border-border-light';
 

@@ -7,6 +7,13 @@ export const PRIORITY_LABEL: Record<TaskSummary['priority'], string> = {
   medium: 'MEDIUM',
 };
 
+/** Priority pill color classes — shared by PatientDetail's task list and the M02 Task Queue (S7 B1). */
+export const PRIORITY_CLASS: Record<TaskSummary['priority'], string> = {
+  critical: 'text-red bg-red-dim border-red',
+  high: 'text-amber bg-amber-dim border-amber',
+  medium: 'text-violet bg-violet-dim border-violet',
+};
+
 function startOfDay(date: Date): number {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
 }

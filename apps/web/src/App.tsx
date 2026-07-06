@@ -6,6 +6,7 @@ import { PatientPanel } from './pages/PatientPanel';
 import { PatientDetail } from './pages/PatientDetail';
 import { Population } from './pages/Population';
 import { PopulationPatientList } from './pages/PopulationPatientList';
+import { TaskQueue } from './pages/TaskQueue';
 import { ComingSoon } from './pages/ComingSoon';
 
 function App() {
@@ -21,6 +22,7 @@ function App() {
       >
         <Route path="/panel" element={<PatientPanel />} />
         <Route path="/patients/:id" element={<PatientDetail />} />
+        <Route path="/tasks" element={<TaskQueue />} />
         <Route
           path="/population"
           element={

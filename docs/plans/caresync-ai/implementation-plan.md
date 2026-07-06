@@ -437,7 +437,10 @@ Subscription + Tasks live in the disposable HAPI. The relay hub is in-memory (dr
 
 ### Phase B — M02 queue + M03 detail + W13 (frontend, mockup fidelity)
 
-- [ ] **B1. M02 Task Queue (responsive, `reference-materials/caresync-mobile.html`).** Role-filtered queue with priority sort + due dates; phone-frame responsive per GD4. *Stories 24, 27.*
+- [x] **B1. M02 Task Queue (responsive, `reference-materials/caresync-mobile.html`).** Role-filtered queue with priority sort + due dates; phone-frame responsive per GD4. *Stories 24, 27.* **Done.**
+  - New `/tasks` route (`TaskQueue.tsx`); Social Worker's `roleHome` now points here (was `/coming-soon`, always a placeholder for this screen); Coordinator reaches it via a new header nav link. `listTasks` (A1) extended with `patientId`/`patientName`/`conditionTag` per task (free — already in the fetched `$everything` bundle) so cards can show "who" alongside "what".
+  - Chrome scope (recorded per `html-mockup-fidelity`): phone-frame + decorative status bar built for GD4 visual identity; segment tabs, bottom tab bar, bell/badge, back button, and the pinned Patient Risk Summary sheet omitted (no backing data/screens yet). "Done" (→ A2 complete transition) is the only wired card action; Call and Defer/Escalate stay scoped to B2's task-detail screen per the plan's own architecture note, even though the mockup shows Call on the list card too.
+  - *Test:* new Playwright spec (`task-queue.spec.ts`) — Social Worker sees sdoh/uncategorized only and completes one via "Done"; Coordinator sees the full unfiltered set. `social-worker-denied.spec.ts` updated for the new redirect target. **Done — API 137/137, web unit 116/116, Playwright 11/11 (serial), `tsc --noEmit` clean in both apps.**
 - [ ] **B2. M03 Task Detail + actions.** Justifying patient context + citations; Complete/Defer/Escalate wired to A2; Call as `tel:`. *Stories 28, 29, 31.*
   - *Domain rule:* task detail shows justifying context + citations (S7 acceptance).
 - [ ] **B3. W13 Task Management Center (web) + cross-surface sync.** Web queue view; completing on the mobile-shaped view syncs to web via the S6 relay.

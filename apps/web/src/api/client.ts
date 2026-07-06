@@ -44,6 +44,25 @@ export interface TaskSummary {
   status: string;
 }
 
+// S7 B1 — TaskSummary plus the fields the M02 task-queue card needs: which
+// patient the task belongs to, a display name, and a short condition tag.
+// Mirrors `TaskListEntry` in apps/api/src/fhir/client.ts, returned only by
+// `GET /api/tasks` (listTasks) — not by `getPatient`'s embedded tasks.
+export interface TaskListEntry extends TaskSummary {
+  patientId: string;
+  patientName: string;
+  conditionTag?: string;
+}
+
+export function listTasks(): Promise<TaskListEntry[]> {
+  return apiFetch('/api/tasks');
+}
+
+/** S7 B1 — the M02 queue's only wired action; Defer/Escalate/Call belong to B2's task-detail screen. */
+export function completeTask(id: string): Promise<{ id: string; status: string }> {
+  return apiFetch(`/api/tasks/${id}/status`, { method: 'PATCH', body: JSON.stringify({ transition: 'complete' }) });
+}
+
 export interface PatientDetail {
   patient: { id: string; name: string; gender: string; birthDate: string };
   conditions: Array<{ id: string; code: string; display: string }>;

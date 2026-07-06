@@ -19,7 +19,10 @@ test('Coordinator logs in, browses the panel, and reads Maria Chen live from HAP
   await expect(page.getByText('Active Conditions')).toBeVisible();
   await expect(page.getByText('Heart failure, unspecified')).toBeVisible();
 
-  await expect(page.getByText('Tasks')).toBeVisible();
+  // S7 B1 added a header "Tasks" nav link (AppShell) alongside this page's own
+  // "Tasks" section heading — scope to the heading so this assertion still
+  // targets what it always meant to check.
+  await expect(page.getByRole('heading', { name: 'Tasks' })).toBeVisible();
   await expect(page.getByText('2 open')).toBeVisible();
   await expect(page.getByText('Medication reconciliation follow-up')).toBeVisible();
   await expect(page.getByText('SDOH referral: housing navigator')).toBeVisible();

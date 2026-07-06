@@ -52,8 +52,8 @@ describe('roleHome', () => {
     expect(roleHome('coordinator')).toBe('/panel');
   });
 
-  it('sends social_worker to the coming-soon placeholder', () => {
-    expect(roleHome('social_worker')).toBe('/coming-soon');
+  it('sends social_worker to the mobile task queue (M02)', () => {
+    expect(roleHome('social_worker')).toBe('/tasks');
   });
 });
 

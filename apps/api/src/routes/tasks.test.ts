@@ -170,6 +170,30 @@ describe('tasks routes', () => {
       expect(ids).toContain(clinicalId);
       expect(ids).toContain(uncategorizedId);
     });
+
+    // S7 B1 — the M02 task-queue card needs the patient's name and a short
+    // condition tag alongside each task, so listTasks (unlike getTasks) also
+    // returns patientId/patientName/conditionTag. maria-chen's seed conditions
+    // (E11.9 Diabetes, I50.9 CHF, F33.1 Depression) all resolve through the
+    // existing ICD10_SHORT_TAG map (see fhir/conditionTags.ts), so any one of
+    // those three short labels is an acceptable conditionTag here — this test
+    // doesn't pin down which of Maria's conditions $everything happens to
+    // list first.
+    it('includes patientId, patientName, and a conditionTag on each task', async () => {
+      const taskId = await createProbeTaskWithDomain('sdoh');
+      const token = await loginAs(app, 'coordinator@caresync.demo');
+
+      const res = await request(app).get('/api/tasks').set('Authorization', `Bearer ${token}`);
+
+      expect(res.status).toBe(200);
+      const found = (
+        res.body as Array<{ id: string; patientId: string; patientName: string; conditionTag?: string }>
+      ).find((t) => t.id === taskId);
+      expect(found).toBeDefined();
+      expect(found?.patientId).toBe('maria-chen');
+      expect(found?.patientName).toBe('Maria Chen');
+      expect(['Diabetes', 'CHF', 'Depression']).toContain(found?.conditionTag);
+    });
   });
 
   describe('PATCH /api/tasks/:id/status (S7 A2 — status transitions)', () => {
