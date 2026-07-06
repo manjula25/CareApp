@@ -10,6 +10,7 @@ import { createGovernanceRouter } from './routes/governance';
 import { createTasksRouter } from './routes/tasks';
 import { createEventsRouter, createSubscriptionWebhookRouter } from './routes/events';
 import { createEventHub } from './routes/eventHub';
+import { createCdsHooksRouter } from './routes/cdsHooks';
 import { ensureTaskSubscription } from './fhir/subscription';
 import { orchestrate } from './agents/orchestrator';
 import { FhirReadService } from './fhir/client';
@@ -69,6 +70,11 @@ if (require.main === module) {
   const eventHub = createEventHub();
   app.use('/api/events', createEventsRouter(eventHub));
   app.use('/api/fhir', createSubscriptionWebhookRouter(eventHub));
+  // S10 A1/A2 — CDS Hooks discovery + patient-view service. Different URL
+  // namespace by spec (NOT under /api) and deliberately not auth'd — see
+  // routes/cdsHooks.ts. S10 A2 reads the same `analysis_cache` table S4's
+  // analysis.ts writes, via the already-available `db` instance.
+  app.use('/cds-services', createCdsHooksRouter(db));
 
   app.listen(PORT, () => {
     console.log(`API listening on :${PORT}`);
