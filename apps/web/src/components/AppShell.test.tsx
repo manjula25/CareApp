@@ -34,12 +34,12 @@ function renderShell(queryClient: QueryClient) {
 }
 
 describe('AppShell — S6 B1 live assignment notification', () => {
-  let unsubscribe: ReturnType<typeof vi.fn>;
+  let unsubscribe: () => void;
 
   beforeEach(() => {
     localStorage.clear();
     vi.clearAllMocks();
-    unsubscribe = vi.fn();
+    unsubscribe = vi.fn<() => void>();
     vi.mocked(client.subscribeToEvents).mockReturnValue(unsubscribe);
   });
 
