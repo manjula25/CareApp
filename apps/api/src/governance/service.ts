@@ -112,7 +112,11 @@ const CONFIDENCE_BUCKETS: { range: string; min: number; max: number }[] = [
   { range: '0.85-1.0', min: 0.85, max: 1.0 },
 ];
 
-function bucketFor(confidence: number): string | undefined {
+// Exported for direct unit testing (boundary cases — a confidence value
+// landing exactly on 0.5/0.7/0.85 — are awkward to pin precisely through the
+// HTTP-level fixtures in routes/governance.test.ts). Same convention
+// population/service.ts uses for projectedCostAvoidance.
+export function bucketFor(confidence: number): string | undefined {
   for (const bucket of CONFIDENCE_BUCKETS) {
     const isTopBucket = bucket.max === 1.0;
     if (confidence >= bucket.min && (isTopBucket ? confidence <= bucket.max : confidence < bucket.max)) {
@@ -124,7 +128,8 @@ function bucketFor(confidence: number): string | undefined {
 
 // Runtime-only shape (see this section's deviation note above) — deliberately
 // not `AgentFlag[]` etc., since the field being read isn't declared there.
-function extractConfidences(resultJson: unknown): number[] {
+// Exported for direct unit testing.
+export function extractConfidences(resultJson: unknown): number[] {
   const result = resultJson as
     | { risk?: { findings?: { confidence?: unknown }[] }; careGap?: { findings?: { confidence?: unknown }[] }; sdoh?: { findings?: { confidence?: unknown }[] } }
     | null
@@ -198,7 +203,11 @@ const AGE_BANDS: { label: string; min: number; max: number }[] = [
   { label: '65+', min: 65, max: Infinity },
 ];
 
-function ageFromBirthDate(birthDate: string | undefined, now: Date): number | undefined {
+// Exported for direct unit testing (the "hasn't had this year's birthday
+// yet" boundary — `now` landing exactly on, one day before, and one day
+// after the birthday's month/day — is awkward to pin through a live-HAPI
+// fixture, since `now` there is real wall-clock time).
+export function ageFromBirthDate(birthDate: string | undefined, now: Date): number | undefined {
   if (!birthDate) return undefined;
   const dob = new Date(birthDate);
   if (Number.isNaN(dob.getTime())) return undefined;
@@ -220,7 +229,9 @@ function ageBandFor(age: number | undefined): string | undefined {
 // silently join an "undefined" bucket) and averages riskScore per group.
 // Rounded to one decimal place — enough precision to see a real disparity,
 // not so much that it implies false precision over a handful of patients.
-function stratify(rows: { group: string | undefined; riskScore: number }[]): ParityGroupStat[] {
+// Exported for direct unit testing (the "skip an undefined group rather than
+// join an 'undefined' bucket" rule, in particular).
+export function stratify(rows: { group: string | undefined; riskScore: number }[]): ParityGroupStat[] {
   const scoresByGroup = new Map<string, number[]>();
   for (const row of rows) {
     if (row.group === undefined) continue;
