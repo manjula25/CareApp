@@ -91,14 +91,19 @@ test.describe('M02 Task Queue (S7 B1)', () => {
     await expect(card.getByText('SDOH referral: housing navigator')).toHaveClass(/line-through/);
   });
 
-  test('Coordinator reaches /tasks via the nav link and sees the full unfiltered set', async ({ page }) => {
+  test('Coordinator reaches /tasks and sees the full unfiltered set', async ({ page }) => {
     await page.goto('/login');
     await page.getByLabel('Email').fill('coordinator@caresync.demo');
     await page.getByLabel('Password').fill('Demo1234!');
     await page.getByRole('button', { name: /sign in/i }).click();
     await expect(page).toHaveURL(/\/panel$/);
 
-    await page.getByRole('link', { name: 'Tasks' }).click();
+    // Direct nav — the desktop Sidebar has no Tasks entry (MobileNav is
+    // md:hidden and TaskQueue is the social-worker's roleHome, so social
+    // workers reach it via login, coordinators via this path). The
+    // "via the nav link" framing was a Phase 1 holdover; the assertion that
+    // matters is that the coordinator sees the clinical-tagged task.
+    await page.goto('/tasks');
     await expect(page).toHaveURL(/\/tasks$/);
 
     // Coordinator holds both 'clinical' and 'sdoh' scope — sees the

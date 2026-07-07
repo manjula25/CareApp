@@ -26,3 +26,8 @@ export function dueLabel(due: string): string {
   if (dayDiff === 1) return 'Tomorrow';
   return target.toLocaleDateString(undefined, { weekday: 'short' });
 }
+
+/** True if the due ISO string (date OR datetime) is strictly before today's local midnight. */
+export function isOverdue(due: string): boolean {
+  return new Date(due).getTime() < startOfDay(new Date());
+}

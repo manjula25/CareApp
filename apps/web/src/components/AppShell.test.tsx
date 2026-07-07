@@ -117,58 +117,48 @@ describe('AppShell — S6 B1 live assignment notification', () => {
   });
 });
 
-// S8 B3 — the Director's only way to reach the W06 governance dashboard from
-// anywhere other than their post-login home route (`/population`).
-describe('AppShell — S8 B3 Governance nav link (Director-only)', () => {
+// Sidebar navigation — the new layout uses icon-only buttons with title
+// attributes in a vertical sidebar, role-filtered per nav item.
+describe('AppShell — Sidebar navigation', () => {
   beforeEach(() => {
     localStorage.clear();
     vi.clearAllMocks();
+    vi.mocked(client.subscribeToEvents).mockReturnValue(vi.fn());
   });
 
-  it('shows a Governance link for a Director', () => {
+  it('shows a Governance nav button for a Director', () => {
     localStorage.setItem('caresync_token', tokenFor('director'));
     const queryClient = new QueryClient();
 
     renderShell(queryClient);
 
-    expect(screen.getByRole('link', { name: 'Governance' })).toHaveAttribute('href', '/governance');
+    expect(screen.getByTitle('Governance')).toBeInTheDocument();
   });
 
-  it('does not show a Governance link for a Coordinator or Social Worker', () => {
+  it('does not show a Governance nav button for a Coordinator', () => {
     localStorage.setItem('caresync_token', tokenFor('coordinator'));
     const queryClient = new QueryClient();
 
     renderShell(queryClient);
 
-    expect(screen.queryByRole('link', { name: 'Governance' })).not.toBeInTheDocument();
+    expect(screen.queryByTitle('Governance')).not.toBeInTheDocument();
   });
 
-  it('does not show the Tasks/Task Center links for a Director (no PRD story scopes them to that role)', () => {
+  it('shows a Population nav button for a Director', () => {
     localStorage.setItem('caresync_token', tokenFor('director'));
     const queryClient = new QueryClient();
 
     renderShell(queryClient);
 
-    expect(screen.queryByRole('link', { name: 'Tasks' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'Task Center' })).not.toBeInTheDocument();
-  });
-});
-
-// S11 B1 — none of the 11 GD9 shell screens has a defined role-owner, so
-// they're reachable via one "More" link visible to every authenticated
-// role, unlike the role-gated links above.
-describe('AppShell — S11 B1 More link (not role-gated)', () => {
-  beforeEach(() => {
-    localStorage.clear();
-    vi.clearAllMocks();
+    expect(screen.getByTitle('Population')).toBeInTheDocument();
   });
 
-  it.each(['director', 'coordinator', 'social_worker'])('shows a More link for %s', (role) => {
-    localStorage.setItem('caresync_token', tokenFor(role));
+  it('shows a Patients nav button for all roles', () => {
+    localStorage.setItem('caresync_token', tokenFor('coordinator'));
     const queryClient = new QueryClient();
 
     renderShell(queryClient);
 
-    expect(screen.getByRole('link', { name: 'More' })).toHaveAttribute('href', '/more');
+    expect(screen.getByTitle('Patients')).toBeInTheDocument();
   });
 });

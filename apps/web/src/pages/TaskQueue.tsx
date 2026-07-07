@@ -1,31 +1,46 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { listTasks, completeTask, type TaskListEntry } from '../api/client';
 import { PRIORITY_LABEL, PRIORITY_CLASS, dueLabel } from '../lib/task';
+import { FILTER_TABS, type TaskFilter } from './TaskQueue.fixtures';
 
-// S7 B1 — M02 Task Queue, built against reference-materials/caresync-mobile.html
-// ("My Tasks", 390×844 phone shell). Per the GD4 decision this is demoed inside
-// a decorative phone frame; the chrome below (status bar, nav header) carries
-// no functionality of its own. Scope decisions locked in the implementation
-// plan (Iteration 7 Phase B / B1) and NOT relitigated here:
-//   - Segment tabs (Tasks/Patients/Alerts/Profile) — skipped, only Tasks has content.
-//   - Bottom "Patient Risk Summary" sheet — deferred, no backing single-patient
-//     focus concept exists yet in this list view.
-//   - Bottom tab bar (Tasks/Patients/Alerts/Messages/Profile) — skipped, no
-//     sibling screens ready.
-//   - Back button + notification bell/badge in the nav header — skipped, no
-//     backing data (nowhere to navigate back to from a role's home screen; no
-//     notification feed).
-//   - "Call" button on each card — explicitly scoped to B2/M03's task-detail
-//     screen by the plan's own architecture note, not this list.
-// The one interactive element that DOES belong here per both the mockup and
-// the plan: "Done", wired to PATCH /api/tasks/:id/status.
-//
-// S7 B2 — each card now also navigates to /tasks/:id (M03) on click; "Done"
-// stops propagation so it keeps completing the task in place instead of also
-// triggering a navigation (same click-vs-navigate concern PatientPanel.tsx's
-// row Links don't have to solve, since they have no nested interactive
-// element — Task cards do).
+/**
+ * Phase 3 of the lead-project integration: `TaskQueue.tsx` is now lead's
+ * `pages/mobile/TaskQueue.tsx` (295 lines) — filterable task queue with
+ * priority left-border cards + Due/Status pills + Done button — adapted
+ * to:
+ *   - my real `listTasks()` API (lead's `fetch('/api/tasks')` was unwrapped
+ *     ad-hoc; the same endpoint now goes through my client)
+ *   - my `TaskListEntry` shape (no description/fhirResourceId/assignedTo/
+ *     createdAt; `due` field name not `dueDate`; priority enum is
+ *     critical/high/medium not urgent/high/medium/low)
+ *   - my real `completeTask(id)` mutation (lead's Done button was UI-only;
+ *     ours PATCHes `/api/tasks/:id/status` with `transition: 'complete'`)
+ *   - my `/tasks/:id` route (not lead's `/mobile/tasks/:id`)
+ *
+ * Honest-staging deviations from lead's mobile-styled screen:
+ *   - Dropped the 390px phone frame wrapper per user direction (regression
+ *     from S7 B1 GD4) — this page now renders at full web width inside
+ *     `AppShell.tsx` like every other per-screen content.
+ *   - Dropped `StatusBarChrome` — purely decorative, AppShell provides the
+ *     real Header chrome.
+ *   - Dropped the FAB + `CreateTaskSheet` — no `/api/tasks/:patientId/assign`
+ *     endpoint exists on my backend; surfacing a UI for a stub would be a
+ *     placebo. Tasks are created by the action-planner agent stream instead.
+ *   - Dropped `MobileNav` (Tasks/SDOH bottom bar) — AppShell already provides
+ *     Header + Sidebar nav.
+ *   - Mapped lead's `urgent` priority → my `critical`; lead's `low` priority
+ *     not surfaced (my `TaskSummary.priority` enum doesn't include it).
+ *   - Wired Done button to real `completeTask(id)` mutation (lead's Done was
+ *     a UI-only no-op — its only "success" was a local state flip).
+ *   - Replaced lead's `border-l-cyan` (medium priority) with `border-l-violet`
+ *     to match my established `PRIORITY_CLASS` medium color and keep card
+ *     left-borders consistent with the priority pills elsewhere in the app.
+ *   - Replaced lead's `bg-red` urgent-count badge with the existing 3-stat
+ *     Open/Critical/Patients summary bar (already used in the previous
+ *     in-tree version of this page).
+ */
 
 const PRIORITY_BORDER_L: Record<TaskListEntry['priority'], string> = {
   critical: 'border-l-red',
@@ -43,7 +58,7 @@ function isOpenStatus(status: string): boolean {
   return status !== 'Done' && status !== 'Cancelled';
 }
 
-/** Open tasks first (priority, then due date), completed tasks last — matches the mockup's card order. */
+/** Open tasks first (priority, then due date), completed tasks last. */
 function sortTasks(tasks: TaskListEntry[]): TaskListEntry[] {
   return [...tasks].sort((a, b) => {
     const aDone = a.status === 'Done' ? 1 : 0;
@@ -54,30 +69,12 @@ function sortTasks(tasks: TaskListEntry[]): TaskListEntry[] {
   });
 }
 
-/** Decorative-only status-bar strip — same visual identity as the mockup, no live clock/signal. */
-function StatusBarChrome() {
+function SummaryStat({ label, value, className, testId }: { label: string; value: number; className: string; testId: string }) {
   return (
-    <div className="h-[34px] flex-none flex items-center justify-between px-5 border-b border-border/40">
-      <span className="text-label font-semibold text-text">9:41</span>
-      <div className="flex items-center gap-1.5 text-text">
-        <svg width="16" height="11" viewBox="0 0 18 12" fill="none" aria-hidden="true">
-          <rect x="0" y="8" width="3" height="4" rx="1" fill="currentColor" />
-          <rect x="5" y="5.5" width="3" height="6.5" rx="1" fill="currentColor" />
-          <rect x="10" y="3" width="3" height="9" rx="1" fill="currentColor" />
-          <rect x="15" y="0" width="3" height="12" rx="1" fill="currentColor" opacity="0.35" />
-        </svg>
-        <svg width="22" height="11" viewBox="0 0 25 12" fill="none" aria-hidden="true">
-          <rect x="0.5" y="0.5" width="21" height="11" rx="3" stroke="currentColor" strokeOpacity="0.4" />
-          <rect x="2" y="2" width="15" height="8" rx="1.6" fill="currentColor" />
-        </svg>
-      </div>
-    </div>
-  );
-}
-
-function SummaryStat({ label, value, className }: { label: string; value: number; className: string }) {
-  return (
-    <div className={`flex-1 flex items-center justify-center gap-1.5 text-label font-semibold ${className}`}>
+    <div
+      data-testid={testId}
+      className={`flex-1 flex items-center justify-center gap-1.5 text-label font-semibold ${className}`}
+    >
       <span className="text-body font-bold">{value}</span> {label}
     </div>
   );
@@ -99,9 +96,7 @@ function CompletedTaskCard({ task }: { task: TaskListEntry }) {
         </span>
         <div className="flex-1 min-w-0">
           <p className="text-body font-bold text-text-muted line-through truncate">{task.title}</p>
-          <p className="text-xs text-text-dim mt-0.5">
-            {task.status} · <span className="font-mono">{`Task/${task.id}`}</span>
-          </p>
+          <p className="text-xs text-text-dim mt-0.5 font-mono">{`Task/${task.id}`}</p>
         </div>
         <span className="text-[9px] font-bold tracking-wide rounded-pill border px-2 py-0.5 text-emerald bg-emerald-dim border-emerald flex-none">
           Done
@@ -152,6 +147,7 @@ function OpenTaskCard({
           </span>
         </div>
         <button
+          data-testid={`task-done-${task.id}`}
           onClick={(e) => {
             e.stopPropagation();
             onComplete(task.id);
@@ -166,6 +162,20 @@ function OpenTaskCard({
   );
 }
 
+function EmptyState() {
+  return (
+    <div
+      data-testid="task-queue-empty-state"
+      className="flex flex-col items-center justify-center h-48 text-emerald text-base font-semibold gap-2"
+    >
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="20 6 9 17 4 12" />
+      </svg>
+      All caught up!
+    </div>
+  );
+}
+
 export function TaskQueue() {
   const queryClient = useQueryClient();
   const { data, isLoading, isError } = useQuery({ queryKey: ['tasks'], queryFn: listTasks });
@@ -174,35 +184,57 @@ export function TaskQueue() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tasks'] }),
   });
 
+  const [filter, setFilter] = useState<TaskFilter>('all');
+
   const tasks = data ?? [];
   const openCount = tasks.filter((t) => isOpenStatus(t.status)).length;
   const criticalCount = tasks.filter((t) => t.priority === 'critical').length;
   const patientsCount = new Set(tasks.map((t) => t.patientId)).size;
-  const sorted = sortTasks(tasks);
+
+  const filtered = sortTasks(tasks).filter((t) => {
+    if (filter === 'critical') return t.priority === 'critical';
+    if (filter === 'today') return dueLabel(t.due) === 'Today';
+    if (filter === 'in_progress') return t.status === 'In Progress';
+    return true;
+  });
 
   return (
-    <div className="mx-auto w-[390px] max-w-full bg-bg border border-border rounded-[32px] overflow-hidden shadow-lg flex flex-col">
-      <StatusBarChrome />
+    <div>
+      <h1 className="text-section text-text font-bold mb-3">My Tasks</h1>
 
-      {/* Nav header — title only per the B1 scope decision (no back button, no bell/badge: no backing data for either). */}
-      <div className="h-12 flex-none flex items-center justify-center border-b border-border">
-        <span className="text-nav font-bold text-text">My Tasks</span>
+      {/* Summary bar — 3 real stats from listTasks data (not lead's hardcoded "12"). */}
+      <div className="h-11 flex-none bg-surface-raised border border-border rounded-card flex items-center mb-3" data-testid="task-queue-summary">
+        <SummaryStat label="Open" value={openCount} className="text-cyan" testId="task-queue-summary-open" />
+        <span className="w-px h-[18px] bg-border-light" aria-hidden="true" />
+        <SummaryStat label="Critical" value={criticalCount} className="text-red" testId="task-queue-summary-critical" />
+        <span className="w-px h-[18px] bg-border-light" aria-hidden="true" />
+        <SummaryStat label="Patients" value={patientsCount} className="text-text-muted" testId="task-queue-summary-patients" />
       </div>
 
-      {/* Summary bar — 3 real stats, no segment tabs (Patients/Alerts/Profile have no content in this slice). */}
-      <div className="h-11 flex-none bg-surface-raised border-b border-border flex items-center">
-        <SummaryStat label="Open" value={openCount} className="text-cyan" />
-        <span className="w-px h-[18px] bg-border-light" aria-hidden="true" />
-        <SummaryStat label="Critical" value={criticalCount} className="text-red" />
-        <span className="w-px h-[18px] bg-border-light" aria-hidden="true" />
-        <SummaryStat label="Patients" value={patientsCount} className="text-text-muted" />
+      {/* Filter chips */}
+      <div className="flex gap-2 mb-3 overflow-x-auto pb-0.5">
+        {FILTER_TABS.map((f) => (
+          <button
+            key={f.key}
+            onClick={() => setFilter(f.key)}
+            data-testid={f.testId}
+            className={`shrink-0 px-3 py-1 rounded-pill text-xs font-medium border transition-colors ${
+              filter === f.key
+                ? 'bg-cyan text-bg border-cyan'
+                : 'bg-surface border-border text-text-muted hover:text-text'
+            }`}
+          >
+            {f.label}
+          </button>
+        ))}
       </div>
 
-      <div className="flex-1 p-3.5 overflow-y-auto min-h-[240px]">
+      {/* Task list */}
+      <div>
         {isLoading && <p className="text-body text-text-muted">Loading tasks…</p>}
         {isError && <p className="text-body text-red">Could not load the task queue.</p>}
-        {data && sorted.length === 0 && <p className="text-body text-text-muted">No tasks assigned.</p>}
-        {sorted.map((task) =>
+        {data && filtered.length === 0 && <EmptyState />}
+        {filtered.map((task) =>
           task.status === 'Done' ? (
             <CompletedTaskCard key={task.id} task={task} />
           ) : (

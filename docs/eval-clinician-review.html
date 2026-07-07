@@ -1,0 +1,1557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CareSync Eval — Clinician Review</title>
+  <style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem; color: #1a1a1a; line-height: 1.5; background: #fff; }
+h1 { margin: 0 0 0.5rem 0; font-size: 1.75rem; }
+h2 { margin: 2rem 0 0.5rem 0; font-size: 1.15rem; border-bottom: 2px solid #333; padding-bottom: 0.25rem; display: flex; gap: 0.5rem; align-items: baseline; }
+h2 .num { color: #888; font-weight: normal; min-width: 2rem; }
+header { border-bottom: 2px solid #333; padding-bottom: 1rem; }
+header p { margin: 0.5rem 0; }
+.status { padding: 0.6rem 0.8rem; background: #fff8e1; border-left: 4px solid #f9a825; font-size: 0.95rem; }
+.meta { color: #555; font-size: 0.85rem; }
+.instructions { background: #f5f5f5; padding: 0.75rem 1rem; border-left: 4px solid #666; font-size: 0.95rem; }
+.reviewer-input { margin-top: 0.5rem; font-size: 0.95rem; }
+.reviewer-input input { padding: 0.4rem 0.6rem; font-size: 1rem; min-width: 280px; border: 1px solid #999; border-radius: 3px; }
+.patient-index { font-size: 0.9rem; margin: 1rem 0; line-height: 1.8; }
+.patient-index a { color: #0066cc; text-decoration: none; }
+.patient-index a:hover { text-decoration: underline; }
+.patient { margin: 1rem 0 2.5rem 0; }
+.patient-meta { color: #555; font-size: 0.85rem; margin: 0 0 0.75rem 0; }
+.dim { border: 1px solid #ccc; margin: 0.6rem 0; padding: 0.6rem 0.9rem 0.4rem 0.9rem; border-radius: 4px; background: #fafafa; }
+.dim legend { font-weight: 600; padding: 0 0.4rem; }
+.dim.qualitative { background: #f0f4f8; }
+.dim dl { display: grid; grid-template-columns: 90px 1fr; gap: 0.35rem 0.75rem; margin: 0.4rem 0; font-size: 0.95rem; align-items: start; }
+.dim dt { font-weight: 600; color: #555; padding-top: 0.15rem; }
+.dim dd { margin: 0; }
+.rationale { white-space: pre-wrap; }
+.tag { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 3px; font-weight: 600; font-size: 0.9em; }
+.tag-pos { background: #ffe5e5; color: #b30000; }
+.tag-neg { background: #e5ffe5; color: #006400; }
+.tag-null { background: #eee; color: #555; font-style: italic; font-weight: normal; }
+.agree { color: #006400; }
+.disagree { color: #b30000; font-weight: 600; }
+.qual { font-weight: normal; color: #777; font-size: 0.85em; }
+.form-row { margin-top: 0.4rem; padding-top: 0.4rem; border-top: 1px dashed #ccc; display: grid; grid-template-columns: auto auto auto 140px 1fr; gap: 0.4rem 0.6rem; align-items: center; }
+.radio { display: inline-flex; align-items: center; gap: 0.3rem; cursor: pointer; }
+.form-row select.override-value { padding: 0.3rem; border: 1px solid #999; border-radius: 3px; font: inherit; }
+.form-row textarea.notes { padding: 0.4rem; border: 1px solid #999; border-radius: 3px; min-height: 2.2rem; resize: vertical; font: inherit; grid-column: 1 / -1; }
+footer { margin-top: 2rem; padding-top: 1.5rem; border-top: 2px solid #333; }
+footer button { background: #0066cc; color: white; border: 0; padding: 0.75rem 1.25rem; font-size: 1rem; border-radius: 4px; cursor: pointer; }
+footer button:hover { background: #0055aa; }
+footer button:disabled { background: #999; cursor: not-allowed; }
+.hint { color: #555; font-size: 0.9rem; }
+.hint.danger { color: #b30000; }
+code { background: #eee; padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.9em; }
+@media print {
+  footer button, .form-row, .patient-index { display: none; }
+  .dim { break-inside: avoid; }
+}
+</style>
+</head>
+<body>
+  <header>
+    <h1>CareSync Eval — Clinician Review</h1>
+    <p class="status"><strong>DEV-LABELED BASELINE, NOT CLINICIAN-VALIDATED (GD8).</strong> Ground truth is drawn from <code>data/eval/labels.json</code> with <code>source: "dev"</code> on every row today. Your review flips a row to <code>source: "clinician"</code> with no code change — see <code>data/eval/labels.json</code> <code>_meta.clinicianStatus</code> for the consumer contract.</p>
+    <p class="meta"><strong>Generated:</strong> 2026-07-07T13:00:58.087Z · <strong>Labels:</strong> 16 patients · <strong>Eval report:</strong> 2026-07-06T15:59:33.945Z</p>
+    <p class="instructions">For each patient × dimension, choose one of: <strong>Endorse</strong> the label as-is, <strong>Override</strong> it (pick the new value + explain in notes), or <strong>Abstain</strong> (defer to another reviewer). When done, click <em>Download Reviewed Labels</em> at the bottom. Drafts auto-save to your browser's localStorage as you type — but download before closing the tab.</p>
+    <p class="reviewer-input"><label>Reviewer: <input type="text" id="reviewer" placeholder="Name or email (recorded in the downloaded file)"></label></p>
+    <nav class="patient-index"><strong>Jump to:</strong> <a href="#p-maria-chen">1. maria-chen</a> · <a href="#p-james-okafor">2. james-okafor</a> · <a href="#p-linda-torres">3. linda-torres</a> · <a href="#p-robert-kim">4. robert-kim</a> · <a href="#p-angela-diaz">5. angela-diaz</a> · <a href="#p-samuel-wright">6. samuel-wright</a> · <a href="#p-pop-0001">7. pop-0001</a> · <a href="#p-pop-0002">8. pop-0002</a> · <a href="#p-pop-0003">9. pop-0003</a> · <a href="#p-pop-0004">10. pop-0004</a> · <a href="#p-pop-0005">11. pop-0005</a> · <a href="#p-pop-0006">12. pop-0006</a> · <a href="#p-pop-0007">13. pop-0007</a> · <a href="#p-pop-0008">14. pop-0008</a> · <a href="#p-pop-0009">15. pop-0009</a> · <a href="#p-pop-0010">16. pop-0010</a></nav>
+  </header>
+  <main>
+
+    <section class="patient" id="p-maria-chen">
+      <h2><span class="num">1.</span> maria-chen</h2>
+      <p class="patient-meta">Source: <code>dev</code> · FHIR: <code>Patient/maria-chen</code></p>
+      
+      <fieldset class="dim" data-patient="maria-chen" data-dim="careGap">
+        <legend>Care Gap</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — no monitoring gap</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Diabetes (E11.9) has Observation/maria-chen-hba1c on file; CHF (I50.9) has Observation/maria-chen-bnp on file — both the conditions this dataset's Observation coding actually covers are monitored. Her depression (F33.1) has no corresponding Observation type established anywhere in this codebase, so that dimension is intentionally left out of this boolean rather than guessed at.</dd>
+          <dt>Agent</dt>
+          <dd class="disagree">Disagrees — predicted positive (label expected negative)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="maria-chen:careGap" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="maria-chen:careGap" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="maria-chen:careGap" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="maria-chen" data-dim="risk">
+        <legend>Risk</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-pos">Positive — high / critical risk</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Seed riskScore 87 &gt;= 75 (CRITICAL_RISK_THRESHOLD). Independently plausible from her raw data: CHF admission 48h ago, BNP 340 (elevated), HbA1c 8.9% (poorly controlled), eGFR 52 (reduced), K+ 3.4 (low) — a clinically high-risk 30-day-readmission profile.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="maria-chen:risk" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="maria-chen:risk" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="maria-chen:risk" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" selected>Positive</option>
+            <option value="false" >Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="maria-chen" data-dim="sdoh">
+        <legend>SDOH</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-pos">Positive — has actionable barrier</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Observation/maria-chen-sdoh: AHC-HRSN screening positive for housing instability and food insecurity.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="maria-chen:sdoh" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="maria-chen:sdoh" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="maria-chen:sdoh" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" selected>Positive</option>
+            <option value="false" >Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim qualitative" data-patient="maria-chen" data-dim="actionPlanner">
+        <legend>Action Planner <span class="qual">(qualitative — no ground truth)</span></legend>
+        <p class="rationale">Qualitative only — see Phase B report.</p>
+        <textarea class="notes" rows="2" placeholder="Clinician notes (optional)"></textarea>
+      </fieldset>
+    </section>
+
+    <section class="patient" id="p-james-okafor">
+      <h2><span class="num">2.</span> james-okafor</h2>
+      <p class="patient-meta">Source: <code>dev</code> · FHIR: <code>Patient/james-okafor</code></p>
+      
+      <fieldset class="dim" data-patient="james-okafor" data-dim="careGap">
+        <legend>Care Gap</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-null">Unlabeled — no ground truth</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">COPD (J44.9) only. No spirometry/pulmonary-function Observation convention exists anywhere in this codebase to judge monitoring adequacy against — left unlabeled rather than guessed.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="james-okafor:careGap" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="james-okafor:careGap" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="james-okafor:careGap" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" >Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="james-okafor" data-dim="risk">
+        <legend>Risk</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — low / moderate risk</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Seed riskScore 62 &lt; 75.</dd>
+          <dt>Agent</dt>
+          <dd class="disagree">Disagrees — predicted &quot;high&quot; (label expected low/moderate)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="james-okafor:risk" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="james-okafor:risk" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="james-okafor:risk" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="james-okafor" data-dim="sdoh">
+        <legend>SDOH</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — no actionable barrier</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">No seeded AHC-HRSN screening or any other SDOH-relevant evidence for this patient.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="james-okafor:sdoh" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="james-okafor:sdoh" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="james-okafor:sdoh" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim qualitative" data-patient="james-okafor" data-dim="actionPlanner">
+        <legend>Action Planner <span class="qual">(qualitative — no ground truth)</span></legend>
+        <p class="rationale">Qualitative only — see Phase B report.</p>
+        <textarea class="notes" rows="2" placeholder="Clinician notes (optional)"></textarea>
+      </fieldset>
+    </section>
+
+    <section class="patient" id="p-linda-torres">
+      <h2><span class="num">3.</span> linda-torres</h2>
+      <p class="patient-meta">Source: <code>dev</code> · FHIR: <code>Patient/linda-torres</code></p>
+      
+      <fieldset class="dim" data-patient="linda-torres" data-dim="careGap">
+        <legend>Care Gap</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-pos">Positive — has monitoring gap</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">CKD stage 3 (N18.3) with zero Observations on file, including no eGFR (LOINC 62238-1, the exact renal-function marker this codebase already seeds for maria-chen) — a real, defensible monitoring gap for a CKD patient.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="linda-torres:careGap" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="linda-torres:careGap" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="linda-torres:careGap" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" selected>Positive</option>
+            <option value="false" >Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="linda-torres" data-dim="risk">
+        <legend>Risk</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — low / moderate risk</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Seed riskScore 71 &lt; 75 (just under threshold).</dd>
+          <dt>Agent</dt>
+          <dd class="disagree">Disagrees — predicted &quot;high&quot; (label expected low/moderate)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="linda-torres:risk" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="linda-torres:risk" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="linda-torres:risk" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="linda-torres" data-dim="sdoh">
+        <legend>SDOH</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — no actionable barrier</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">No seeded AHC-HRSN screening or any other SDOH-relevant evidence for this patient.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="linda-torres:sdoh" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="linda-torres:sdoh" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="linda-torres:sdoh" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim qualitative" data-patient="linda-torres" data-dim="actionPlanner">
+        <legend>Action Planner <span class="qual">(qualitative — no ground truth)</span></legend>
+        <p class="rationale">Qualitative only — see Phase B report.</p>
+        <textarea class="notes" rows="2" placeholder="Clinician notes (optional)"></textarea>
+      </fieldset>
+    </section>
+
+    <section class="patient" id="p-robert-kim">
+      <h2><span class="num">4.</span> robert-kim</h2>
+      <p class="patient-meta">Source: <code>dev</code> · FHIR: <code>Patient/robert-kim</code></p>
+      
+      <fieldset class="dim" data-patient="robert-kim" data-dim="careGap">
+        <legend>Care Gap</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-null">Unlabeled — no ground truth</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Acute hip fracture (S72.001A) — not a recurring chronic-monitoring condition with an established Observation convention in this codebase (no bone-density/DEXA marker seeded anywhere). Left unlabeled rather than guessed.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="robert-kim:careGap" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="robert-kim:careGap" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="robert-kim:careGap" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" >Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="robert-kim" data-dim="risk">
+        <legend>Risk</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — low / moderate risk</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Seed riskScore 45 &lt; 75.</dd>
+          <dt>Agent</dt>
+          <dd class="disagree">Disagrees — predicted &quot;high&quot; (label expected low/moderate)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="robert-kim:risk" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="robert-kim:risk" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="robert-kim:risk" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="robert-kim" data-dim="sdoh">
+        <legend>SDOH</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — no actionable barrier</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">No seeded AHC-HRSN screening or any other SDOH-relevant evidence for this patient.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="robert-kim:sdoh" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="robert-kim:sdoh" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="robert-kim:sdoh" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim qualitative" data-patient="robert-kim" data-dim="actionPlanner">
+        <legend>Action Planner <span class="qual">(qualitative — no ground truth)</span></legend>
+        <p class="rationale">Qualitative only — see Phase B report.</p>
+        <textarea class="notes" rows="2" placeholder="Clinician notes (optional)"></textarea>
+      </fieldset>
+    </section>
+
+    <section class="patient" id="p-angela-diaz">
+      <h2><span class="num">5.</span> angela-diaz</h2>
+      <p class="patient-meta">Source: <code>dev</code> · FHIR: <code>Patient/angela-diaz</code></p>
+      
+      <fieldset class="dim" data-patient="angela-diaz" data-dim="careGap">
+        <legend>Care Gap</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-null">Unlabeled — no ground truth</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">HTN (I10) and depression (F33.1) — neither has an established Observation/LOINC monitoring convention anywhere in this codebase (no blood-pressure or PHQ-9-equivalent Observation is ever seeded). Left unlabeled rather than guessed.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="angela-diaz:careGap" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="angela-diaz:careGap" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="angela-diaz:careGap" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" >Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="angela-diaz" data-dim="risk">
+        <legend>Risk</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — low / moderate risk</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Seed riskScore 58 &lt; 75.</dd>
+          <dt>Agent</dt>
+          <dd class="disagree">Disagrees — predicted &quot;high&quot; (label expected low/moderate)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="angela-diaz:risk" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="angela-diaz:risk" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="angela-diaz:risk" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="angela-diaz" data-dim="sdoh">
+        <legend>SDOH</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — no actionable barrier</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">No seeded AHC-HRSN screening or any other SDOH-relevant evidence for this patient.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="angela-diaz:sdoh" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="angela-diaz:sdoh" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="angela-diaz:sdoh" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim qualitative" data-patient="angela-diaz" data-dim="actionPlanner">
+        <legend>Action Planner <span class="qual">(qualitative — no ground truth)</span></legend>
+        <p class="rationale">Qualitative only — see Phase B report.</p>
+        <textarea class="notes" rows="2" placeholder="Clinician notes (optional)"></textarea>
+      </fieldset>
+    </section>
+
+    <section class="patient" id="p-samuel-wright">
+      <h2><span class="num">6.</span> samuel-wright</h2>
+      <p class="patient-meta">Source: <code>dev</code> · FHIR: <code>Patient/samuel-wright</code></p>
+      
+      <fieldset class="dim" data-patient="samuel-wright" data-dim="careGap">
+        <legend>Care Gap</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-pos">Positive — has monitoring gap</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">CHF (I50.9) with zero Observations on file, including no BNP (LOINC 30934-4) — same monitoring-gap logic as maria-chen's CHF dimension, but unmonitored here.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="samuel-wright:careGap" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="samuel-wright:careGap" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="samuel-wright:careGap" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" selected>Positive</option>
+            <option value="false" >Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="samuel-wright" data-dim="risk">
+        <legend>Risk</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-pos">Positive — high / critical risk</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Seed riskScore 79 &gt;= 75.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="samuel-wright:risk" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="samuel-wright:risk" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="samuel-wright:risk" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" selected>Positive</option>
+            <option value="false" >Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="samuel-wright" data-dim="sdoh">
+        <legend>SDOH</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — no actionable barrier</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">No seeded AHC-HRSN screening or any other SDOH-relevant evidence for this patient.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="samuel-wright:sdoh" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="samuel-wright:sdoh" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="samuel-wright:sdoh" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim qualitative" data-patient="samuel-wright" data-dim="actionPlanner">
+        <legend>Action Planner <span class="qual">(qualitative — no ground truth)</span></legend>
+        <p class="rationale">Qualitative only — see Phase B report.</p>
+        <textarea class="notes" rows="2" placeholder="Clinician notes (optional)"></textarea>
+      </fieldset>
+    </section>
+
+    <section class="patient" id="p-pop-0001">
+      <h2><span class="num">7.</span> pop-0001</h2>
+      <p class="patient-meta">Source: <code>dev</code> · FHIR: <code>Patient/pop-0001</code></p>
+      
+      <fieldset class="dim" data-patient="pop-0001" data-dim="careGap">
+        <legend>Care Gap</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-pos">Positive — has monitoring gap</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Procedural patient, condition mix ['diabetes'] (generatePopulation() never seeds any Observation) — no HbA1c on file for a diabetes diagnosis.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0001:careGap" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0001:careGap" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0001:careGap" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" selected>Positive</option>
+            <option value="false" >Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="pop-0001" data-dim="risk">
+        <legend>Risk</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — low / moderate risk</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Generator riskScore 38 &lt; 75 (inspected directly via generatePopulation()[0]).</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0001:risk" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0001:risk" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0001:risk" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="pop-0001" data-dim="sdoh">
+        <legend>SDOH</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — no actionable barrier</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Procedural patients never receive a seeded AHC-HRSN screening or any other SDOH-relevant evidence.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0001:sdoh" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0001:sdoh" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0001:sdoh" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim qualitative" data-patient="pop-0001" data-dim="actionPlanner">
+        <legend>Action Planner <span class="qual">(qualitative — no ground truth)</span></legend>
+        <p class="rationale">Qualitative only — see Phase B report.</p>
+        <textarea class="notes" rows="2" placeholder="Clinician notes (optional)"></textarea>
+      </fieldset>
+    </section>
+
+    <section class="patient" id="p-pop-0002">
+      <h2><span class="num">8.</span> pop-0002</h2>
+      <p class="patient-meta">Source: <code>dev</code> · FHIR: <code>Patient/pop-0002</code></p>
+      
+      <fieldset class="dim" data-patient="pop-0002" data-dim="careGap">
+        <legend>Care Gap</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-pos">Positive — has monitoring gap</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Procedural patient, condition mix ['chf'] — no BNP on file for a CHF diagnosis.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0002:careGap" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0002:careGap" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0002:careGap" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" selected>Positive</option>
+            <option value="false" >Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="pop-0002" data-dim="risk">
+        <legend>Risk</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — low / moderate risk</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Generator riskScore 38 &lt; 75 (inspected directly via generatePopulation()[1]).</dd>
+          <dt>Agent</dt>
+          <dd class="disagree">Disagrees — predicted &quot;high&quot; (label expected low/moderate)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0002:risk" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0002:risk" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0002:risk" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="pop-0002" data-dim="sdoh">
+        <legend>SDOH</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — no actionable barrier</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Procedural patients never receive a seeded AHC-HRSN screening or any other SDOH-relevant evidence.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0002:sdoh" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0002:sdoh" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0002:sdoh" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim qualitative" data-patient="pop-0002" data-dim="actionPlanner">
+        <legend>Action Planner <span class="qual">(qualitative — no ground truth)</span></legend>
+        <p class="rationale">Qualitative only — see Phase B report.</p>
+        <textarea class="notes" rows="2" placeholder="Clinician notes (optional)"></textarea>
+      </fieldset>
+    </section>
+
+    <section class="patient" id="p-pop-0003">
+      <h2><span class="num">9.</span> pop-0003</h2>
+      <p class="patient-meta">Source: <code>dev</code> · FHIR: <code>Patient/pop-0003</code></p>
+      
+      <fieldset class="dim" data-patient="pop-0003" data-dim="careGap">
+        <legend>Care Gap</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-null">Unlabeled — no ground truth</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Procedural patient, condition mix ['depression'] — depression has no established Observation/LOINC monitoring convention anywhere in this codebase. Left unlabeled rather than guessed.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0003:careGap" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0003:careGap" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0003:careGap" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" >Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="pop-0003" data-dim="risk">
+        <legend>Risk</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — low / moderate risk</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Generator riskScore 32 &lt; 75 (inspected directly via generatePopulation()[2]).</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0003:risk" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0003:risk" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0003:risk" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="pop-0003" data-dim="sdoh">
+        <legend>SDOH</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — no actionable barrier</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Procedural patients never receive a seeded AHC-HRSN screening or any other SDOH-relevant evidence.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0003:sdoh" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0003:sdoh" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0003:sdoh" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim qualitative" data-patient="pop-0003" data-dim="actionPlanner">
+        <legend>Action Planner <span class="qual">(qualitative — no ground truth)</span></legend>
+        <p class="rationale">Qualitative only — see Phase B report.</p>
+        <textarea class="notes" rows="2" placeholder="Clinician notes (optional)"></textarea>
+      </fieldset>
+    </section>
+
+    <section class="patient" id="p-pop-0004">
+      <h2><span class="num">10.</span> pop-0004</h2>
+      <p class="patient-meta">Source: <code>dev</code> · FHIR: <code>Patient/pop-0004</code></p>
+      
+      <fieldset class="dim" data-patient="pop-0004" data-dim="careGap">
+        <legend>Care Gap</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-pos">Positive — has monitoring gap</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Procedural patient, condition mix ['diabetes','chf'] — no HbA1c and no BNP on file for either diagnosis.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0004:careGap" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0004:careGap" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0004:careGap" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" selected>Positive</option>
+            <option value="false" >Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="pop-0004" data-dim="risk">
+        <legend>Risk</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — low / moderate risk</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Generator riskScore 66 &lt; 75 (inspected directly via generatePopulation()[3]).</dd>
+          <dt>Agent</dt>
+          <dd class="disagree">Disagrees — predicted &quot;high&quot; (label expected low/moderate)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0004:risk" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0004:risk" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0004:risk" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="pop-0004" data-dim="sdoh">
+        <legend>SDOH</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — no actionable barrier</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Procedural patients never receive a seeded AHC-HRSN screening or any other SDOH-relevant evidence.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0004:sdoh" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0004:sdoh" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0004:sdoh" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim qualitative" data-patient="pop-0004" data-dim="actionPlanner">
+        <legend>Action Planner <span class="qual">(qualitative — no ground truth)</span></legend>
+        <p class="rationale">Qualitative only — see Phase B report.</p>
+        <textarea class="notes" rows="2" placeholder="Clinician notes (optional)"></textarea>
+      </fieldset>
+    </section>
+
+    <section class="patient" id="p-pop-0005">
+      <h2><span class="num">11.</span> pop-0005</h2>
+      <p class="patient-meta">Source: <code>dev</code> · FHIR: <code>Patient/pop-0005</code></p>
+      
+      <fieldset class="dim" data-patient="pop-0005" data-dim="careGap">
+        <legend>Care Gap</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-pos">Positive — has monitoring gap</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Procedural patient, condition mix ['diabetes','depression'] — no HbA1c on file for the diabetes diagnosis (depression itself is left out of the rule, but diabetes alone is enough to label this true).</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0005:careGap" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0005:careGap" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0005:careGap" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" selected>Positive</option>
+            <option value="false" >Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="pop-0005" data-dim="risk">
+        <legend>Risk</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — low / moderate risk</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Generator riskScore 50 &lt; 75 (inspected directly via generatePopulation()[4]).</dd>
+          <dt>Agent</dt>
+          <dd class="disagree">Disagrees — predicted &quot;high&quot; (label expected low/moderate)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0005:risk" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0005:risk" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0005:risk" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="pop-0005" data-dim="sdoh">
+        <legend>SDOH</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — no actionable barrier</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Procedural patients never receive a seeded AHC-HRSN screening or any other SDOH-relevant evidence.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0005:sdoh" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0005:sdoh" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0005:sdoh" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim qualitative" data-patient="pop-0005" data-dim="actionPlanner">
+        <legend>Action Planner <span class="qual">(qualitative — no ground truth)</span></legend>
+        <p class="rationale">Qualitative only — see Phase B report.</p>
+        <textarea class="notes" rows="2" placeholder="Clinician notes (optional)"></textarea>
+      </fieldset>
+    </section>
+
+    <section class="patient" id="p-pop-0006">
+      <h2><span class="num">12.</span> pop-0006</h2>
+      <p class="patient-meta">Source: <code>dev</code> · FHIR: <code>Patient/pop-0006</code></p>
+      
+      <fieldset class="dim" data-patient="pop-0006" data-dim="careGap">
+        <legend>Care Gap</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-pos">Positive — has monitoring gap</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Procedural patient, condition mix ['chf','depression'] — no BNP on file for the CHF diagnosis (depression itself is left out of the rule, but CHF alone is enough to label this true).</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0006:careGap" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0006:careGap" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0006:careGap" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" selected>Positive</option>
+            <option value="false" >Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="pop-0006" data-dim="risk">
+        <legend>Risk</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — low / moderate risk</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Generator riskScore 46 &lt; 75 (inspected directly via generatePopulation()[5]).</dd>
+          <dt>Agent</dt>
+          <dd class="disagree">Disagrees — predicted &quot;high&quot; (label expected low/moderate)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0006:risk" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0006:risk" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0006:risk" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="pop-0006" data-dim="sdoh">
+        <legend>SDOH</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — no actionable barrier</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Procedural patients never receive a seeded AHC-HRSN screening or any other SDOH-relevant evidence.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0006:sdoh" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0006:sdoh" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0006:sdoh" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim qualitative" data-patient="pop-0006" data-dim="actionPlanner">
+        <legend>Action Planner <span class="qual">(qualitative — no ground truth)</span></legend>
+        <p class="rationale">Qualitative only — see Phase B report.</p>
+        <textarea class="notes" rows="2" placeholder="Clinician notes (optional)"></textarea>
+      </fieldset>
+    </section>
+
+    <section class="patient" id="p-pop-0007">
+      <h2><span class="num">13.</span> pop-0007</h2>
+      <p class="patient-meta">Source: <code>dev</code> · FHIR: <code>Patient/pop-0007</code></p>
+      
+      <fieldset class="dim" data-patient="pop-0007" data-dim="careGap">
+        <legend>Care Gap</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-pos">Positive — has monitoring gap</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Procedural patient, condition mix ['diabetes','chf','depression'] — no HbA1c and no BNP on file for either classifiable diagnosis.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0007:careGap" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0007:careGap" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0007:careGap" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" selected>Positive</option>
+            <option value="false" >Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="pop-0007" data-dim="risk">
+        <legend>Risk</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-pos">Positive — high / critical risk</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Generator riskScore 92 &gt;= 75 (inspected directly via generatePopulation()[6]) — full three-condition comorbidity plus a recent (60h) discharge.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0007:risk" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0007:risk" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0007:risk" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" selected>Positive</option>
+            <option value="false" >Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="pop-0007" data-dim="sdoh">
+        <legend>SDOH</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — no actionable barrier</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Procedural patients never receive a seeded AHC-HRSN screening or any other SDOH-relevant evidence.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0007:sdoh" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0007:sdoh" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0007:sdoh" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim qualitative" data-patient="pop-0007" data-dim="actionPlanner">
+        <legend>Action Planner <span class="qual">(qualitative — no ground truth)</span></legend>
+        <p class="rationale">Qualitative only — see Phase B report.</p>
+        <textarea class="notes" rows="2" placeholder="Clinician notes (optional)"></textarea>
+      </fieldset>
+    </section>
+
+    <section class="patient" id="p-pop-0008">
+      <h2><span class="num">14.</span> pop-0008</h2>
+      <p class="patient-meta">Source: <code>dev</code> · FHIR: <code>Patient/pop-0008</code></p>
+      
+      <fieldset class="dim" data-patient="pop-0008" data-dim="careGap">
+        <legend>Care Gap</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-pos">Positive — has monitoring gap</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Procedural patient, condition mix ['diabetes'] — no HbA1c on file for the diabetes diagnosis.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0008:careGap" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0008:careGap" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0008:careGap" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" selected>Positive</option>
+            <option value="false" >Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="pop-0008" data-dim="risk">
+        <legend>Risk</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — low / moderate risk</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Generator riskScore 32 &lt; 75 (inspected directly via generatePopulation()[7]).</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0008:risk" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0008:risk" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0008:risk" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="pop-0008" data-dim="sdoh">
+        <legend>SDOH</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — no actionable barrier</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Procedural patients never receive a seeded AHC-HRSN screening or any other SDOH-relevant evidence.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0008:sdoh" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0008:sdoh" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0008:sdoh" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim qualitative" data-patient="pop-0008" data-dim="actionPlanner">
+        <legend>Action Planner <span class="qual">(qualitative — no ground truth)</span></legend>
+        <p class="rationale">Qualitative only — see Phase B report.</p>
+        <textarea class="notes" rows="2" placeholder="Clinician notes (optional)"></textarea>
+      </fieldset>
+    </section>
+
+    <section class="patient" id="p-pop-0009">
+      <h2><span class="num">15.</span> pop-0009</h2>
+      <p class="patient-meta">Source: <code>dev</code> · FHIR: <code>Patient/pop-0009</code></p>
+      
+      <fieldset class="dim" data-patient="pop-0009" data-dim="careGap">
+        <legend>Care Gap</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-pos">Positive — has monitoring gap</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Procedural patient, condition mix ['chf'] — no BNP on file for the CHF diagnosis.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0009:careGap" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0009:careGap" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0009:careGap" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" selected>Positive</option>
+            <option value="false" >Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="pop-0009" data-dim="risk">
+        <legend>Risk</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — low / moderate risk</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Generator riskScore 48 &lt; 75 (inspected directly via generatePopulation()[8]).</dd>
+          <dt>Agent</dt>
+          <dd class="disagree">Disagrees — predicted &quot;high&quot; (label expected low/moderate)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0009:risk" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0009:risk" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0009:risk" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="pop-0009" data-dim="sdoh">
+        <legend>SDOH</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — no actionable barrier</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Procedural patients never receive a seeded AHC-HRSN screening or any other SDOH-relevant evidence.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0009:sdoh" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0009:sdoh" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0009:sdoh" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim qualitative" data-patient="pop-0009" data-dim="actionPlanner">
+        <legend>Action Planner <span class="qual">(qualitative — no ground truth)</span></legend>
+        <p class="rationale">Qualitative only — see Phase B report.</p>
+        <textarea class="notes" rows="2" placeholder="Clinician notes (optional)"></textarea>
+      </fieldset>
+    </section>
+
+    <section class="patient" id="p-pop-0010">
+      <h2><span class="num">16.</span> pop-0010</h2>
+      <p class="patient-meta">Source: <code>dev</code> · FHIR: <code>Patient/pop-0010</code></p>
+      
+      <fieldset class="dim" data-patient="pop-0010" data-dim="careGap">
+        <legend>Care Gap</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-null">Unlabeled — no ground truth</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Procedural patient, condition mix ['depression'] — depression has no established Observation/LOINC monitoring convention anywhere in this codebase. Left unlabeled rather than guessed.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0010:careGap" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0010:careGap" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0010:careGap" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" >Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="pop-0010" data-dim="risk">
+        <legend>Risk</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — low / moderate risk</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Generator riskScore 28 &lt; 75 (inspected directly via generatePopulation()[9]).</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0010:risk" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0010:risk" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0010:risk" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim" data-patient="pop-0010" data-dim="sdoh">
+        <legend>SDOH</legend>
+        <dl>
+          <dt>Expected</dt>
+          <dd><span class="tag tag-neg">Negative — no actionable barrier</span></dd>
+          <dt>Rationale</dt>
+          <dd class="rationale">Procedural patients never receive a seeded AHC-HRSN screening or any other SDOH-relevant evidence.</dd>
+          <dt>Agent</dt>
+          <dd class="agree">Agrees with label (not in eval-report error analysis)</dd>
+        </dl>
+        <div class="form-row">
+          <label class="radio"><input type="radio" name="pop-0010:sdoh" value="endorse" checked> Endorse</label>
+          <label class="radio"><input type="radio" name="pop-0010:sdoh" value="override"> Override</label>
+          <label class="radio"><input type="radio" name="pop-0010:sdoh" value="abstain"> Abstain</label>
+          <select class="override-value" disabled aria-label="Override value">
+            <option value="">— new value —</option>
+            <option value="true" >Positive</option>
+            <option value="false" selected>Negative</option>
+            <option value="null" >Unlabeled</option>
+          </select>
+          <textarea class="notes" rows="2" placeholder="Notes (optional)"></textarea>
+        </div>
+      </fieldset>
+      
+      <fieldset class="dim qualitative" data-patient="pop-0010" data-dim="actionPlanner">
+        <legend>Action Planner <span class="qual">(qualitative — no ground truth)</span></legend>
+        <p class="rationale">Qualitative only — see Phase B report.</p>
+        <textarea class="notes" rows="2" placeholder="Clinician notes (optional)"></textarea>
+      </fieldset>
+    </section>
+  </main>
+  <footer>
+    <button id="download" type="button">Download Reviewed Labels</button>
+    <p class="hint">Downloads <code>labels.clinician-review.json</code>. Touched rows have <code>source: "clinician"</code> and an <code>override*</code> field; untouched rows are passed through unchanged. Send the file to the team to apply.</p>
+    <p class="hint danger"><strong>Heads up:</strong> drafts live in this browser's localStorage only. Clearing browser data loses unsaved work — download before closing the tab.</p>
+  </footer>
+  <script type="application/json" id="labels-data">{"patients":[{"patientId":"maria-chen","source":"dev","clinicianOverride":null,"careGap":{"expectedHasGap":false,"notes":"Diabetes (E11.9) has Observation/maria-chen-hba1c on file; CHF (I50.9) has Observation/maria-chen-bnp on file — both the conditions this dataset's Observation coding actually covers are monitored. Her depression (F33.1) has no corresponding Observation type established anywhere in this codebase, so that dimension is intentionally left out of this boolean rather than guessed at."},"risk":{"expectedHighRisk":true,"seedRiskScore":87,"notes":"Seed riskScore 87 >= 75 (CRITICAL_RISK_THRESHOLD). Independently plausible from her raw data: CHF admission 48h ago, BNP 340 (elevated), HbA1c 8.9% (poorly controlled), eGFR 52 (reduced), K+ 3.4 (low) — a clinically high-risk 30-day-readmission profile."},"sdoh":{"expectedHasBarrier":true,"expectedDomains":["housing","food"],"notes":"Observation/maria-chen-sdoh: AHC-HRSN screening positive for housing instability and food insecurity."},"actionPlanner":{"notes":"Qualitative only — see Phase B report."}},{"patientId":"james-okafor","source":"dev","clinicianOverride":null,"careGap":{"expectedHasGap":null,"notes":"COPD (J44.9) only. No spirometry/pulmonary-function Observation convention exists anywhere in this codebase to judge monitoring adequacy against — left unlabeled rather than guessed."},"risk":{"expectedHighRisk":false,"seedRiskScore":62,"notes":"Seed riskScore 62 \u003c 75."},"sdoh":{"expectedHasBarrier":false,"notes":"No seeded AHC-HRSN screening or any other SDOH-relevant evidence for this patient."},"actionPlanner":{"notes":"Qualitative only — see Phase B report."}},{"patientId":"linda-torres","source":"dev","clinicianOverride":null,"careGap":{"expectedHasGap":true,"notes":"CKD stage 3 (N18.3) with zero Observations on file, including no eGFR (LOINC 62238-1, the exact renal-function marker this codebase already seeds for maria-chen) — a real, defensible monitoring gap for a CKD patient."},"risk":{"expectedHighRisk":false,"seedRiskScore":71,"notes":"Seed riskScore 71 \u003c 75 (just under threshold)."},"sdoh":{"expectedHasBarrier":false,"notes":"No seeded AHC-HRSN screening or any other SDOH-relevant evidence for this patient."},"actionPlanner":{"notes":"Qualitative only — see Phase B report."}},{"patientId":"robert-kim","source":"dev","clinicianOverride":null,"careGap":{"expectedHasGap":null,"notes":"Acute hip fracture (S72.001A) — not a recurring chronic-monitoring condition with an established Observation convention in this codebase (no bone-density/DEXA marker seeded anywhere). Left unlabeled rather than guessed."},"risk":{"expectedHighRisk":false,"seedRiskScore":45,"notes":"Seed riskScore 45 \u003c 75."},"sdoh":{"expectedHasBarrier":false,"notes":"No seeded AHC-HRSN screening or any other SDOH-relevant evidence for this patient."},"actionPlanner":{"notes":"Qualitative only — see Phase B report."}},{"patientId":"angela-diaz","source":"dev","clinicianOverride":null,"careGap":{"expectedHasGap":null,"notes":"HTN (I10) and depression (F33.1) — neither has an established Observation/LOINC monitoring convention anywhere in this codebase (no blood-pressure or PHQ-9-equivalent Observation is ever seeded). Left unlabeled rather than guessed."},"risk":{"expectedHighRisk":false,"seedRiskScore":58,"notes":"Seed riskScore 58 \u003c 75."},"sdoh":{"expectedHasBarrier":false,"notes":"No seeded AHC-HRSN screening or any other SDOH-relevant evidence for this patient."},"actionPlanner":{"notes":"Qualitative only — see Phase B report."}},{"patientId":"samuel-wright","source":"dev","clinicianOverride":null,"careGap":{"expectedHasGap":true,"notes":"CHF (I50.9) with zero Observations on file, including no BNP (LOINC 30934-4) — same monitoring-gap logic as maria-chen's CHF dimension, but unmonitored here."},"risk":{"expectedHighRisk":true,"seedRiskScore":79,"notes":"Seed riskScore 79 >= 75."},"sdoh":{"expectedHasBarrier":false,"notes":"No seeded AHC-HRSN screening or any other SDOH-relevant evidence for this patient."},"actionPlanner":{"notes":"Qualitative only — see Phase B report."}},{"patientId":"pop-0001","source":"dev","clinicianOverride":null,"careGap":{"expectedHasGap":true,"notes":"Procedural patient, condition mix ['diabetes'] (generatePopulation() never seeds any Observation) — no HbA1c on file for a diabetes diagnosis."},"risk":{"expectedHighRisk":false,"seedRiskScore":38,"notes":"Generator riskScore 38 \u003c 75 (inspected directly via generatePopulation()[0])."},"sdoh":{"expectedHasBarrier":false,"notes":"Procedural patients never receive a seeded AHC-HRSN screening or any other SDOH-relevant evidence."},"actionPlanner":{"notes":"Qualitative only — see Phase B report."}},{"patientId":"pop-0002","source":"dev","clinicianOverride":null,"careGap":{"expectedHasGap":true,"notes":"Procedural patient, condition mix ['chf'] — no BNP on file for a CHF diagnosis."},"risk":{"expectedHighRisk":false,"seedRiskScore":38,"notes":"Generator riskScore 38 \u003c 75 (inspected directly via generatePopulation()[1])."},"sdoh":{"expectedHasBarrier":false,"notes":"Procedural patients never receive a seeded AHC-HRSN screening or any other SDOH-relevant evidence."},"actionPlanner":{"notes":"Qualitative only — see Phase B report."}},{"patientId":"pop-0003","source":"dev","clinicianOverride":null,"careGap":{"expectedHasGap":null,"notes":"Procedural patient, condition mix ['depression'] — depression has no established Observation/LOINC monitoring convention anywhere in this codebase. Left unlabeled rather than guessed."},"risk":{"expectedHighRisk":false,"seedRiskScore":32,"notes":"Generator riskScore 32 \u003c 75 (inspected directly via generatePopulation()[2])."},"sdoh":{"expectedHasBarrier":false,"notes":"Procedural patients never receive a seeded AHC-HRSN screening or any other SDOH-relevant evidence."},"actionPlanner":{"notes":"Qualitative only — see Phase B report."}},{"patientId":"pop-0004","source":"dev","clinicianOverride":null,"careGap":{"expectedHasGap":true,"notes":"Procedural patient, condition mix ['diabetes','chf'] — no HbA1c and no BNP on file for either diagnosis."},"risk":{"expectedHighRisk":false,"seedRiskScore":66,"notes":"Generator riskScore 66 \u003c 75 (inspected directly via generatePopulation()[3])."},"sdoh":{"expectedHasBarrier":false,"notes":"Procedural patients never receive a seeded AHC-HRSN screening or any other SDOH-relevant evidence."},"actionPlanner":{"notes":"Qualitative only — see Phase B report."}},{"patientId":"pop-0005","source":"dev","clinicianOverride":null,"careGap":{"expectedHasGap":true,"notes":"Procedural patient, condition mix ['diabetes','depression'] — no HbA1c on file for the diabetes diagnosis (depression itself is left out of the rule, but diabetes alone is enough to label this true)."},"risk":{"expectedHighRisk":false,"seedRiskScore":50,"notes":"Generator riskScore 50 \u003c 75 (inspected directly via generatePopulation()[4])."},"sdoh":{"expectedHasBarrier":false,"notes":"Procedural patients never receive a seeded AHC-HRSN screening or any other SDOH-relevant evidence."},"actionPlanner":{"notes":"Qualitative only — see Phase B report."}},{"patientId":"pop-0006","source":"dev","clinicianOverride":null,"careGap":{"expectedHasGap":true,"notes":"Procedural patient, condition mix ['chf','depression'] — no BNP on file for the CHF diagnosis (depression itself is left out of the rule, but CHF alone is enough to label this true)."},"risk":{"expectedHighRisk":false,"seedRiskScore":46,"notes":"Generator riskScore 46 \u003c 75 (inspected directly via generatePopulation()[5])."},"sdoh":{"expectedHasBarrier":false,"notes":"Procedural patients never receive a seeded AHC-HRSN screening or any other SDOH-relevant evidence."},"actionPlanner":{"notes":"Qualitative only — see Phase B report."}},{"patientId":"pop-0007","source":"dev","clinicianOverride":null,"careGap":{"expectedHasGap":true,"notes":"Procedural patient, condition mix ['diabetes','chf','depression'] — no HbA1c and no BNP on file for either classifiable diagnosis."},"risk":{"expectedHighRisk":true,"seedRiskScore":92,"notes":"Generator riskScore 92 >= 75 (inspected directly via generatePopulation()[6]) — full three-condition comorbidity plus a recent (60h) discharge."},"sdoh":{"expectedHasBarrier":false,"notes":"Procedural patients never receive a seeded AHC-HRSN screening or any other SDOH-relevant evidence."},"actionPlanner":{"notes":"Qualitative only — see Phase B report."}},{"patientId":"pop-0008","source":"dev","clinicianOverride":null,"careGap":{"expectedHasGap":true,"notes":"Procedural patient, condition mix ['diabetes'] — no HbA1c on file for the diabetes diagnosis."},"risk":{"expectedHighRisk":false,"seedRiskScore":32,"notes":"Generator riskScore 32 \u003c 75 (inspected directly via generatePopulation()[7])."},"sdoh":{"expectedHasBarrier":false,"notes":"Procedural patients never receive a seeded AHC-HRSN screening or any other SDOH-relevant evidence."},"actionPlanner":{"notes":"Qualitative only — see Phase B report."}},{"patientId":"pop-0009","source":"dev","clinicianOverride":null,"careGap":{"expectedHasGap":true,"notes":"Procedural patient, condition mix ['chf'] — no BNP on file for the CHF diagnosis."},"risk":{"expectedHighRisk":false,"seedRiskScore":48,"notes":"Generator riskScore 48 \u003c 75 (inspected directly via generatePopulation()[8])."},"sdoh":{"expectedHasBarrier":false,"notes":"Procedural patients never receive a seeded AHC-HRSN screening or any other SDOH-relevant evidence."},"actionPlanner":{"notes":"Qualitative only — see Phase B report."}},{"patientId":"pop-0010","source":"dev","clinicianOverride":null,"careGap":{"expectedHasGap":null,"notes":"Procedural patient, condition mix ['depression'] — depression has no established Observation/LOINC monitoring convention anywhere in this codebase. Left unlabeled rather than guessed."},"risk":{"expectedHighRisk":false,"seedRiskScore":28,"notes":"Generator riskScore 28 \u003c 75 (inspected directly via generatePopulation()[9])."},"sdoh":{"expectedHasBarrier":false,"notes":"Procedural patients never receive a seeded AHC-HRSN screening or any other SDOH-relevant evidence."},"actionPlanner":{"notes":"Qualitative only — see Phase B report."}}]}</script>
+  <script>
+(function() {
+  var STORAGE_KEY = 'caresync-clinician-review-draft-v1';
+  var labelsDataNode = document.getElementById('labels-data');
+  var LABELS = JSON.parse(labelsDataNode.textContent);
+
+  function $$(s, root) { return Array.prototype.slice.call((root || document).querySelectorAll(s)); }
+
+  function getState() {
+    var state = { reviewer: document.getElementById('reviewer').value, patients: {} };
+    $$('.patient').forEach(function(section) {
+      var pid = section.id.replace('p-', '');
+      var patient = { careGap: {}, risk: {}, sdoh: {}, actionPlanner: {} };
+      ['careGap', 'risk', 'sdoh'].forEach(function(dim) {
+        var fs = section.querySelector('fieldset[data-dim="' + dim + '"]');
+        if (!fs) return;
+        var radio = fs.querySelector('input[type=radio]:checked');
+        var sel = fs.querySelector('select.override-value');
+        var ta = fs.querySelector('textarea.notes');
+        patient[dim] = {
+          choice: radio ? radio.value : null,
+          overrideValue: sel && !sel.disabled ? (sel.value || null) : null,
+          notes: ta ? ta.value : ''
+        };
+      });
+      var apFs = section.querySelector('fieldset[data-dim="actionPlanner"]');
+      if (apFs) { var apTa = apFs.querySelector('textarea.notes'); patient.actionPlanner = { notes: apTa ? apTa.value : '' }; }
+      state.patients[pid] = patient;
+    });
+    return state;
+  }
+
+  function save() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(getState())); } catch (e) { /* quota / private mode */ }
+  }
+
+  function updateSelectEnabled(fs) {
+    var radio = fs.querySelector('input[type=radio]:checked');
+    var sel = fs.querySelector('select.override-value');
+    if (sel) sel.disabled = !(radio && radio.value === 'override');
+  }
+
+  function applyState(state) {
+    if (!state) return;
+    if (state.reviewer) document.getElementById('reviewer').value = state.reviewer;
+    Object.keys(state.patients || {}).forEach(function(pid) {
+      var section = document.getElementById('p-' + pid);
+      if (!section) return;
+      var patient = state.patients[pid];
+      ['careGap', 'risk', 'sdoh'].forEach(function(dim) {
+        var data = patient[dim];
+        if (!data) return;
+        var fs = section.querySelector('fieldset[data-dim="' + dim + '"]');
+        if (!fs) return;
+        if (data.choice) {
+          var radio = fs.querySelector('input[type=radio][value="' + data.choice + '"]');
+          if (radio) { radio.checked = true; updateSelectEnabled(fs); }
+        }
+        if (data.overrideValue) {
+          var sel = fs.querySelector('select.override-value');
+          if (sel) sel.value = data.overrideValue;
+        }
+        var ta = fs.querySelector('textarea.notes');
+        if (ta && data.notes) ta.value = data.notes;
+      });
+      if (patient.actionPlanner && patient.actionPlanner.notes) {
+        var apFs = section.querySelector('fieldset[data-dim="actionPlanner"]');
+        if (apFs) { var apTa = apFs.querySelector('textarea.notes'); if (apTa) apTa.value = patient.actionPlanner.notes; }
+      }
+    });
+  }
+
+  function toOverride(field, defaultVal, review) {
+    var dimReview = (review && review[field]) || {};
+    if (dimReview.choice === 'override' && dimReview.overrideValue) {
+      var v = dimReview.overrideValue;
+      return v === 'true' ? true : v === 'false' ? false : null;
+    }
+    return defaultVal;
+  }
+
+  function buildOutput() {
+    var state = getState();
+    var now = new Date().toISOString();
+    var patients = LABELS.patients.map(function(label) {
+      var review = state.patients[label.patientId] || {};
+      return {
+        patientId: label.patientId,
+        originalSource: label.source,
+        source: 'clinician',
+        reviewedAt: now,
+        careGap: {
+          endorsed: review.careGap && review.careGap.choice === 'endorse',
+          abstained: review.careGap && review.careGap.choice === 'abstain',
+          overrideExpectedHasGap: toOverride('careGap', label.careGap.expectedHasGap, review),
+          notes: (review.careGap && review.careGap.notes) || ''
+        },
+        risk: {
+          endorsed: review.risk && review.risk.choice === 'endorse',
+          abstained: review.risk && review.risk.choice === 'abstain',
+          overrideExpectedHighRisk: toOverride('risk', label.risk.expectedHighRisk, review),
+          notes: (review.risk && review.risk.notes) || ''
+        },
+        sdoh: {
+          endorsed: review.sdoh && review.sdoh.choice === 'endorse',
+          abstained: review.sdoh && review.sdoh.choice === 'abstain',
+          overrideExpectedHasBarrier: toOverride('sdoh', label.sdoh.expectedHasBarrier, review),
+          notes: (review.sdoh && review.sdoh.notes) || ''
+        },
+        actionPlanner: {
+          notes: (review.actionPlanner && review.actionPlanner.notes) || ''
+        }
+      };
+    });
+    return {
+      reviewer: state.reviewer || 'anonymous',
+      reviewedAt: now,
+      source: 'caresync-eval-clinician-review-v1',
+      labelsFile: 'data/eval/labels.json',
+      evalReportFile: 'docs/eval-report.json',
+      patients: patients
+    };
+  }
+
+  function download() {
+    var out = buildOutput();
+    var blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'labels.clinician-review.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  document.addEventListener('change', function(e) {
+    var t = e.target;
+    if (t.matches && t.matches('input[type=radio]')) {
+      updateSelectEnabled(t.closest('fieldset'));
+    }
+    save();
+  });
+  document.addEventListener('input', function(e) {
+    if (e.target.matches && e.target.matches('input, textarea, select')) save();
+  });
+  document.getElementById('download').addEventListener('click', download);
+
+  try {
+    var draft = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+    if (draft) applyState(draft);
+  } catch (e) { /* corrupted draft, ignore */ }
+})();
+</script>
+</body>
+</html>

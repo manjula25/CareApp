@@ -11,6 +11,7 @@
     "lint": "eslint src",
     "import": "tsx src/scripts/import-fhir.ts",
     "eval": "tsx src/scripts/eval.ts",
+    "review:render": "tsx src/scripts/render-clinician-review.ts",
     "migrate": "tsx src/scripts/migrate.ts",
     "seed": "tsx src/db/seed.ts"
   },
