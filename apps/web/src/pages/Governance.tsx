@@ -5,6 +5,7 @@ import { averageConfidence } from '../lib/confidenceChartGeometry';
 import { buildParityAxes } from '../lib/parityScore';
 import { ConfidenceChart } from '../components/ConfidenceChart';
 import { ParityRadarChart } from '../components/ParityRadarChart';
+import { StatTile } from '../components/StatTile';
 
 /**
  * W06 AI Governance Center (S8 Phase B) — real S8 A1-A3 aggregates rendered
@@ -75,22 +76,6 @@ const AUDIT_PAGE_LIMIT = 20;
 // service's own doc comment calls out, so it doubles as this tile's
 // "Flagged for Review" definition (a real count, not a fabricated one).
 const LOWEST_CONFIDENCE_BUCKET = '0-0.5';
-
-function Tile({ value, label, note, valueClassName = 'text-cyan', testId }: {
-  value: string;
-  label: string;
-  note?: string;
-  valueClassName?: string;
-  testId?: string;
-}) {
-  return (
-    <div className="bg-surface border border-border rounded-card px-3.5 py-2.5 flex flex-col justify-center gap-0.5 min-w-0" data-testid={testId}>
-      <span className="text-xs font-semibold uppercase tracking-wide text-text-muted truncate">{label}</span>
-      <span className={`text-title font-bold font-mono leading-tight ${valueClassName}`}>{value}</span>
-      {note && <span className="text-xs text-text-dim truncate">{note}</span>}
-    </div>
-  );
-}
 
 function GroupStatTable({ title, groups }: { title: string; groups: { group: string; patientCount: number; avgRiskScore: number }[] }) {
   return (
@@ -169,22 +154,22 @@ export function Governance() {
 
           {/* ZONE 2 · metric tiles */}
           <section className="grid grid-cols-4 gap-2.5">
-            <Tile testId="governance-tile-analyses-cached" label="Analyses Cached" value={String(model.analyses.length)} valueClassName="text-cyan" />
-            <Tile
+            <StatTile testId="governance-tile-analyses-cached" label="Analyses Cached" value={String(model.analyses.length)} valueClassName="text-cyan" />
+            <StatTile
               testId="governance-tile-confidence-avg"
               label="Model Confidence (avg)"
               value={avgConfidence === undefined ? '—' : `${Math.round(avgConfidence * 100)}%`}
               valueClassName="text-cyan"
               note={avgConfidence === undefined ? 'No confidence values reported yet' : undefined}
             />
-            <Tile
+            <StatTile
               testId="governance-tile-flagged"
               label="Flagged for Review"
               value={String(flaggedCount)}
               valueClassName="text-amber"
               note="Findings below 50% confidence"
             />
-            <Tile
+            <StatTile
               testId="governance-tile-parity-avg"
               label="Parity (avg of 4 derived scores)"
               value={avgParity === undefined ? '—' : avgParity.toFixed(2)}

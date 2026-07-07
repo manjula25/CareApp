@@ -7,7 +7,10 @@ import { createPatientsRouter } from './routes/patients';
 import { createAnalysisRouter } from './routes/analysis';
 import { createPopulationRouter } from './routes/population';
 import { createGovernanceRouter } from './routes/governance';
+import { createQualityRouter } from './routes/quality';
+import { createTeamRouter } from './routes/team';
 import { createTasksRouter } from './routes/tasks';
+import { createSdohRouter } from './routes/sdoh';
 import { createEventsRouter, createSubscriptionWebhookRouter } from './routes/events';
 import { createEventHub } from './routes/eventHub';
 import { createCdsHooksRouter } from './routes/cdsHooks';
@@ -65,6 +68,12 @@ if (require.main === module) {
   app.use('/api/governance', createGovernanceRouter(fhirService, db));
   // S6 A1 — Director-scoped Task assignment.
   app.use('/api/tasks', createTasksRouter(fhirService));
+  // S11 A1 — SDOH community resource directory + audited referral (M05).
+  app.use('/api/sdoh', createSdohRouter(fhirService));
+  // S11 A2 — Director-only Quality/HEDIS measure aggregate (W05/W07).
+  app.use('/api/quality', createQualityRouter(fhirService, db));
+  // S11 A3 — Director-only team performance aggregate (W04).
+  app.use('/api/team', createTeamRouter(fhirService, db));
   // S6 A3 — the client relay (`/api/events`) and HAPI's webhook target
   // (`/api/fhir/subscription-hook`) share one in-process hub instance.
   const eventHub = createEventHub();

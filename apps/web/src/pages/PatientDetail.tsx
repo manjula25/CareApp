@@ -279,9 +279,19 @@ export function PatientDetail() {
 
   return (
     <div>
-      <Link to="/panel" className="text-label text-cyan hover:underline">
-        ← My Patient Panel
-      </Link>
+      <div className="flex items-center justify-between">
+        <Link to="/panel" className="text-label text-cyan hover:underline">
+          ← My Patient Panel
+        </Link>
+        {/* S11 A1 — M05 entry point: SDOH is patient-scoped (no "current
+            patient" in global nav context — see App.tsx's route table), so
+            it's reached from here rather than a top-level AppShell link. */}
+        {id && (
+          <Link to={`/patients/${id}/sdoh`} className="text-label text-cyan hover:underline">
+            SDOH Resources →
+          </Link>
+        )}
+      </div>
 
       {isLoading && <p className="text-body text-text-muted mt-4">Loading patient…</p>}
       {isError && <p className="text-body text-red mt-4">{(error as Error).message}</p>}

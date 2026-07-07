@@ -103,6 +103,18 @@ export interface TaskDetail extends TaskListEntry {
   patientPhone?: string;
 }
 
+// S11 A3 — the coarse status/owner-only shape `getTaskOwnershipSummary`
+// returns for the team performance aggregate (W04). Deliberately NOT a
+// TaskSummary/TaskListEntry extension: `status` here is the raw FHIR value
+// (e.g. 'requested'/'completed'/'on-hold'), not `displayStatus()`'s mapped
+// label, and no title/domain/patient fields are exposed — team/service.ts's
+// aggregation only needs "whose is it, is it done."
+export interface TaskOwnershipEntry {
+  taskId: string;
+  status: string;
+  ownerCoordinatorId?: string;
+}
+
 const FHIR_PRIORITY_TO_DISPLAY: Record<string, TaskPriority> = {
   stat: 'critical',
   urgent: 'high',
@@ -123,6 +135,11 @@ const ACTION_PLANNER_PRIORITY_TO_FHIR: Record<string, string> = {
 // Every CareSync-authored Task carries this tag so replacePatientTasks can
 // scope deletes to exactly the Tasks it created, never a seed/Synthea Task.
 const CARESYNC_TASK_TAG = { system: 'https://caresync.demo/fhir/tags', code: 'ai-generated-task' } as const;
+
+// S11 A1 — same tagging convention as CARESYNC_TASK_TAG (same `system`,
+// distinct `code`), so a CareSync-authored SDOH referral ServiceRequest is
+// identifiable in HAPI the same way an AI-generated Task is.
+const CARESYNC_REFERRAL_TAG = { system: 'https://caresync.demo/fhir/tags', code: 'ai-generated-referral' } as const;
 
 // S7 A0 — coding system for the meta.tag that records a Task's care domain
 // ('clinical' | 'sdoh'). Stored as a second `meta.tag` coding (a distinct
@@ -539,6 +556,56 @@ export class FhirReadService {
   }
 
   /**
+   * S11 A3 — team performance aggregate (W04). Reuses `listTasks`'s exact
+   * discovery pattern (Group/COORDINATOR_PANEL_GROUP_ID member patient IDs ->
+   * Promise.all $everything bundles -> flatMap Task resources) but returns a
+   * coarser, status/owner-only shape: the raw FHIR `status` (not
+   * `displayStatus()`'s mapped label — team/service.ts needs to distinguish
+   * 'completed' from every other status, which a "Done"/"Open" label would
+   * lose) and `ownerCoordinatorId` (the app `users.id` behind
+   * `task.owner.identifier`, same logical reference `assignTask` writes — see
+   * COORDINATOR_OWNER_IDENTIFIER_SYSTEM's doc above).
+   *
+   * A single `guard(actor, 'clinical', ...)` call (not a per-task domain
+   * filter like `listTasks` above) is the right granularity here: this
+   * summary never exposes a task's title or domain, only status + owner, so
+   * there's nothing for a per-task visibility filter to protect — a coarse
+   * clinical-scope gate is enough. Director-only enforcement itself is a
+   * separate, stricter check the caller (team/service.ts's `assertDirector`)
+   * applies before this method ever runs, matching population/service.ts's
+   * own two-layer precedent (`getPopulationRiskProfile` above also guards
+   * `'clinical'` while its caller separately enforces Director-only).
+   *
+   * Audited once for the whole read, matching `listTasks`'s own audit-once
+   * convention.
+   */
+  async getTaskOwnershipSummary(actor: AuthTokenPayload): Promise<TaskOwnershipEntry[]> {
+    const resource = 'Population/team-performance';
+    this.guard(actor, 'clinical', resource);
+
+    const group = await this.fhirFetch<any>(`/Group/${COORDINATOR_PANEL_GROUP_ID}`);
+    const patientIds: string[] = (group.member ?? []).map((m: any) => m.entity.reference.split('/')[1]);
+
+    const perPatientBundles = await Promise.all(
+      patientIds.map((id) => this.fhirFetch<FhirBundle<any>>(`/Patient/${id}/$everything`))
+    );
+    writeAudit(this.db, { actor: actor.id, action: 'read', fhirResource: resource, outcome: 'success' });
+
+    return perPatientBundles.flatMap((bundle) =>
+      (bundle.entry ?? [])
+        .filter((e) => e.resource.resourceType === 'Task')
+        .map((e) => ({
+          taskId: e.resource.id,
+          status: e.resource.status,
+          ownerCoordinatorId:
+            e.resource.owner?.identifier?.system === COORDINATOR_OWNER_IDENTIFIER_SYSTEM
+              ? e.resource.owner?.identifier?.value
+              : undefined,
+        }))
+    );
+  }
+
+  /**
    * S5 A2 — one bulk read backing both population dashboard endpoints
    * (scatter + summary). Two `_count`-bounded searches (RiskAssessment,
    * Encounter — no per-patient round trips) joined client-side on
@@ -579,6 +646,37 @@ export class FhirReadService {
         return { patientId, riskScore, hoursSinceEncounter };
       })
       .filter((p): p is PopulationRiskProfile => p !== undefined);
+  }
+
+  /**
+   * S11 A2 — bulk count of resources matching a single `system|code` search,
+   * backing the real HEDIS diabetes/HbA1c measure (quality/service.ts's
+   * getDiabetesHba1cMeasure). Uses `_summary=count` rather than
+   * `fetchPages`/`_count=N` above: the caller only ever needs the total, so
+   * fetching (and paginating through) every matching resource body would be
+   * pure waste for what's ultimately a single number. HAPI's `_summary=count`
+   * response is a Bundle with `total` set and no `entry` array, which is why
+   * this goes through `fhirFetch` directly instead of `fetchPages` (which
+   * assumes a paginated `entry` list and would see none here).
+   */
+  async getResourceCountByCode(
+    actor: AuthTokenPayload,
+    resourceType: 'Condition' | 'Observation',
+    system: string,
+    code: string
+  ): Promise<number> {
+    // The whole `system|code` token (not just `system`) must be percent-
+    // encoded, including the `|` itself as `%7C` — confirmed by direct probe
+    // against the local HAPI (7.2.0): a literal, unencoded `|` in the query
+    // string 400s, even though curl's own copy-paste-friendly example in the
+    // task brief (`code=http://hl7.org/...|E11.9`) looks unencoded.
+    const tokenParam = encodeURIComponent(`${system}|${code}`);
+    const resource = `${resourceType}?code=${tokenParam}`;
+    this.guard(actor, 'clinical', resource);
+
+    const bundle = await this.fhirFetch<{ total?: number }>(`/${resourceType}?code=${tokenParam}&_summary=count`);
+    writeAudit(this.db, { actor: actor.id, action: 'read', fhirResource: resource, outcome: 'success' });
+    return bundle.total ?? 0;
   }
 
   /**
@@ -669,6 +767,52 @@ export class FhirReadService {
       body: JSON.stringify(body),
     });
     writeAudit(this.db, { actor: actor.id, action: 'create', fhirResource: `Task/${created.id}`, outcome: 'success' });
+    return { id: created.id };
+  }
+
+  /**
+   * S11 A1 — creates one audited FHIR ServiceRequest recording an SDOH
+   * community-resource referral (M05). Mirrors `createTask`'s guard-then-
+   * write-then-audit shape exactly, but gated on the `'sdoh'` domain (not
+   * `'clinical'`) — director, coordinator, AND social_worker all hold `sdoh`
+   * scope (see auth/scopes.ts), so any of the three can make a referral.
+   * Tagged with CARESYNC_REFERRAL_TAG (same convention as CARESYNC_TASK_TAG)
+   * so a referral ServiceRequest is identifiable the same way an
+   * AI-generated Task is, should a later slice need to find/replace them.
+   */
+  async createServiceRequest(
+    actor: AuthTokenPayload,
+    patientId: string,
+    input: { category: string; resourceName: string; note?: string }
+  ): Promise<CreatedTask> {
+    const resource = `ServiceRequest/${patientId}`;
+    this.guard(actor, 'sdoh', resource, 'create');
+
+    const body: Record<string, unknown> = {
+      resourceType: 'ServiceRequest',
+      status: 'active',
+      intent: 'order',
+      subject: { reference: `Patient/${patientId}` },
+      authoredOn: new Date().toISOString(),
+      category: [{ text: 'Social Determinants of Health' }],
+      code: { text: input.resourceName },
+      meta: { tag: [CARESYNC_REFERRAL_TAG] },
+    };
+    if (input.note) {
+      body.note = [{ text: input.note }];
+    }
+
+    const created = await this.fhirFetch<{ id: string }>('/ServiceRequest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/fhir+json' },
+      body: JSON.stringify(body),
+    });
+    writeAudit(this.db, {
+      actor: actor.id,
+      action: 'create',
+      fhirResource: `ServiceRequest/${created.id}`,
+      outcome: 'success',
+    });
     return { id: created.id };
   }
 

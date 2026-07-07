@@ -114,6 +114,29 @@ export function AppShell() {
                 Governance
               </Link>
             )}
+            {/* S11 A2 — W05/W07 real HEDIS diabetes/HbA1c measure dashboard;
+                same director-only nav scoping as the Governance link above
+                (no PRD story scopes this to Coordinator/Social Worker). */}
+            {user.role === 'director' && (
+              <Link to="/quality" className="text-label text-text-muted hover:text-text transition-colors">
+                Quality
+              </Link>
+            )}
+            {/* S11 A3 — W04 team performance view; same director-only nav
+                scoping as the Governance/Quality links above. */}
+            {user.role === 'director' && (
+              <Link to="/team" className="text-label text-text-muted hover:text-text transition-colors">
+                Team
+              </Link>
+            )}
+            {/* S11 B1 — none of the 11 GD9 shell screens (W08–W11, W13, W15,
+                W16, M06, M07, M09, M10) has a defined role-owner in the PRD,
+                so unlike the role-gated links above this one is visible to
+                every authenticated role and points to the reachability
+                index (`MoreScreens.tsx`) rather than a specific screen. */}
+            <Link to="/more" className="text-label text-text-muted hover:text-text transition-colors">
+              More
+            </Link>
             <BellIcon className="text-text-muted w-4 h-4" />
             <span
               className="w-7 h-7 rounded-full bg-surface-raised border border-border-light text-cyan text-xs font-bold flex items-center justify-center"

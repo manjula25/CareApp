@@ -153,3 +153,22 @@ describe('AppShell — S8 B3 Governance nav link (Director-only)', () => {
     expect(screen.queryByRole('link', { name: 'Task Center' })).not.toBeInTheDocument();
   });
 });
+
+// S11 B1 — none of the 11 GD9 shell screens has a defined role-owner, so
+// they're reachable via one "More" link visible to every authenticated
+// role, unlike the role-gated links above.
+describe('AppShell — S11 B1 More link (not role-gated)', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.clearAllMocks();
+  });
+
+  it.each(['director', 'coordinator', 'social_worker'])('shows a More link for %s', (role) => {
+    localStorage.setItem('caresync_token', tokenFor(role));
+    const queryClient = new QueryClient();
+
+    renderShell(queryClient);
+
+    expect(screen.getByRole('link', { name: 'More' })).toHaveAttribute('href', '/more');
+  });
+});

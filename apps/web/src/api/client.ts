@@ -202,6 +202,60 @@ export function getEvalSummary(): Promise<EvalSummaryResult> {
   return apiFetch('/api/governance/eval');
 }
 
+// --- S11 A2 — Quality/HEDIS measure aggregate (W05/W07) ------------------
+
+/**
+ * The ONE real HEDIS-style measure this POC computes end to end
+ * ("Comprehensive Diabetes Care: HbA1c Testing" — see
+ * `apps/api/src/quality/service.ts`'s `getDiabetesHba1cMeasure` doc for the
+ * FHIR codes and the "one honest measure beats two fabricated ones" reasoning).
+ * `illustrativeIncentiveDollars` is a documented, labeled estimate
+ * (`gapPatients * $5,000/closed gap`), never a real payer-contract figure —
+ * `Quality.tsx` must render it with that caveat, not as a plain dollar amount.
+ */
+export interface QualityMeasureResult {
+  measureId: string;
+  measureName: string;
+  numerator: number;
+  denominator: number;
+  rate: number;
+  gapPatients: number;
+  illustrativeIncentiveDollars: number;
+}
+
+export function getQualityMeasures(): Promise<QualityMeasureResult> {
+  return apiFetch('/api/quality/measures');
+}
+
+// --- S11 A3 — Team performance aggregate (W04) ---------------------------
+
+/** Mirrors `CoordinatorWorkload` in `apps/api/src/team/service.ts`. */
+export interface CoordinatorWorkload {
+  coordinatorId: string;
+  name: string;
+  assignedCount: number;
+  completedCount: number;
+  completionRate: number;
+}
+
+/**
+ * Mirrors `TeamPerformanceResult` in `apps/api/src/team/service.ts` exactly.
+ * Computed live from real Task ownership/status at request time — an empty
+ * `coordinators` array or all-zero counts is a true reflection of current
+ * demo state (e.g. no coordinators seeded, or no Task has been assigned/
+ * completed yet), never a loading artifact.
+ */
+export interface TeamPerformanceResult {
+  coordinators: CoordinatorWorkload[];
+  unassignedCount: number;
+  totalTasks: number;
+  overallCompletionRate: number;
+}
+
+export function getTeamPerformance(): Promise<TeamPerformanceResult> {
+  return apiFetch('/api/team/performance');
+}
+
 export type AgentId = 'risk' | 'careGap' | 'sdoh' | 'actionPlanner';
 
 /**
@@ -316,6 +370,28 @@ export async function streamAnalysis(
       if (event && data) dispatch(event, data);
     }
   }
+}
+
+// --- S11 A1 — SDOH resource directory + referral (M05) -------------------
+
+/** Mirrors `CommunityResource` in `apps/api/src/sdoh/resources.ts` — a static seed list, not FHIR-backed (see that file's doc). */
+export interface CommunityResource {
+  id: string;
+  name: string;
+  category: 'transportation' | 'food' | 'housing' | 'mental_health' | 'utilities';
+  description: string;
+  coverage: string;
+  phone?: string;
+}
+
+/** Any authenticated role can browse the directory; `category` filters server-side, omitted/`'all'` returns everything. */
+export function getSdohResources(category?: string): Promise<CommunityResource[]> {
+  return apiFetch(`/api/sdoh/resources${category && category !== 'all' ? `?category=${category}` : ''}`);
+}
+
+/** Director/Coordinator/Social Worker (sdoh scope) can all refer — `createServiceRequest` on the backend does the actual audited FHIR write. */
+export function postSdohReferral(patientId: string, resourceId: string): Promise<{ id: string }> {
+  return apiFetch('/api/sdoh/referrals', { method: 'POST', body: JSON.stringify({ patientId, resourceId }) });
 }
 
 export interface AssignedTaskEvent {
