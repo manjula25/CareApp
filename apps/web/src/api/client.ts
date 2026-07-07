@@ -318,6 +318,28 @@ export async function streamAnalysis(
   }
 }
 
+// --- S11 A1 — SDOH resource directory + referral (M05) -------------------
+
+/** Mirrors `CommunityResource` in `apps/api/src/sdoh/resources.ts` — a static seed list, not FHIR-backed (see that file's doc). */
+export interface CommunityResource {
+  id: string;
+  name: string;
+  category: 'transportation' | 'food' | 'housing' | 'mental_health' | 'utilities';
+  description: string;
+  coverage: string;
+  phone?: string;
+}
+
+/** Any authenticated role can browse the directory; `category` filters server-side, omitted/`'all'` returns everything. */
+export function getSdohResources(category?: string): Promise<CommunityResource[]> {
+  return apiFetch(`/api/sdoh/resources${category && category !== 'all' ? `?category=${category}` : ''}`);
+}
+
+/** Director/Coordinator/Social Worker (sdoh scope) can all refer — `createServiceRequest` on the backend does the actual audited FHIR write. */
+export function postSdohReferral(patientId: string, resourceId: string): Promise<{ id: string }> {
+  return apiFetch('/api/sdoh/referrals', { method: 'POST', body: JSON.stringify({ patientId, resourceId }) });
+}
+
 export interface AssignedTaskEvent {
   id: string;
   title: string;

@@ -308,6 +308,83 @@ describe('FhirReadService Task writes (createTask / replacePatientTasks)', () =>
   });
 });
 
+describe('FhirReadService.createServiceRequest (S11 A1 — SDOH referral)', () => {
+  let db: Database.Database;
+  let service: FhirReadService;
+  const createdServiceRequestIds: string[] = [];
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    migrate(db);
+    service = new FhirReadService(db, process.env.FHIR_BASE_URL ?? 'http://localhost:8080/fhir');
+  });
+
+  afterEach(async () => {
+    while (createdServiceRequestIds.length > 0) {
+      const id = createdServiceRequestIds.pop()!;
+      await fetch(`${process.env.FHIR_BASE_URL ?? 'http://localhost:8080/fhir'}/ServiceRequest/${id}`, {
+        method: 'DELETE',
+      }).catch(() => undefined);
+    }
+  });
+
+  async function fetchServiceRequest(id: string): Promise<any> {
+    const res = await fetch(`${process.env.FHIR_BASE_URL ?? 'http://localhost:8080/fhir'}/ServiceRequest/${id}`);
+    return res.json();
+  }
+
+  it('POSTs a resolvable ServiceRequest tagged and referencing the patient, and writes one audit row', async () => {
+    const result = await service.createServiceRequest(coordinator, 'maria-chen', {
+      category: 'transportation',
+      resourceName: 'Metro Transit Assistance Program',
+    });
+    createdServiceRequestIds.push(result.id);
+
+    const fetched = await fetchServiceRequest(result.id);
+    expect(fetched.resourceType).toBe('ServiceRequest');
+    expect(fetched.status).toBe('active');
+    expect(fetched.intent).toBe('order');
+    expect(fetched.subject).toEqual({ reference: 'Patient/maria-chen' });
+    expect(fetched.code?.text).toBe('Metro Transit Assistance Program');
+    expect(fetched.category).toEqual(expect.arrayContaining([{ text: 'Social Determinants of Health' }]));
+    expect(fetched.meta?.tag).toEqual(
+      expect.arrayContaining([{ system: 'https://caresync.demo/fhir/tags', code: 'ai-generated-referral' }])
+    );
+
+    const rows = db.prepare('SELECT * FROM audit_log ORDER BY id').all() as any[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      actor: 'coord-1',
+      action: 'create',
+      outcome: 'success',
+      fhir_resource: `ServiceRequest/${result.id}`,
+    });
+  });
+
+  it('includes a note when one is provided', async () => {
+    const result = await service.createServiceRequest(coordinator, 'maria-chen', {
+      category: 'food',
+      resourceName: 'Metro Regional Food Bank',
+      note: 'Patient prefers weekend pickup',
+    });
+    createdServiceRequestIds.push(result.id);
+
+    const fetched = await fetchServiceRequest(result.id);
+    expect(fetched.note).toEqual(expect.arrayContaining([{ text: 'Patient prefers weekend pickup' }]));
+  });
+
+  it('lets a Social Worker create a referral (sdoh scope)', async () => {
+    const result = await service.createServiceRequest(socialWorker, 'maria-chen', {
+      category: 'housing',
+      resourceName: 'Regional Housing Navigator Program',
+    });
+    createdServiceRequestIds.push(result.id);
+
+    const fetched = await fetchServiceRequest(result.id);
+    expect(fetched.resourceType).toBe('ServiceRequest');
+  });
+});
+
 describe('mapTaskResource domain extraction (S7 A0)', () => {
   it('extracts domain from a meta.tag domain coding', () => {
     const mapped = mapTaskResource({

@@ -124,6 +124,11 @@ const ACTION_PLANNER_PRIORITY_TO_FHIR: Record<string, string> = {
 // scope deletes to exactly the Tasks it created, never a seed/Synthea Task.
 const CARESYNC_TASK_TAG = { system: 'https://caresync.demo/fhir/tags', code: 'ai-generated-task' } as const;
 
+// S11 A1 — same tagging convention as CARESYNC_TASK_TAG (same `system`,
+// distinct `code`), so a CareSync-authored SDOH referral ServiceRequest is
+// identifiable in HAPI the same way an AI-generated Task is.
+const CARESYNC_REFERRAL_TAG = { system: 'https://caresync.demo/fhir/tags', code: 'ai-generated-referral' } as const;
+
 // S7 A0 — coding system for the meta.tag that records a Task's care domain
 // ('clinical' | 'sdoh'). Stored as a second `meta.tag` coding (a distinct
 // system from CARESYNC_TASK_TAG), directly mirroring that tag pattern.
@@ -669,6 +674,52 @@ export class FhirReadService {
       body: JSON.stringify(body),
     });
     writeAudit(this.db, { actor: actor.id, action: 'create', fhirResource: `Task/${created.id}`, outcome: 'success' });
+    return { id: created.id };
+  }
+
+  /**
+   * S11 A1 — creates one audited FHIR ServiceRequest recording an SDOH
+   * community-resource referral (M05). Mirrors `createTask`'s guard-then-
+   * write-then-audit shape exactly, but gated on the `'sdoh'` domain (not
+   * `'clinical'`) — director, coordinator, AND social_worker all hold `sdoh`
+   * scope (see auth/scopes.ts), so any of the three can make a referral.
+   * Tagged with CARESYNC_REFERRAL_TAG (same convention as CARESYNC_TASK_TAG)
+   * so a referral ServiceRequest is identifiable the same way an
+   * AI-generated Task is, should a later slice need to find/replace them.
+   */
+  async createServiceRequest(
+    actor: AuthTokenPayload,
+    patientId: string,
+    input: { category: string; resourceName: string; note?: string }
+  ): Promise<CreatedTask> {
+    const resource = `ServiceRequest/${patientId}`;
+    this.guard(actor, 'sdoh', resource, 'create');
+
+    const body: Record<string, unknown> = {
+      resourceType: 'ServiceRequest',
+      status: 'active',
+      intent: 'order',
+      subject: { reference: `Patient/${patientId}` },
+      authoredOn: new Date().toISOString(),
+      category: [{ text: 'Social Determinants of Health' }],
+      code: { text: input.resourceName },
+      meta: { tag: [CARESYNC_REFERRAL_TAG] },
+    };
+    if (input.note) {
+      body.note = [{ text: input.note }];
+    }
+
+    const created = await this.fhirFetch<{ id: string }>('/ServiceRequest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/fhir+json' },
+      body: JSON.stringify(body),
+    });
+    writeAudit(this.db, {
+      actor: actor.id,
+      action: 'create',
+      fhirResource: `ServiceRequest/${created.id}`,
+      outcome: 'success',
+    });
     return { id: created.id };
   }
 

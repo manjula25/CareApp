@@ -7,6 +7,7 @@ import { PatientDetail } from './pages/PatientDetail';
 import { Population } from './pages/Population';
 import { PopulationPatientList } from './pages/PopulationPatientList';
 import { Governance } from './pages/Governance';
+import { Sdoh } from './pages/Sdoh';
 import { TaskQueue } from './pages/TaskQueue';
 import { TaskDetail } from './pages/TaskDetail';
 import { TaskCenter } from './pages/TaskCenter';
@@ -25,6 +26,10 @@ function App() {
       >
         <Route path="/panel" element={<PatientPanel />} />
         <Route path="/patients/:id" element={<PatientDetail />} />
+        {/* S11 A1 — M05 SDOH resource directory + referral; every role with
+            'sdoh' scope (director/coordinator/social_worker — see
+            auth/scopes.ts) can reach it, so no extra RoleGuard here. */}
+        <Route path="/patients/:id/sdoh" element={<Sdoh />} />
         <Route path="/tasks" element={<TaskQueue />} />
         <Route path="/tasks/:id" element={<TaskDetail />} />
         <Route path="/task-center" element={<TaskCenter />} />
