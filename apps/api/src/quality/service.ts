@@ -1,5 +1,23 @@
+import Database from 'better-sqlite3';
 import { AuthTokenPayload } from '../auth/jwt';
-import { FhirReadService } from '../fhir/client';
+import { writeAudit } from '../db/audit';
+import { DirectorOnlyError, FhirReadService } from '../fhir/client';
+
+export { DirectorOnlyError };
+
+/**
+ * Director-only gate, mirroring governance/service.ts's own `assertDirector`
+ * exactly (role check, denial audit, throw DirectorOnlyError) — a deliberate,
+ * minimal duplicate of the same rule rather than an import, matching how
+ * governance/service.ts itself duplicates population/service.ts's version
+ * (see that module's doc for why: the function is private to each module).
+ */
+function assertDirector(actor: AuthTokenPayload, db: Database.Database, resource: string): void {
+  if (actor.role !== 'director') {
+    writeAudit(db, { actor: actor.id, action: 'read', fhirResource: resource, outcome: 'denied' });
+    throw new DirectorOnlyError(actor.role, 'access quality/HEDIS aggregates');
+  }
+}
 
 // S11 A2 — the two fixed FHIR codes this measure is built from. Both are
 // verified-live against the running HAPI server + seed data (see this
@@ -38,16 +56,13 @@ export interface QualityMeasureResult {
  * the actual FHIR I/O lives there, this function is a thin "gate → read →
  * transform" aggregate, matching governance/service.ts's shape.
  *
- * No local Director-only gate: `getResourceCountByCode` already gates on
- * `clinical` scope (director + coordinator hold it; social_worker does not),
- * the same domain `getPopulationRiskProfile` uses for its own population
- * aggregate. This mirrors Population's own choice, not Governance's — the W06
- * governance aggregates (audit trail, model performance, demographic parity)
- * are Director-only because they expose cross-patient AI-model/equity
- * internals, but a HEDIS care-gap measure is ordinary clinical population
- * data a Coordinator plans outreach from, same category as Population's
- * scatter/summary endpoints. Adding a redundant `assertDirector` here would
- * over-restrict a screen no PRD story scopes to Director only.
+ * Director-only (`assertDirector` above), matching Population's and
+ * Governance's own aggregates — both call `assertDirector`/an equivalent
+ * role check end-to-end (population/service.ts's `getPopulationScatter`/
+ * `getPopulationSummary`, governance/service.ts's every aggregate), so a W05/
+ * W07 cross-patient measure aggregate follows the same precedent, not a
+ * looser one. The frontend route (`App.tsx`'s `/quality`) is already
+ * Director-only to match.
  *
  * Deliberately does NOT compute a second (e.g. depression-screening) measure,
  * a trend-over-time series, or any cost-avoidance/ROI figure beyond the one
@@ -57,8 +72,11 @@ export interface QualityMeasureResult {
  */
 export async function getDiabetesHba1cMeasure(
   actor: AuthTokenPayload,
-  fhirService: FhirReadService
+  fhirService: FhirReadService,
+  db: Database.Database
 ): Promise<QualityMeasureResult> {
+  assertDirector(actor, db, 'Population/quality-measures');
+
   const [denominator, numerator] = await Promise.all([
     fhirService.getResourceCountByCode(actor, 'Condition', DIABETES_CONDITION_SYSTEM, DIABETES_CONDITION_CODE),
     fhirService.getResourceCountByCode(actor, 'Observation', HBA1C_OBSERVATION_SYSTEM, HBA1C_OBSERVATION_CODE),

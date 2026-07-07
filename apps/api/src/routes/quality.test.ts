@@ -14,7 +14,7 @@ function buildApp(db: Database.Database) {
   app.use(express.json());
   const fhirService = new FhirReadService(db, FHIR_BASE_URL);
   app.use('/api/auth', createAuthRouter(db));
-  app.use('/api/quality', createQualityRouter(fhirService));
+  app.use('/api/quality', createQualityRouter(fhirService, db));
   return app;
 }
 
@@ -27,7 +27,8 @@ async function loginAs(app: express.Express, email: string): Promise<string> {
 // the real disposable HAPI container + seed data (same Seam 1 pattern as
 // routes/governance.test.ts / fhir/client.test.ts). Assertions are shape- and
 // relationship-based (not pinned to exact counts) — see quality/service.ts's
-// doc for why exact counts aren't a stable contract.
+// doc for why exact counts aren't a stable contract. Director-only, matching
+// Population's/Governance's own cross-patient aggregates.
 describe('GET /api/quality/measures', () => {
   let db: Database.Database;
   let app: express.Express;
@@ -39,8 +40,8 @@ describe('GET /api/quality/measures', () => {
     app = buildApp(db);
   });
 
-  it('returns the real diabetes/HbA1c measure shape for a Coordinator', async () => {
-    const token = await loginAs(app, 'coordinator@caresync.demo');
+  it('returns the real diabetes/HbA1c measure shape for a Director', async () => {
+    const token = await loginAs(app, 'director@caresync.demo');
     const res = await request(app).get('/api/quality/measures').set('Authorization', `Bearer ${token}`);
 
     expect(res.status).toBe(200);
@@ -54,13 +55,13 @@ describe('GET /api/quality/measures', () => {
     expect(res.body.illustrativeIncentiveDollars).toBe(res.body.gapPatients * 5000);
   }, 20000);
 
-  it('is accessible to a Director too (clinical population data, not Director-only)', async () => {
-    const token = await loginAs(app, 'director@caresync.demo');
+  it('is denied for a Coordinator (Director-only)', async () => {
+    const token = await loginAs(app, 'coordinator@caresync.demo');
     const res = await request(app).get('/api/quality/measures').set('Authorization', `Bearer ${token}`);
-    expect(res.status).toBe(200);
-  }, 20000);
+    expect(res.status).toBe(403);
+  });
 
-  it('is denied for a Social Worker (no clinical scope)', async () => {
+  it('is denied for a Social Worker (Director-only)', async () => {
     const token = await loginAs(app, 'socialworker@caresync.demo');
     const res = await request(app).get('/api/quality/measures').set('Authorization', `Bearer ${token}`);
     expect(res.status).toBe(403);
