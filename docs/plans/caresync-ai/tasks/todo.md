@@ -29,16 +29,29 @@ fake-functional content).
 
 ## Phase A — Demo-supporting screens (partial depth)
 
-- [ ] A1. SDOH resource directory + referral (M05, `caresync-sdoh-mobile.html`). List
+- [x] A1. SDOH resource directory + referral (M05, `caresync-sdoh-mobile.html`). List
   community resources by category (transportation/food/housing/mental health); a referral
   creates a FHIR `ServiceRequest` (audited).
   - Domain rule: referral creates a FHIR ServiceRequest (S11 acceptance, story 30); write audited.
   - Test (Supertest): referral POSTs a resolvable ServiceRequest; (Vitest) directory renders by category.
-- [ ] A2. Quality/HEDIS view (W05/W07, `caresync-quality-roi.html`). Measure progress +
+  - Commit `f699bd9`, reviewed APPROVED_WITH_NITS (non-blocking).
+- [x] A2. Quality/HEDIS view (W05/W07, `caresync-quality-roi.html`). Measure progress +
   incentive dollars at stake, derived from FHIR data; native Canvas charts (GD10). Story 9.
   - Test: aggregate computes measure progress over seeded data; view renders it.
-- [ ] A3. Team performance (W04). Coordinator workload + completion rates from
+  - Real HEDIS measure computed live from FHIR (diabetes Condition E11.9 vs. HbA1c Observation
+    LOINC 4548-4 — 286 vs. 1 in the seeded environment); incentive-dollar figure is explicitly
+    labeled illustrative, not a real financial record. Mockup's fabricated ROI donut/cost-events
+    table/ROI calculator/trend chart dropped entirely (no real backing data) — documented in
+    `Quality.tsx`'s deviation-note doc comment, same discipline as `Governance.tsx`.
+  - Commit `4eb6f9f` + review fix `6748d80` (gated Director-only to match Population/Governance's
+    actual precedent, corrected a misleading doc comment). Re-reviewed APPROVED.
+- [x] A3. Team performance (W04). Coordinator workload + completion rates from
   Task/assignment data. Story 8.
+  - Computed live from real Task ownership/status (Director-only, matching Population/
+    Governance/Quality). Fresh-environment state is honestly 0 assigned/0 completed/7
+    unassigned (no frontend UI calls the existing assign endpoint yet) — this is correct,
+    not a bug; the aggregate updates the moment a live assignment/completion happens.
+  - Commit `3c819ed`, reviewed APPROVED (no issues).
 - [x] A4. Remaining supporting screens as capacity allows. Patient quick profile (M04),
   Today/Schedule (M08), Care Plan builder (W14 — FHIR CarePlan, story 26) to partial depth.
   - ponytail: build in priority order; stop at capacity, record what's partial (honest staging).
@@ -59,18 +72,34 @@ fake-functional content).
 
 ## Phase B — Shell screens
 
-- [ ] B1. Navigation-only shells. W08, W09, W10, W11, W13, W15, W16, M06, M07, M09, M10 as
+- [x] B1. Navigation-only shells. W08, W09, W10, W11, W13, W15, W16, M06, M07, M09, M10 as
   styled placeholder pages in navigation.
   - ponytail: one `ComingSoon` component driven by a route→title table (the S1 `ComingSoon`
     page already exists) — 11 rows of data, not 11 files.
   - Domain rule: no shell presents placeholder data as real/functional (S11 acceptance — honest staging, gate G4).
   - Test (Vitest): each shell route renders with consistent styling + an explicit "coming soon / not yet functional" treatment.
+  - None of these 11 IDs has a defined name/purpose anywhere in this repo's docs, so the 10
+    genuinely-undefined ones are labeled neutrally ("Screen W08", etc.) rather than inventing
+    plausible-sounding feature names. W13 already had a real, shipped identity ("Task
+    Management Center", S7 B3) — folded its bespoke `TaskCenter.tsx` into the shared
+    table/component (same route, same nav link) rather than leaving a near-duplicate file.
+    Reachable via one new "More" nav link (all roles) → `/more` index, since none of the 11
+    has a defined role-owner.
+  - Commit `7b05a3d`, reviewed APPROVED (no issues).
 
 ## Phase C — Verification
 
-- [ ] C1. `npm run test:api` (referral + HEDIS aggregate) + `npm run test:web` (screens/shells).
-- [ ] C2. Frontend E2E (`frontend-e2e-verification`) for the demo-supporting screens that
+- [x] C1. `npm run test:api` (referral + HEDIS aggregate) + `npm run test:web` (screens/shells).
+  - API: 37 suites / 232 tests pass (against live seeded HAPI). Web: 27 files / 225 tests pass.
+- [x] C2. Frontend E2E (`frontend-e2e-verification`) for the demo-supporting screens that
   carry real behavior (SDOH referral, Quality view render). Shells covered by render tests.
+  - `apps/web/e2e/sdoh-referral.spec.ts` + `director-quality.spec.ts`, both driving the real
+    API + live HAPI (no mocks). Full `apps/web/e2e` suite: 16/16 pass with `--workers=1` (the
+    default concurrent run shows 2 pre-existing, unrelated failures from HAPI contention under
+    load, confirmed by re-running serially — not a regression). Commit `7f57b5d`.
+  - Evidence strength (per CLAUDE.md's evidence boundaries): local mock / packaged-UI —
+    headless Playwright against the local dev stack, not target-environment or
+    client-accepted evidence.
 
 ## Rollback / safety
 
