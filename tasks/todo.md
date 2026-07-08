@@ -1,8 +1,100 @@
 # Active Plan — CareSync AI
 
-**Feature:** `caresync-ai` · **Current slice:** S4 — Agent-graph canvas + analysis cache/replay
-**Full plan:** `docs/plans/caresync-ai/implementation-plan.md` (Iteration 4, lines 252-298)
-**Spec:** `docs/plans/caresync-ai/prd.md` · **Slice def:** `docs/plans/caresync-ai/issues.md`
+**Feature:** `caresync-ai` · **Current slice:** S15 — Held-out evaluation set + clinician outreach log
+**Full plan:** `docs/plans/caresync-ai/implementation-plan-s15.md`
+**Spec:** `docs/plans/caresync-ai/prd-s15.md` · **Grill:** `docs/plans/caresync-ai/grill-evaluation-gaps.md` · **Trigger:** `reports/HL7-Challenge-Evaluation.2026-07-08.md` §E (biggest-risk decomposition)
+**S16 (separate slice, out of scope here):** Risk agent v2 rubric + LLM-variance investigation — owns `design-risk-calibration-v2.md`.
+
+---
+
+## S15 — Held-Out Evaluation Set + Clinician Outreach Log
+
+> **Approved:** pending user review (implementation plan + PRD + grill written; awaiting go-ahead). Implementing via `subagent-driven-development` (TDD where applicable) on a fresh `feature/s15-evaluation-gaps` branch.
+
+### Commit 1 — `feat(S15): procedural held-out set (pop-0011..pop-0020) + labels._meta.heldOutRows`
+**Acceptance:** 10 new procedural patients generated; `_meta.heldOutRows` populated; 10 label rows added; `npm run import` succeeds; 5-row verification matrix row 1 passes.
+
+- [ ] **A1.** Read `apps/api/src/fhir-data/population.ts`; locate `generatePopulation()` + count literal. Verify: `grep -n "length: 10\|generatePopulation" apps/api/src/fhir-data/population.ts`.
+- [ ] **A2.** Bump `generatePopulation()` count from 10 to 20. Verify: `cd apps/api && npx tsc --noEmit` clean.
+- [ ] **A3.** Verify SDOH distribution in the new 10 matches the existing 10 (3 positive / 2 explicit-negative / 5 absence). Add explicit SDOH seeding if the generator's distribution is off.
+- [ ] **B1.** Add `_meta.heldOutRows: ["pop-0011".."pop-0020"]` to `data/eval/labels.json`. Verify: `jq '._meta.heldOutRows' data/eval/labels.json`.
+- [ ] **B2.** Add 10 label rows for `pop-0011`..`pop-0020` (each with `source: "dev"`, `clinicianOverride: null`, labels derived by hand from `_meta.labelingRules` for now — commit 2 factors the function). Verify: `jq '.patients | length' data/eval/labels.json` returns 26.
+- [ ] **B3.** Update `_meta.clinicianStatus` per prd-s15.md D6.
+- [ ] **C1.** `npm run import` from `apps/api`. Verify: "Import complete" with non-zero count.
+- [ ] **C2.** Spot-check via curl: `curl -s http://localhost:8080/fhir/Patient/pop-0011 | jq '.id'` (adjust id scheme if needed).
+- [ ] **C3.** Commit message: `feat(S15): procedural held-out set (pop-0011..pop-0020) + labels._meta.heldOutRows` (full message in implementation-plan-s15.md).
+
+### Commit 2 — `feat(S15): eval/labelFromBundle.ts — factored labeling function`
+**Acceptance:** pure function module + 5 tests green + LOINC map extracted.
+
+- [ ] **A1.** Create `apps/api/src/eval/labelFromBundle.test.ts` RED — 5 tests (careGap T/F/null, risk T/F via riskScoreFor ≥ 75, sdoh positive/negative/absent, determinism, null-handling). Verify: `cd apps/api && npx jest src/eval/labelFromBundle.test.ts` → all FAIL.
+- [ ] **A2.** Create `apps/api/src/eval/labelFromBundle.ts` GREEN — `labelFromBundle(bundle, dim): boolean | null`; pure, no I/O, no LLM; delegates risk to `riskScoreFor()` from `fhir-data/population.ts:127-134`. Verify: tests PASS.
+- [ ] **A3.** Extract LOINC-convention map as named constant at top of file (single source of truth, matches `_meta.labelingRules.careGap`).
+- [ ] **A4.** Commit message: `feat(S15): eval/labelFromBundle.ts — factored labeling function`.
+
+### Commit 3 — `feat(S15): eval-report three-section layout + Held-out evaluation section`
+**Acceptance:** Status line three-count; dev-labeled + held-out + Outreach sections render; 3 CLI flags work; round-trip test green.
+
+- [ ] **A1.** Read `scripts/eval.ts` — locate patient loop, `renderMarkdown`, `buildJsonSummary`.
+- [ ] **A2.** Refactor `scripts/eval.ts` to split patient list by `_meta.heldOutRows`. Use `labelFromBundle` for held-out; existing `labels.json` rows for dev-labeled. Ponytail: factor `computePerAgentMetrics(patientRows, labelSource)` helper.
+- [ ] **B1.** Modify `renderMarkdown` to produce 9 sections (Status, Methodology +1 sentence, Dev-labeled baseline, Held-out evaluation, Outreach placeholder, Error analysis dev-labeled, Error analysis held-out, Data-availability combined).
+- [ ] **B2.** Modify `buildJsonSummary` to mirror 3-section layout (`devLabeled`, `heldOut`, `outreach` keys).
+- [ ] **C1.** Add `--dev-only`, `--held-out-only`, `--no-live` CLI flag handlers to `eval.ts:main()`. Extend existing parser if one exists.
+- [ ] **C2.** Verify all 3 flag compositions run without crashing.
+- [ ] **D1.** Add `scripts/eval.test.ts` round-trip test — 3 tests (dev-only report, held-out-only report, full report). Verify: `cd apps/api && npx jest src/scripts/eval.test.ts` PASSES.
+- [ ] **D2.** Commit message: `feat(S15): eval-report three-section layout + Held-out evaluation section`.
+
+### Commit 4 — `feat(S15): clinician-outreach.json + Outreach table in eval-report`
+**Acceptance:** schema validator + 5 tests green + `outreach:validate` script + initial JSON file + Outreach table renders.
+
+- [ ] **A1.** Create `apps/api/src/eval/outreachSchema.test.ts` RED — 4 tests (valid, missing-field, wrong-enum, empty-invitations). Verify: `cd apps/api && npx jest src/eval/outreachSchema.test.ts` → all FAIL.
+- [ ] **A2.** Create `apps/api/src/eval/outreachSchema.ts` GREEN — `validateOutreach(json): { ok: true } | { ok: false; errors: string[] }`; pure; hand-rolled validation (no schema library); path-qualified errors. Verify: tests PASS.
+- [ ] **A3.** Add 5th test for missing `_meta`.
+- [ ] **B1.** Create `apps/api/src/scripts/outreach-validate.ts` (mirrors `apply-clinician-review.ts` conventions: `__dirname`-resolved path, `main()` guarded). Prints "OK" + summary on valid; lists errors + exit 1 on invalid; prints "Outreach log not yet started." on missing file (exit 0).
+- [ ] **B2.** Add `"outreach:validate": "tsx src/scripts/outreach-validate.ts"` to `apps/api/package.json` scripts.
+- [ ] **B3.** Create initial `data/eval/clinician-outreach.json` with `_meta` + `invitations: []`. Verify: `npm run outreach:validate` prints "OK" + "0 invitations."
+- [ ] **C1.** Extend `eval.ts:renderMarkdown` Outreach section to read the JSON file + render table (empty table on empty `invitations`; error list inline on malformed JSON).
+- [ ] **C2.** Extend `eval.ts:buildJsonSummary` to include `outreach` key.
+- [ ] **D1.** Commit message: `feat(S15): clinician-outreach.json + Outreach table in eval-report`.
+
+### Phase E — Verification (post-merge)
+**Acceptance:** all 5 verification matrix rows pass; `verification-s15.md` + `review-s15.md` written.
+
+- [ ] **E1.** `npm run eval --no-live` — confirm Status line is three-count; both sections render; Outreach section reflects JSON contents.
+- [ ] **E2.** CLI flag tests: `--dev-only`, `--held-out-only`, `--no-live` all work.
+- [ ] **E3.** `npm run outreach:validate` → "OK" + "0 invitations" on initial file.
+- [ ] **E4.** Live re-run (best-effort, separate from pass condition) when OpenAI quota allows — report live held-out numbers in changelog.
+- [ ] **E5.** Write `docs/plans/caresync-ai/verification-s15.md` per `verification-s14.md` template (6 sections: outcome, command evidence, TDD evidence, live re-eval, DoD check, open follow-ups).
+- [ ] **E6.** Write `docs/plans/caresync-ai/review-s15.md` per `review-s14.md` two-axis pattern (correctness + design).
+
+### Definition of done (S15)
+- [ ] **D1.** `population.ts` returns 20 patients; `_meta.heldOutRows` populated; 10 label rows added.
+- [ ] **D2.** `npm run import` succeeds; 10 new bundles in HAPI.
+- [ ] **D3.** `labelFromBundle.ts` exists + 5 tests pass.
+- [ ] **D4.** `npm run eval --no-live` produces 3-section report with three-count Status line.
+- [ ] **D5.** 3 CLI flags work; round-trip test green.
+- [ ] **D6.** `outreachSchema.ts` + 5 tests green; `outreach-validate.ts` script; `npm run outreach:validate` works.
+- [ ] **D7.** Outreach section in eval-report reflects JSON file (empty table or populated table).
+- [ ] **D8.** `verification-s15.md` + `review-s15.md` written; 5 verification matrix rows pass.
+- [ ] **D9.** Branch `feature/s15-evaluation-gaps` opens PR against `main`; cites `prd-s15.md` + grill; merge per CLAUDE.md "Repo etiquette".
+
+### Rollback (S15) — see `implementation-plan-s15.md` §Rollback
+| Commit | What reverts |
+|---|---|
+| 1 | Removes 10 label rows + `_meta.heldOutRows`; `generatePopulation()` back to 10. Dev-labeled 16 unchanged. |
+| 2 | Removes `labelFromBundle.ts` + tests. **Cleanest: revert 2 + 3 together** (eval.ts still references the function). |
+| 3 | Reverts `eval.ts` to pre-S15 single-section shape. `npm run eval --no-live` reproduces pre-S15 report. |
+| 4 | Removes outreach JSON + schema + script + npm script. Outreach section reverts to placeholder. |
+| Whole PR | Reproduces pre-S15 state on all 4 fronts. |
+
+### Open follow-ups (deferred to S16 or later)
+- Risk agent v2 rubric + LLM-variance investigation → **S16** (separate slice).
+- Clinician engagement itself → parallel track, not gated by S15.
+- Live re-run of all 26 patients → bonus signal when quota allows, not a pass condition.
+- In-app clinician review queue → deferred indefinitely.
+- Held-out labels via inter-rater / hand-curation → rejected in grill §3.
+- Model-version pin for the LLM API → cross-cutting, lives in S16.
+- Multilingual / low-connectivity support → out of scope per HL7 evaluation Open Q #7.
 
 ---
 
