@@ -5,6 +5,7 @@ build/
 .env.local
 *.sqlite
 *.sqlite3
+data/*.db
 .DS_Store
 coverage/
 .claude/settings.local.json
