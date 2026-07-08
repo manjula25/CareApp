@@ -11,14 +11,14 @@ vi.mock('../../api/client', async () => {
 });
 
 const panelFixture: Awaited<ReturnType<typeof client.getAssignedPanel>> = [
-  { id: 'p-maria', name: 'Maria Chen', gender: 'female', birthDate: '1957-04-12', riskScore: 87, taskCount: 2, conditionTags: ['CHF', 'T2DM'] },
-  { id: 'p-robert', name: 'Robert Torres', gender: 'male', birthDate: '1953-09-25', riskScore: 76, taskCount: 1, conditionTags: ['COPD', 'HTN'] },
-  { id: 'p-james', name: 'James Anderson', gender: 'male', birthDate: '1947-06-30', riskScore: 71, taskCount: 0, conditionTags: ['CHF', 'A-Fib'] },
-  { id: 'p-linda', name: 'Linda Martinez', gender: 'female', birthDate: '1964-03-18', riskScore: 42, taskCount: 0, conditionTags: ['HTN', 'Anxiety'] },
+  { id: 'p-maria', name: 'Maria Chen', gender: 'female', birthDate: '1957-04-12', riskScore: 87, taskCount: 2, conditionTags: ['CHF', 'T2DM'], daysSinceContact: 2 },
+  { id: 'p-robert', name: 'Robert Torres', gender: 'male', birthDate: '1953-09-25', riskScore: 76, taskCount: 1, conditionTags: ['COPD', 'HTN'], daysSinceContact: 5 },
+  { id: 'p-james', name: 'James Anderson', gender: 'male', birthDate: '1947-06-30', riskScore: 71, taskCount: 0, conditionTags: ['CHF', 'A-Fib'], daysSinceContact: 8 },
   // Non-critical, but > 14 days since contact — used to drive the
   // "Needs Contact" filter / badge assertion without mocking a fresh patient
-  // just for that path. We can't model daysSinceContact from the API shape,
-  // so this fixture is also wired into a 'needs_contact' expectation below.
+  // just for that path. daysSinceContact comes from the API shape now, so
+  // this fixture is also wired into a 'needs_contact' expectation below.
+  { id: 'p-linda', name: 'Linda Martinez', gender: 'female', birthDate: '1964-03-18', riskScore: 42, taskCount: 0, conditionTags: ['HTN', 'Anxiety'], daysSinceContact: 21 },
 ];
 
 function renderMyPatients() {

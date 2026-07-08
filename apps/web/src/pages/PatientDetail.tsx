@@ -12,7 +12,7 @@ import {
   type AssignedTaskEvent,
   type PatientDetail as PatientDetailPayload,
 } from '../api/client';
-import { ageSexLabel, sexLabel } from '../lib/patient';
+import { sexLabel } from '../lib/patient';
 import { useAuth } from '../auth/useAuth';
 import { useAnalysisGraph } from '../lib/analysisGraph';
 import {
@@ -1099,7 +1099,7 @@ export function PatientDetail() {
   const [running, setRunning] = useState(false);
   const [feeds, setFeeds] = useState<Record<AgentId, AgentFeedState>>(() => makeFeeds());
   const [createdTasks, setCreatedTasks] = useState<AnalysisTask[]>([]);
-  const [graphState, dispatchGraph] = useAnalysisGraph();
+  const [, dispatchGraph] = useAnalysisGraph();
   const [lastMode, setLastMode] = useState<'cached' | 'live' | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('panel');
   const [createdActionKeys, setCreatedActionKeys] = useState<Set<string>>(new Set());
