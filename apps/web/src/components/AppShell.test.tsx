@@ -153,11 +153,11 @@ describe('AppShell — Sidebar navigation', () => {
     expect(screen.getByTitle('Population')).toBeInTheDocument();
   });
 
-  it('shows a Patients nav button only for the director (S12 — was all roles)', () => {
-    // S12 follow-up: `/panel` is now the director's My Patients list.
-    // Coordinators land on /task-center instead, so the sidebar Patients
-    // link is director-only.
-    localStorage.setItem('caresync_token', tokenFor('director'));
+  it('shows a Patients nav button for a coordinator (caresync-coordinator-grid-my-patients)', () => {
+    // The sidebar Patients link points to `/coordinator`. Like the lead
+    // project, the Patients entry is un-restricted — both director and
+    // coordinator land on the same assigned-panel grid.
+    localStorage.setItem('caresync_token', tokenFor('coordinator'));
     const queryClient = new QueryClient();
 
     renderShell(queryClient);
@@ -165,12 +165,16 @@ describe('AppShell — Sidebar navigation', () => {
     expect(screen.getByTitle('Patients')).toBeInTheDocument();
   });
 
-  it('hides the Patients nav button for a coordinator', () => {
-    localStorage.setItem('caresync_token', tokenFor('coordinator'));
+  it('shows a Patients nav button for a director too (caresync-coordinator-grid-my-patients)', () => {
+    // Per lead-project parity: 'Patients' is the assigned-panel view, and
+    // /api/patients/assigned is gated only on the 'clinical' scope (which
+    // both director and coordinator hold). Hiding the entry from the
+    // director would leave them without a Patients surface.
+    localStorage.setItem('caresync_token', tokenFor('director'));
     const queryClient = new QueryClient();
 
     renderShell(queryClient);
 
-    expect(screen.queryByTitle('Patients')).not.toBeInTheDocument();
+    expect(screen.getByTitle('Patients')).toBeInTheDocument();
   });
 });

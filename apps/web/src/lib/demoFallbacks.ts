@@ -15,12 +15,35 @@ import type {
   ConfidenceBucket,
   ModelPerformanceResult,
   ParityResult,
+  PanelPatient,
   PopulationSummary,
   QualityMeasureResult,
   ScatterPoint,
   TaskListEntry,
   TeamPerformanceResult,
 } from '../api/client';
+
+/**
+ * Caresync-coordinator-grid-my-patients — enriched panel-patient fallback.
+ * Mirrors the lead project's `MOCK_PATIENTS` shape (the grid view expects a
+ * `daysSinceContact` for its red/amber/green contact-status badge). The real
+ * `/api/patients/assigned` endpoint does NOT return that field, so this shape
+ * is strictly a SAFETY-NET contract: it only ever reaches the UI when the
+ * API has errored, with the `DemoFallbackBadge` shown to make that obvious.
+ */
+export interface MockPanelPatient extends PanelPatient {
+  daysSinceContact: number;
+  riskLevel: 'critical' | 'high' | 'medium' | 'low';
+}
+
+export const MOCK_PANEL_PATIENTS: MockPanelPatient[] = [
+  { id: 'maria-chen-4829', name: 'Maria Chen', gender: 'female', birthDate: '1957-04-12', riskScore: 87, taskCount: 2, conditionTags: ['CHF', 'T2DM'], daysSinceContact: 2, riskLevel: 'critical' },
+  { id: 'p2', name: 'Robert Torres', gender: 'male', birthDate: '1953-09-25', riskScore: 76, taskCount: 1, conditionTags: ['COPD', 'HTN'], daysSinceContact: 5, riskLevel: 'critical' },
+  { id: 'p3', name: 'Dorothy Williams', gender: 'female', birthDate: '1960-11-08', riskScore: 68, taskCount: 0, conditionTags: ['T2DM', 'CKD'], daysSinceContact: 12, riskLevel: 'high' },
+  { id: 'p4', name: 'James Anderson', gender: 'male', birthDate: '1947-06-30', riskScore: 71, taskCount: 0, conditionTags: ['CHF', 'A-Fib'], daysSinceContact: 8, riskLevel: 'high' },
+  { id: 'p5', name: 'Linda Martinez', gender: 'female', birthDate: '1964-03-18', riskScore: 42, taskCount: 0, conditionTags: ['HTN', 'Anxiety'], daysSinceContact: 21, riskLevel: 'medium' },
+  { id: 'p7', name: 'Patricia Davis', gender: 'female', birthDate: '1955-08-02', riskScore: 82, taskCount: 0, conditionTags: ['CHF', 'CKD', 'Anemia'], daysSinceContact: 1, riskLevel: 'critical' },
+];
 
 // --- Population dashboard (W02) --------------------------------------------
 

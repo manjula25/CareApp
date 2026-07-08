@@ -81,10 +81,10 @@ export function useAuth(): AuthContextValue {
 
 export function roleHome(role: Role): string {
   if (role === 'director') return '/population';
-  // S12 follow-up — `/panel` is the director's "My Patients" list now
-  // (was the coordinator's). Coordinators land on the Task Center
-  // (the W13 page ported from the lead) instead.
-  if (role === 'coordinator') return '/task-center';
+  // Caresync-coordinator-grid-my-patients — coordinators now land on the
+  // /coordinator grid view (port of the lead project's MyPatients) instead
+  // of /task-center. The Task Center is still reachable via the sidebar.
+  if (role === 'coordinator') return '/coordinator';
   // S7 B1 — the Social Worker's mobile task queue (M02) now exists;
   // '/coming-soon' was always a placeholder for this exact screen.
   return '/tasks';

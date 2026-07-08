@@ -255,6 +255,9 @@ export interface PanelEntry {
   riskScore: number;
   taskCount: number;
   conditionTags: string[];
+  /** Days between now and this patient's most recent Encounter.period.end.
+   *  null if no Encounter was found for the patient (UI shows "—"). */
+  daysSinceContact: number | null;
 }
 
 export interface PatientBundle {
@@ -478,19 +481,44 @@ export class FhirReadService {
 
     const patientIds: string[] = (group.member ?? []).map((m: any) => m.entity.reference.split('/')[1]);
 
+    // Caresync-coordinator-grid-my-patients — also fetch each patient's
+    // Encounters so `daysSinceContact` is computed from real FHIR data
+    // (most recent Encounter.period.end), not the mock fallback. Mirrors
+    // the encounter-join shape used by `getPopulationRiskProfile` below.
+    const now = Date.now();
+
     return Promise.all(
       patientIds.map(async (id) => {
-        const [patient, risk, tasks, conditions] = await Promise.all([
+        const [patient, risk, tasks, conditions, encounters] = await Promise.all([
           this.fhirFetch<any>(`/Patient/${id}`),
           this.fhirFetch<FhirBundle<any>>(`/RiskAssessment?subject=Patient/${id}`),
           this.fhirFetch<FhirBundle<any>>(`/Task?subject=Patient/${id}`),
           this.fhirFetch<FhirBundle<any>>(`/Condition?subject=Patient/${id}`),
+          this.fhirFetch<FhirBundle<any>>(`/Encounter?subject=Patient/${id}`),
         ]);
         const name = patient.name?.[0];
         const riskScore = Math.round((risk.entry?.[0]?.resource.prediction?.[0]?.probabilityDecimal ?? 0) * 100);
         const conditionTags = (conditions.entry ?? [])
           .slice(0, 2)
           .map((e) => shortConditionTag(e.resource.code?.coding?.[0]?.code, e.resource.code?.text ?? ''));
+
+        // Most-recent Encounter.period.end wins. Ongoing encounters (no
+        // `end`) are skipped. No encounters at all → null so the UI shows
+        // "—" instead of fabricating a value.
+        let lastEncounterEnd: number | null = null;
+        for (const e of encounters.entry ?? []) {
+          const end = e.resource?.period?.end;
+          if (!end) continue;
+          const t = new Date(end).getTime();
+          if (Number.isFinite(t) && (lastEncounterEnd === null || t > lastEncounterEnd)) {
+            lastEncounterEnd = t;
+          }
+        }
+        const daysSinceContact =
+          lastEncounterEnd === null
+            ? null
+            : Math.max(0, Math.floor((now - lastEncounterEnd) / (24 * 60 * 60 * 1000)));
+
         return {
           id,
           name: [name?.given?.join(' '), name?.family].filter(Boolean).join(' '),
@@ -499,6 +527,7 @@ export class FhirReadService {
           riskScore,
           taskCount: tasks.entry?.length ?? 0,
           conditionTags,
+          daysSinceContact,
         };
       })
     );
