@@ -121,8 +121,10 @@ function fixtureReview(): unknown {
         actionPlanner: { notes: '' },
       },
       {
-        // James: all dims endorse. Source stays 'dev', but clinicianOverride slot
-        // is still recorded (reviewer engaged with this row).
+        // James: all dims endorse, NO notes. Source stays 'dev'; clinicianOverride
+        // slot is still recorded (reviewer engaged with this row). The
+        // "endorse-only-with-no-notes" path is the only path that keeps
+        // `source: 'dev'` per grill-secondary-gaps.md §3.
         patientId: 'james-okafor',
         originalSource: 'dev',
         source: 'clinician',
@@ -131,19 +133,19 @@ function fixtureReview(): unknown {
           endorsed: true,
           abstained: false,
           overrideExpectedHasGap: null,
-          notes: 'Reviewed — agree this is unlabeled',
+          notes: '',
         },
         risk: {
           endorsed: true,
           abstained: false,
           overrideExpectedHighRisk: false,
-          notes: 'Endorsed',
+          notes: '',
         },
         sdoh: {
           endorsed: true,
           abstained: false,
           overrideExpectedHasBarrier: true,
-          notes: 'Endorsed',
+          notes: '',
         },
         actionPlanner: { notes: '' },
       },
@@ -240,6 +242,42 @@ describe('applyReview (S14 commit 2 — review:apply round-trip)', () => {
         errors: expect.any(Array),
       }),
     );
+  });
+
+  it('flips source to clinician when all dims endorse but notes are non-empty (grill §3 "touched" trigger)', () => {
+    // Per grill-secondary-gaps.md §3: a row is "touched" (and flips
+    // source: 'clinician') when ANY dim is non-endorse OR ANY dim carries
+    // non-empty notes. This test pins the notes trigger — the previous
+    // round-trip test exercises override + endorse + abstain, but not the
+    // "endorse + clinical notes" path that an actual clinician using the
+    // form would hit when they want to add context without overriding.
+    const labelsPath = path.join(tmpDir, 'labels.json');
+    const reviewPath = path.join(tmpDir, 'labels.clinician-review.json');
+
+    const labels = fixtureLabels();
+    writeJson(labelsPath, labels);
+    const review = fixtureReview() as { patients: Array<{ patientId: string; careGap: any; risk: any; sdoh: any }> };
+    // Marge: all endorse BUT with a clinical note on risk.
+    // Pre-fix this would stay source: 'dev' (the bug we just fixed).
+    const mariaIdx = review.patients.findIndex((p) => p.patientId === 'maria-chen');
+    review.patients[mariaIdx] = {
+      patientId: 'maria-chen',
+      careGap: { endorsed: true, abstained: false, overrideExpectedHasGap: false, notes: '' },
+      risk: { endorsed: true, abstained: false, overrideExpectedHighRisk: false, notes: 'Clinically: medication adjustment brings risk below 75 threshold' },
+      sdoh: { endorsed: true, abstained: false, overrideExpectedHasBarrier: true, notes: '' },
+    };
+    writeJson(reviewPath, review);
+
+    applyReview(reviewPath, labelsPath);
+
+    const after = JSON.parse(fs.readFileSync(labelsPath, 'utf-8')) as LabelsFile;
+    const maria = after.patients.find((p) => p.patientId === 'maria-chen')!;
+    // Source flipped to clinician because of the non-empty note, even though
+    // every dim is endorse. Values unchanged (no override happened).
+    expect(maria.source).toBe('clinician');
+    expect(maria.risk.expectedHighRisk).toBe(true); // unchanged — endorse, not override
+    expect((maria.clinicianOverride as any).dims.risk.endorsed).toBe(true);
+    expect((maria.clinicianOverride as any).dims.risk.notes).toMatch(/Clinically/);
   });
 
   it('throws on unknown patient ID and does not mutate labels.json', () => {

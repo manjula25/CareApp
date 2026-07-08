@@ -220,10 +220,15 @@ export function applyReview(reviewPath: string, labelsPath: string = LABELS_PATH
     const hasOverride = careGapChoice === 'override' || riskChoice === 'override' || sdohChoice === 'override';
     const hasAbstain = careGapChoice === 'abstain' || riskChoice === 'abstain' || sdohChoice === 'abstain';
     const allEndorse = careGapChoice === 'endorse' && riskChoice === 'endorse' && sdohChoice === 'endorse';
+    // Per grill-secondary-gaps.md §3: a row is "touched" when ANY dim is
+    // non-endorse OR ANY dim carries non-empty notes. The notes trigger is
+    // deliberate — a reviewer who adds a clinical observation without
+    // overriding still contributed clinician input, and the eval-report's
+    // "X of N clinician-validated" disclosure should count them.
+    const hasNotes = !!(pr.careGap.notes?.trim() || pr.risk.notes?.trim() || pr.sdoh.notes?.trim());
 
-    // 1. Flip source — only when touched by override or abstain (per D3);
-    //    "all endorse" leaves `source: 'dev'` but still records the slot.
-    if (hasOverride || hasAbstain) {
+    // 1. Flip source — touched by override, abstain, OR non-empty notes.
+    if (hasOverride || hasAbstain || hasNotes) {
       patient.source = 'clinician';
     }
 
