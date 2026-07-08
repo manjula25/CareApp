@@ -72,6 +72,32 @@ export function validateCitations<T extends { fhirResourceId: string }>(
   );
 }
 
+/**
+ * S14 Commit 3 — rewriter helper that the citation-validator integration
+ * (`routes/analysis.ts`'s post-validation step) uses to write a per-finding
+ * `confidence` number into each surviving item. Keeps the scorer out of
+ * `validateCitations`'s own signature (so all the existing validation-only
+ * tests stay regression-clean), but lives in this module so the seam where
+ * confidence lands is co-located with the citation-validation seam it's
+ * paired with. Pure, no I/O.
+ *
+ * Items are not mutated — a new array is returned. Items whose
+ * `scoreFn` returns undefined are passed through with their existing
+ * `confidence` field (if any) untouched, so a future caller that doesn't
+ * want to score a particular item type can pass a partial function without
+ * breaking unrelated items.
+ */
+export function applyConfidence<T extends { fhirResourceId: string; confidence?: number }>(
+  items: T[],
+  scoreFn: (item: T) => number | undefined
+): T[] {
+  return items.map((item) => {
+    const score = scoreFn(item);
+    if (score === undefined || score === null) return item;
+    return { ...item, confidence: score };
+  });
+}
+
 const CITATION_PATTERN = /\b[A-Z][A-Za-z]*\/[A-Za-z0-9][A-Za-z0-9._-]*\b/g;
 
 /**

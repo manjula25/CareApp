@@ -10,48 +10,72 @@ export type AgentId = 'risk' | 'careGap' | 'sdoh' | 'actionPlanner';
 
 // --- Per-agent structured outputs (each item carries its citation id(s)). ---
 
-export interface RiskOutput {
-  riskScore: number;
-  riskLevel: 'low' | 'moderate' | 'high' | 'critical';
-  flags: AgentFlag[];
-  readmissionProbability: number;
+// S14 D4 — each finding shape carries a `confidence: number` (0-1) that the
+// heuristic scorer (apps/api/src/agents/confidenceScorer.ts) writes into the
+// validated output. The model's raw output starts at a placeholder (see
+// `mock-outputs.ts`'s 0.5 fill); the citation validator runs the scorer on
+// each surviving finding and overwrites the field. The number is a
+// property of the bundle + finding, NOT of model self-report.
+
+export interface RiskFlag extends AgentFlag {
+  confidence: number;
+}
+
+export interface CareGapFinding {
+  gapType: string;
+  description: string;
+  lastDone?: string;
+  dueDate?: string;
+  urgency: string;
+  fhirResourceId: string;
+  confidence: number;
+}
+
+export interface SdohBarrierFinding {
+  domain: string;
+  finding: string;
+  severity: string;
+  fhirResourceId: string;
+  confidence: number;
+}
+
+export interface ActionPlannerTaskFinding {
+  title: string;
+  description: string;
+  priority: string;
+  // Which access-scope domain this task belongs to. The model self-reports
+  // it per task (it knows which upstream agent's finding each task
+  // synthesizes); consumed downstream to write a Task.meta.tag coding —
+  // not Task.category, which FHIR R4's Task has no element for (S7 A0).
+  domain: 'clinical' | 'sdoh';
+  assignTo?: string;
+  dueInDays?: number;
+  fhirResources: string[];
+  // Action Planner task confidence is DERIVED from the contributing findings
+  // (min of each cited finding's confidence, floor 0.2) — see
+  // `deriveActionPlannerTaskConfidence` in confidenceScorer.ts. Never scored
+  // from bundle evidence directly.
+  confidence: number;
 }
 
 export interface CareGapOutput {
-  gaps: {
-    gapType: string;
-    description: string;
-    lastDone?: string;
-    dueDate?: string;
-    urgency: string;
-    fhirResourceId: string;
-  }[];
+  gaps: CareGapFinding[];
 }
 
 export interface SdohOutput {
-  barriers: {
-    domain: string;
-    finding: string;
-    severity: string;
-    fhirResourceId: string;
-  }[];
+  barriers: SdohBarrierFinding[];
   referralsNeeded: string[];
 }
 
 export interface ActionPlannerOutput {
-  tasks: {
-    title: string;
-    description: string;
-    priority: string;
-    // Which access-scope domain this task belongs to. The model self-reports
-    // it per task (it knows which upstream agent's finding each task
-    // synthesizes); consumed downstream to write a Task.meta.tag coding —
-    // not Task.category, which FHIR R4's Task has no element for (S7 A0).
-    domain: 'clinical' | 'sdoh';
-    assignTo?: string;
-    dueInDays?: number;
-    fhirResources: string[];
-  }[];
+  tasks: ActionPlannerTaskFinding[];
+}
+
+export interface RiskOutput {
+  riskScore: number;
+  riskLevel: 'low' | 'moderate' | 'high' | 'critical';
+  flags: RiskFlag[];
+  readmissionProbability: number;
 }
 
 /**

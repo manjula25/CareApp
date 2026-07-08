@@ -36,6 +36,7 @@ describe('runCareGapAgent (mocked OpenAI client, no live call)', () => {
           dueDate: '2026-05-01',
           urgency: 'high',
           fhirResourceId: 'Observation/maria-chen-a1c',
+          confidence: 0.5,
         },
       ],
     };

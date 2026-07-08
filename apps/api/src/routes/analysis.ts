@@ -4,7 +4,8 @@ import { requireAuth } from '../middleware/auth';
 import { FhirReadService, PatientBundle, ScopeDeniedError, FhirNotFoundError } from '../fhir/client';
 import { orchestrate } from '../agents/orchestrator';
 import { AgentEvent, AgentId } from '../agents/agent';
-import { validateCitations, validateCitationList, createNarrationBuffer, NarrationBuffer, AgentFlag } from '../agents/citationValidator';
+import { validateCitations, validateCitationList, applyConfidence, createNarrationBuffer, NarrationBuffer, AgentFlag } from '../agents/citationValidator';
+import { scoreRiskFlag, scoreCareGap, scoreSdohBarrier, deriveActionPlannerTaskConfidence, FindingWithConfidence } from '../agents/confidenceScorer';
 import { readAnalysisCache, writeAnalysisCache, AnalysisCacheEntry, AnalysisCacheRow } from '../db/analysisCache';
 import { getMockAnalysis } from './mockAnalysis';
 import { writeAudit } from '../db/audit';
@@ -75,6 +76,7 @@ export interface AnalysisResultJson {
       assignTo?: string;
       dueInDays?: number;
       fhirResources: string[];
+      confidence: number;
     }[];
     complete: { findingCount: number; droppedCount: number };
   };
@@ -280,6 +282,16 @@ export function createAnalysisRouter(
       actionPlanner: { narration: '', tasks: [], complete: { findingCount: 0, droppedCount: 0 } },
     };
 
+    // S14 Commit 3 — collects every validated (post-GD11) finding's
+    // (fhirResourceId, confidence) pair as each classifier agent's result
+    // arrives, so the Action Planner's `deriveActionPlannerTaskConfidence`
+    // has the upstream findings in hand by the time its own result event
+    // lands. The orchestrator runs Risk/CareGap/SDOH concurrently and only
+    // schedules Action Planner once all three are exhausted (see
+    // orchestrator.ts), so by the time we hit the `else` branch below, the
+    // three `agentFindings.push(...)` calls above have already happened.
+    const agentFindings: FindingWithConfidence[] = [];
+
     // Accumulates ONLY the safe (GD11-redacted, actually-emitted) narration
     // text per agent, so the cache captures exactly what streamed and a
     // replay re-emits the same prose — never the raw model tokens.
@@ -310,34 +322,48 @@ export function createAnalysisRouter(
         // retrieved bundle.
         if (event.agentId === 'risk') {
           const { valid, dropped } = validateCitations(event.output.flags, bundle.validIds);
-          for (const flag of valid) {
-            writeSseEvent(res, 'finding', { agentId: 'risk', ...flag });
+          // S14 Commit 3 — score each surviving flag with the bundle-evidence
+          // heuristic (citation count + abnormal lab + recent encounter).
+          // Dropped flags get no score (they never reach the client).
+          const scored = applyConfidence(valid, (flag) => scoreRiskFlag(flag, bundle));
+          for (const finding of scored) {
+            agentFindings.push({ fhirResourceId: finding.fhirResourceId, confidence: finding.confidence });
+            writeSseEvent(res, 'finding', { agentId: 'risk', ...finding });
           }
           const complete = {
             riskScore: event.output.riskScore,
             riskLevel: event.output.riskLevel,
             readmissionProbability: event.output.readmissionProbability,
-            findingCount: valid.length,
+            findingCount: scored.length,
             droppedCount: dropped.length,
           };
           writeSseEvent(res, 'complete', { agentId: 'risk', ...complete });
-          resultJson.risk = { narration: narrationText.get('risk') ?? '', findings: valid, complete };
+          resultJson.risk = { narration: narrationText.get('risk') ?? '', findings: scored, complete };
         } else if (event.agentId === 'careGap') {
           const { valid, dropped } = validateCitations(event.output.gaps, bundle.validIds);
-          for (const gap of valid) {
-            writeSseEvent(res, 'finding', { agentId: 'careGap', ...gap });
+          // S14 Commit 3 — score each surviving gap from the Condition →
+          // required LOINC mapping (mirrors data/eval/labels.json's
+          // _meta.labelingRules.careGap).
+          const scored = applyConfidence(valid, (gap) => scoreCareGap(gap, bundle));
+          for (const finding of scored) {
+            agentFindings.push({ fhirResourceId: finding.fhirResourceId, confidence: finding.confidence });
+            writeSseEvent(res, 'finding', { agentId: 'careGap', ...finding });
           }
-          const complete = { findingCount: valid.length, droppedCount: dropped.length };
+          const complete = { findingCount: scored.length, droppedCount: dropped.length };
           writeSseEvent(res, 'complete', { agentId: 'careGap', ...complete });
-          resultJson.careGap = { narration: narrationText.get('careGap') ?? '', findings: valid, complete };
+          resultJson.careGap = { narration: narrationText.get('careGap') ?? '', findings: scored, complete };
         } else if (event.agentId === 'sdoh') {
           const { valid, dropped } = validateCitations(event.output.barriers, bundle.validIds);
-          for (const barrier of valid) {
-            writeSseEvent(res, 'finding', { agentId: 'sdoh', ...barrier });
+          // S14 Commit 3 — score each surviving barrier by whether the cited
+          // resource is a real AHC-HRSN Observation with positive screening.
+          const scored = applyConfidence(valid, (barrier) => scoreSdohBarrier(barrier, bundle));
+          for (const finding of scored) {
+            agentFindings.push({ fhirResourceId: finding.fhirResourceId, confidence: finding.confidence });
+            writeSseEvent(res, 'finding', { agentId: 'sdoh', ...finding });
           }
-          const complete = { findingCount: valid.length, droppedCount: dropped.length, referralsNeeded: event.output.referralsNeeded };
+          const complete = { findingCount: scored.length, droppedCount: dropped.length, referralsNeeded: event.output.referralsNeeded };
           writeSseEvent(res, 'complete', { agentId: 'sdoh', ...complete });
-          resultJson.sdoh = { narration: narrationText.get('sdoh') ?? '', findings: valid, complete };
+          resultJson.sdoh = { narration: narrationText.get('sdoh') ?? '', findings: scored, complete };
         } else {
           // actionPlanner — all-or-nothing per task (validateCitationList): a
           // task whose citations ALL drop must never reach HAPI. `valid` is
@@ -349,12 +375,21 @@ export function createAnalysisRouter(
             bundle.validIds
           );
 
+          // S14 Commit 3 — Action Planner task confidence is DERIVED from the
+          // three classifier agents' already-collected findings (pushed above
+          // as each result event arrived). `deriveActionPlannerTaskConfidence`
+          // returns one number per task in input order; we zip them back onto
+          // the surviving task objects so they ride the SSE + cache row
+          // alongside the validated task shape.
+          const taskConfidences = deriveActionPlannerTaskConfidence(valid, agentFindings);
+          const validWithConfidence = valid.map((task, i) => ({ ...task, confidence: taskConfidences[i] }));
+
           // Always call replacePatientTasks, even with an empty `valid`, so a
           // re-run with zero surviving tasks still clears prior CareSync
           // Tasks for this patient (B2's replace guarantee).
-          const created = await fhirService.replacePatientTasks(req.auth!, patientId, valid);
+          const created = await fhirService.replacePatientTasks(req.auth!, patientId, validWithConfidence);
           const tasks = created.map((task, i) => {
-            const source = valid[i];
+            const source = validWithConfidence[i];
             return {
               id: task.id,
               reference: `Task/${task.id}`,
@@ -365,11 +400,12 @@ export function createAnalysisRouter(
               assignTo: source.assignTo,
               dueInDays: source.dueInDays,
               fhirResources: source.fhirResources,
+              confidence: source.confidence,
             };
           });
           tasks.forEach((task) => writeSseEvent(res, 'task', { agentId: 'actionPlanner', ...task }));
 
-          const complete = { findingCount: valid.length, droppedCount: dropped.length };
+          const complete = { findingCount: validWithConfidence.length, droppedCount: dropped.length };
           writeSseEvent(res, 'complete', { agentId: 'actionPlanner', ...complete });
           resultJson.actionPlanner = { narration: narrationText.get('actionPlanner') ?? '', tasks, complete };
         }

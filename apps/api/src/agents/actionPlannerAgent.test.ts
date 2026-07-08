@@ -21,7 +21,7 @@ describe('runActionPlannerAgent (mocked OpenAI client, no live call)', () => {
   const risk: RiskOutput = {
     riskScore: 82,
     riskLevel: 'high',
-    flags: [{ text: 'Recent CHF exacerbation', fhirResourceId: 'Condition/chf-1' }],
+    flags: [{ text: 'Recent CHF exacerbation', fhirResourceId: 'Condition/chf-1', confidence: 0.5 }],
     readmissionProbability: 0.4,
   };
   const careGap: CareGapOutput = {
@@ -31,11 +31,12 @@ describe('runActionPlannerAgent (mocked OpenAI client, no live call)', () => {
         description: 'Overdue A1c check',
         urgency: 'high',
         fhirResourceId: 'Observation/a1c-1',
+        confidence: 0.5,
       },
     ],
   };
   const sdoh: SdohOutput = {
-    barriers: [{ domain: 'housing', finding: 'Housing instability', severity: 'high', fhirResourceId: 'QuestionnaireResponse/ahc-hrsn-1' }],
+    barriers: [{ domain: 'housing', finding: 'Housing instability', severity: 'high', fhirResourceId: 'QuestionnaireResponse/ahc-hrsn-1', confidence: 0.5 }],
     referralsNeeded: ['Housing assistance program'],
   };
   const inputs = { risk, careGap, sdoh };
@@ -53,6 +54,7 @@ describe('runActionPlannerAgent (mocked OpenAI client, no live call)', () => {
           assignTo: 'care coordinator',
           dueInDays: 7,
           fhirResources: ['Observation/a1c-1'],
+          confidence: 0.5,
         },
         {
           title: 'Coordinate housing referral',
@@ -60,6 +62,7 @@ describe('runActionPlannerAgent (mocked OpenAI client, no live call)', () => {
           priority: 'critical',
           domain: 'sdoh',
           fhirResources: ['QuestionnaireResponse/ahc-hrsn-1', 'Condition/chf-1'],
+          confidence: 0.5,
         },
       ],
     };

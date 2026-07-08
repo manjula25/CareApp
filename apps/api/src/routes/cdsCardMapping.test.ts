@@ -34,6 +34,7 @@ function cannedResult(overrides: Partial<AnalysisResultJson> = {}): AnalysisResu
           description: 'Address CHF readmission risk',
           priority: 'high',
           fhirResources: ['Condition/chf-1'],
+          confidence: 0.5,
         },
       ],
       complete: { findingCount: 1, droppedCount: 0 },

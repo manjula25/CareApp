@@ -48,9 +48,9 @@ const MOCK_ANALYSIS_JSON: Record<string, AnalysisResultJson> = {
     actionPlanner: {
       narration: 'Synthesizing the risk, care-gap, and SDOH findings into a prioritized action plan.',
       tasks: [
-        { id: 'mock-act-1', reference: 'Task/mock-act-1', title: 'Schedule 48h post-discharge follow-up call TODAY', description: 'Cardiology follow-up within 72h — BNP elevation at 420 pg/mL', priority: 'critical', assignTo: 'coordinator', dueInDays: 0, fhirResources: ['Encounter/enc-discharge-4829'] },
-        { id: 'mock-act-2', reference: 'Task/mock-act-2', title: 'Refer to Meals on Wheels', description: 'Food insecurity + transportation gap — coordinate community resources', priority: 'high', domain: 'sdoh', assignTo: 'social_worker', dueInDays: 3, fhirResources: ['QuestionnaireResponse/ahc-4829'] },
-        { id: 'mock-act-3', reference: 'Task/mock-act-3', title: 'Coordinate diabetic eye exam referral', description: 'Annual diabetic eye exam overdue by 14 months', priority: 'high', assignTo: 'coordinator', dueInDays: 30, fhirResources: ['CarePlan/cp-4829'] },
+        { id: 'mock-act-1', reference: 'Task/mock-act-1', title: 'Schedule 48h post-discharge follow-up call TODAY', description: 'Cardiology follow-up within 72h — BNP elevation at 420 pg/mL', priority: 'critical', assignTo: 'coordinator', dueInDays: 0, fhirResources: ['Encounter/enc-discharge-4829'], confidence: 0.5 },
+        { id: 'mock-act-2', reference: 'Task/mock-act-2', title: 'Refer to Meals on Wheels', description: 'Food insecurity + transportation gap — coordinate community resources', priority: 'high', domain: 'sdoh', assignTo: 'social_worker', dueInDays: 3, fhirResources: ['QuestionnaireResponse/ahc-4829'], confidence: 0.5 },
+        { id: 'mock-act-3', reference: 'Task/mock-act-3', title: 'Coordinate diabetic eye exam referral', description: 'Annual diabetic eye exam overdue by 14 months', priority: 'high', assignTo: 'coordinator', dueInDays: 30, fhirResources: ['CarePlan/cp-4829'], confidence: 0.5 },
       ],
       complete: { findingCount: 3, droppedCount: 0 },
     },

@@ -80,7 +80,7 @@ describe('runRiskAgent (B1 revised — mocked OpenAI client, no live call)', () 
     const output: RiskOutput = {
       riskScore: 87,
       riskLevel: 'critical',
-      flags: [{ text: 'Elevated BNP consistent with CHF exacerbation', fhirResourceId: 'Observation/maria-chen-bnp' }],
+      flags: [{ text: 'Elevated BNP consistent with CHF exacerbation', fhirResourceId: 'Observation/maria-chen-bnp', confidence: 0.5 }],
       readmissionProbability: 0.62,
     };
     const createFn = jest.fn().mockResolvedValue(

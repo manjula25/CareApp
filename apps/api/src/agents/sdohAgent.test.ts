@@ -34,6 +34,7 @@ describe('runSdohAgent (mocked OpenAI client, no live call)', () => {
           finding: 'Patient reports housing instability on the AHC-HRSN screening.',
           severity: 'high',
           fhirResourceId: 'QuestionnaireResponse/maria-chen-ahc-hrsn',
+          confidence: 0.5,
         },
       ],
       referralsNeeded: ['Housing assistance program'],

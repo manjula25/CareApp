@@ -34,8 +34,8 @@ async function* stubOrchestrate(): AsyncIterable<AgentEvent> {
     riskScore: 87,
     riskLevel: 'critical',
     flags: [
-      { text: 'CHF diagnosis drives elevated readmission risk', fhirResourceId: VALID_ID },
-      { text: 'hallucinated finding', fhirResourceId: 'Condition/does-not-exist' },
+      { text: 'CHF diagnosis drives elevated readmission risk', fhirResourceId: VALID_ID, confidence: 0.5 },
+      { text: 'hallucinated finding', fhirResourceId: 'Condition/does-not-exist', confidence: 0.5 },
     ],
     readmissionProbability: 0.7,
   };
@@ -43,14 +43,14 @@ async function* stubOrchestrate(): AsyncIterable<AgentEvent> {
 
   yield { type: 'token', agentId: 'careGap', text: 'Checking preventive care gaps...' };
   const careGapOutput: CareGapOutput = {
-    gaps: [{ gapType: 'screening', description: 'Overdue HbA1c recheck', urgency: 'high', fhirResourceId: VALID_ID }],
+    gaps: [{ gapType: 'screening', description: 'Overdue HbA1c recheck', urgency: 'high', fhirResourceId: VALID_ID, confidence: 0.5 }],
   };
   yield { type: 'result', agentId: 'careGap', output: careGapOutput };
 
   yield { type: 'token', agentId: 'sdoh', text: 'Screening for social barriers...' };
   const sdohOutput: SdohOutput = {
     barriers: [
-      { domain: 'transportation', finding: 'No reliable transportation to follow-up visits', severity: 'moderate', fhirResourceId: VALID_ID },
+      { domain: 'transportation', finding: 'No reliable transportation to follow-up visits', severity: 'moderate', fhirResourceId: VALID_ID, confidence: 0.5 },
     ],
     referralsNeeded: ['transportation-assistance'],
   };
@@ -59,8 +59,8 @@ async function* stubOrchestrate(): AsyncIterable<AgentEvent> {
   yield { type: 'token', agentId: 'actionPlanner', text: 'Synthesizing worklist...' };
   const actionPlannerOutput: ActionPlannerOutput = {
     tasks: [
-      { title: 'Schedule cardiology follow-up', description: 'Address CHF readmission risk', priority: 'high', domain: 'clinical', dueInDays: 5, fhirResources: [VALID_ID] },
-      { title: 'Bogus outreach task', description: 'Cites nothing real', priority: 'medium', domain: 'sdoh', fhirResources: ['Condition/does-not-exist'] },
+      { title: 'Schedule cardiology follow-up', description: 'Address CHF readmission risk', priority: 'high', domain: 'clinical', dueInDays: 5, fhirResources: [VALID_ID], confidence: 0.5 },
+      { title: 'Bogus outreach task', description: 'Cites nothing real', priority: 'medium', domain: 'sdoh', fhirResources: ['Condition/does-not-exist'], confidence: 0.5 },
     ],
   };
   yield { type: 'result', agentId: 'actionPlanner', output: actionPlannerOutput };
@@ -93,8 +93,8 @@ function twoValidTasksAgent(): () => AsyncIterable<AgentEvent> {
     yield { type: 'token', agentId: 'actionPlanner', text: 'Planning...' };
     const output: ActionPlannerOutput = {
       tasks: [
-        { title: 'Run 1 Task A', description: 'first', priority: 'high', domain: 'clinical', fhirResources: [VALID_ID] },
-        { title: 'Run 1 Task B', description: 'second', priority: 'medium', domain: 'clinical', fhirResources: [VALID_ID] },
+        { title: 'Run 1 Task A', description: 'first', priority: 'high', domain: 'clinical', fhirResources: [VALID_ID], confidence: 0.5 },
+        { title: 'Run 1 Task B', description: 'second', priority: 'medium', domain: 'clinical', fhirResources: [VALID_ID], confidence: 0.5 },
       ],
     };
     yield { type: 'result', agentId: 'actionPlanner', output };
@@ -105,7 +105,7 @@ function oneValidTaskAgent(): () => AsyncIterable<AgentEvent> {
   return async function* () {
     yield { type: 'token', agentId: 'actionPlanner', text: 'Planning...' };
     const output: ActionPlannerOutput = {
-      tasks: [{ title: 'Run 2 Task C', description: 'only survivor', priority: 'high', domain: 'clinical', fhirResources: [VALID_ID] }],
+      tasks: [{ title: 'Run 2 Task C', description: 'only survivor', priority: 'high', domain: 'clinical', fhirResources: [VALID_ID], confidence: 0.5 }],
     };
     yield { type: 'result', agentId: 'actionPlanner', output };
   };
@@ -161,6 +161,7 @@ function cachedResultFromStub(taskId: string): AnalysisResultJson {
           domain: 'clinical',
           dueInDays: 5,
           fhirResources: [VALID_ID],
+          confidence: 0.5,
         },
       ],
       complete: { findingCount: 1, droppedCount: 1 },
