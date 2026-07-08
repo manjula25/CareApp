@@ -1,9 +1,63 @@
 # Code Review — CareSync AI, S14 (Close 4 Secondary Gaps)
 
 > **PLAN_ID:** `caresync-ai` · **Slice:** S14 · **Date:** 2026-07-08
-> **Branch:** `feature/s14-secondary-gaps` (5 commits: `e61382c` spec + `b807aaf`/`ab3baf4`/`3cbe8dc`/`5e73c68`/`c6587f1` implementation)
+> **Branch:** `feature/s14-secondary-gaps` (8 commits: `e61382c` spec + `b807aaf`/`ab3baf4`/`3cbe8dc`/`5e73c68`/`c6587f1`/`a31fb6d`/`b3f8167` implementation + review)
 > **Specs:** `docs/plans/caresync-ai/grill-secondary-gaps.md`, `docs/plans/caresync-ai/prd-s14.md`, `docs/plans/caresync-ai/implementation-plan-s14.md`, `docs/plans/caresync-ai/verification-s14.md`
-> **Diff summary (5 commits vs base `169174b`):** +2555 / -194 across 30 files; 3 new modules (`apply-clinician-review.ts`, `confidenceScorer.ts`, `smartAuth.ts`); 8 modified files (`seed-patients.ts`, `population.ts`, `labels.json`, `agent.ts`, `citationValidator.ts`, `docker-compose.yml`, `index.ts`, `package.json`); 1 follow-through modification (`computeMetrics.ts` + `eval.ts` for the SDOH matrix + Status disclosure).
+> **Diff summary (8 commits vs base `169174b`):** +2897 / -245 across 37 files; 3 new modules (`apply-clinician-review.ts`, `confidenceScorer.ts`, `smartAuth.ts`); 8 modified files (`seed-patients.ts`, `population.ts`, `labels.json`, `agent.ts`, `citationValidator.ts`, `docker-compose.yml`, `index.ts`, `package.json`); 1 follow-through modification (`computeMetrics.ts` + `eval.ts` for the SDOH matrix + Status disclosure); 1 code-review fix commit (`b3f8167`).
+> **External review:** Standards + Spec axes run as parallel sub-agents per the repo's `code-review` skill. Findings aggregated below; the one real defect was fixed in `b3f8167` before this review was finalized.
+
+---
+
+## External review (two-axis) — aggregated
+
+### Standards axis
+
+The repo has no `CODING_STANDARDS.md`, no `CONTRIBUTING.md`, and no `.eslintrc`. The closest documented standard is `CLAUDE.md` (ADLC process rules + UI fidelity + verification rules + evidence boundaries). The sub-agent confirmed `CLAUDE.md` is honored across the slice: branch off main, plan before code, honest deferrals, data-driven eval disclosure, no UI scope.
+
+**Baseline smells (Fowler ch.3, all judgement calls, all left as-is with reasoning):**
+
+| File | Smell | Why left as-is |
+|---|---|---|
+| `apply-clinician-review.ts` (lines 68-85, 191-197, 253-259) | Duplicated Code + Data Clump | The 3 dim shapes (careGap/risk/sdoh) genuinely are 3 separate TypeScript interfaces with 3 separate field names (no shared base class) — collapsing them via a single loop keyed on a `[{dim, field, ...}]` table would replace 3 lines of explicit type-safe mutation with a dynamic-dispatch reflection-style table that's harder to audit. Ponytail pass explicitly rejected this; the "shape repeated 3 times" matches the render-clinician-review.ts inverse contract. |
+| `apply-clinician-review.ts:276-283` (`extractOverrideValue`) | Middle Man | The function is 8 lines and reduces 3 unsafe casts to 1 typed extraction. Inlining would put 3 unsafe casts in the caller. Keep. |
+| `confidenceScorer.ts:246-259` (`deriveActionPlannerTaskConfidence`) | Speculative Generality | The trailing `Number.isFinite(minConf) ? minConf : 0.2` is unreachable per the sub-agent. **Could be tightened to `return Math.min(...matching.map(...))`; deferred as a code-style micro-fix not worth its own commit.** |
+| `smartAuth.ts:143-153` (`audience` branch) | Speculative Generality | The docstring explicitly states the token server doesn't currently set `aud`, and `index.ts` never passes `SMART_AUDIENCE`. The branch is defensive code for the production SMART handoff noted in `verification-s14.md` §6 #2 (point HAPI at a real SMART auth server, which DOES set `aud`). Keep as defensive readiness. |
+| `citationValidator.ts:90-99` (`applyConfidence`'s `scoreFn` return type) | Speculative Generality | The `number \| undefined` return type admits a "no score, pass through" bypass. No caller uses it. Could be tightened to `number`; deferred for the same reason as `deriveActionPlannerTaskConfidence`. |
+| `seed-patients.ts:43-57` (`sdohPositive` + `sdohNegative`) | Data Clump | The two optional fields have identical shape. Could be collapsed to `screening?: { id; note; result: 'positive' \| 'negative' }`. **Left as-is** because (a) the field names match the spec's exact wording (`sdohPositive`/`sdohNegative` in grill Q1 and the implementation plan), (b) absence-of-both is a third meaningful state (untouched by this slice), and (c) the import-fhir.ts push runs both branches symmetrically — collapsing would require a discriminator switch in 2 places instead of 2 simple if-pushes. |
+| `population.ts:145-159` (`buildSdohForIndex`) | Speculative Generality (mild) | Hard-codes `i === 9` / `i === 4` as the only two screened patients. The comment acknowledges this is "this slice" only. A `SCREENED_INDICES` table would be more declarative, but for 2 entries the constant-overhead is the same. Keep. |
+
+### Spec axis
+
+**Real defect — found and fixed in `b3f8167`:**
+
+> `apply-clinician-review.ts` skipped the "any non-empty notes" trigger. Grill-secondary-gaps.md §3 says: *"For every row touched (any dim with a non-`endorse` choice or any non-empty notes), set `source: 'clinician'.'"* The pre-fix code only flipped source on `hasOverride || hasAbstain`; a reviewer who added notes to an "endorse" row would not mark it clinician-validated. Affected the eval-report "X of N clinician-validated" disclosure whenever a clinician used the notes field.
+
+Fixed: added a `hasNotes` check (any careGap/risk/sdoh notes non-empty after trim) to the source-flip guard. The existing round-trip test's james-okafor fixture had non-empty 'Endorsed' notes while asserting source stayed 'dev' — that pinned the bug. Updated the fixture to use empty notes (preserves the "all-endorse-stays-dev" assertion under the correct precondition) + added a new test "flips source to clinician when all dims endorse but notes are non-empty (grill §3 'touched' trigger)" that pins the notes path.
+
+**Documented design tradeoff — not a defect:**
+
+> SMART middleware does not verify against the configured public key. D6 + grill §5 + the plan all say "verifies the signature against the public key (same key HAPI trusts)." `smartAuth.ts` calls `verifyAccessToken(token, serverSecret)` — HS256, not the RSA `smart-public.pem` HAPI is configured to trust. The two halves of A+B do not share a trust root.
+
+This is a real deviation from the spec's literal wording. It's documented in:
+- `5e73c68`'s commit body `## Notes:` section (extensive — names the serverSecret decision, the requireAuth decision, the Phase D deferral)
+- `verification-s14.md` §1 + §6 #2 (production SMART handoff is the follow-up that would unify the trust root — point HAPI at a real SMART auth server)
+- This review's "Judgement calls" section below (re-stated)
+
+The deviation is forced by the existing token server (`apps/api/src/smart/tokenServer.ts:48-50`) which signs access tokens HS256 with `serverSecret`, not RS256 with the client's keypair. Verifying against the RSA public key would reject every legitimate token. The fix is a production-side change (rebuild HAPI from `hapi-fhir-jpaserver-starter`, which would also bring the security filter that Phase D is waiting on) — out of scope for S14.
+
+**Plan hygiene (not code defect):**
+
+> `scoreRiskFlag` expected value in `implementation-plan-s14.md` A1 is a math typo. Plan says expected 0.5 (0.3+0.2×1+0.2×1+0.2×0) — that's 0.7. Test (`confidenceScorer.test.ts:50`) correctly asserts 0.7. Future reader confusion is minor (the formula is spelled out in A2 and matches the test). Not fixing the plan doc — fixing would require a follow-up commit that's not load-bearing.
+
+**Confirmed correct:**
+
+SDOH 5 patient picks match grill Q1 exactly (james-okafor, angela-diaz, pop-0010 positive; robert-kim, pop-0005 explicit-negative). Three confidenceScorer formulas + derivation match plan A2 (the 0.7-not-0.5 expected value is in the test, which is correct). `applyConfidence` is wired in `analysis.ts:328/347/359/384` and runs on post-validation findings. 5/5 smartAuth tests pass; wrong-scope → 403 per D6. `eval.ts` (`c6587f1`) surfaces 3 of 4 E1 signals; confidence-bucket deferral is documented in `verification-s14.md` §6 #1.
+
+---
+
+## Standards
+
+**Convention match: strong.** All 5 implementation commits follow the established sibling-module style from S1–S13:
 
 ---
 
@@ -60,4 +114,4 @@
 - **Standards**: 2 mid-slice fixes (eval.ts follow-through, `server.ts` → `index.ts` correction), 6 judgement calls left as-is. Worst issues: (1) eval.ts was missed in the original 4 commits and required a Phase E follow-through, (2) the stock HAPI image lacks the security filter so Phase D curl can't be exercised until follow-up #2 lands. Both are documented in verification-s14.md §6 with explicit ownership.
 - **Spec**: 2 of 4 verification matrix rows deferred (rows 3 + 4). The slice closes 3 of 5 secondary gaps outright and makes real progress on #5 (app-tier guard shipped; HAPI-tier deferred). Gap #1 explicitly NOT pulled into S14 (correctly — S15 owns it).
 
-Re-verified after fixes: 5/5 smartAuth tests pass; 11/11 eval tests pass; 38/38 agent tests pass; 23/23 in the S14-touched surface (smartAuth + patients + analysis) pass; `tsc --noEmit` clean. Full suite: 279/280 pass with 1 pre-existing flake documented above. Slice ready to PR.
+Re-verified after fixes: 5/5 smartAuth tests pass; 3/3 apply-clinician-review tests pass (1 new test pins the grill §3 "non-empty notes" trigger); 11/11 eval tests pass; 38/38 agent tests pass; 23/23 in the S14-touched surface (smartAuth + patients + analysis) pass; `tsc --noEmit` clean. Full suite: 281/281 pass (the pre-existing flake in `analysis.test.ts` happened to pass this run). Slice ready to PR.
