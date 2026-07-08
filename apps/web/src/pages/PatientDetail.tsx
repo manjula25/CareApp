@@ -14,7 +14,6 @@ import {
 } from '../api/client';
 import { ageSexLabel, sexLabel } from '../lib/patient';
 import { useAnalysisGraph } from '../lib/analysisGraph';
-import { AgentGraph } from '../components/AgentGraph';
 import {
   MOCK_PATIENTS,
   DEFAULT_VITALS,
@@ -410,6 +409,130 @@ function ActionCard({ action, isCreated, onCreated }: ActionCardProps) {
         onClick={handleCreate}
         disabled={isCreated || loading}
         data-testid={`create-task-${action.citation}`}
+        className={`text-xs px-3 py-1 rounded border transition-colors ${
+          isCreated
+            ? 'bg-emerald-dim text-emerald border-emerald cursor-default'
+            : 'bg-surface-hover border border-border-light text-text-muted hover:border-cyan hover:text-cyan'
+        }`}
+      >
+        {isCreated ? 'Task Created ✓' : loading ? 'Creating…' : 'Create Task'}
+      </button>
+    </div>
+  );
+}
+
+// ── Panel-view sub-components (3-column layout, ported from lead) ───────────
+
+/** Lead's `AgentCard` adapted to the current project's `AgentFeedState`. Renders
+ *  the running-stream text and the complete-state findings list with severity
+ *  dots + FHIR citation + confidence. The status pill ("Complete — N findings"
+ *  / "Running" / "Idle") reuses the existing `statusLabel` helper. */
+function PanelAgentCard({ agentId, feed }: { agentId: AgentId; feed: AgentFeedState }) {
+  const status = statusLabel(feed);
+  const label =
+    status === 'complete'
+      ? `Complete — ${feed.findings.length} finding${feed.findings.length !== 1 ? 's' : ''}`
+      : status === 'running'
+        ? 'Running…'
+        : 'Idle';
+
+  return (
+    <div className="bg-surface-raised rounded-lg p-4 mb-3">
+      <div className="flex items-center gap-2 mb-2">
+        <StatusDot status={status} />
+        <span className="font-bold text-text text-sm">{AGENT_LABELS[agentId]}</span>
+        <span className="ml-auto text-text-dim text-xs">{label}</span>
+      </div>
+
+      {status === 'running' && feed.text && (
+        <p className="text-text-muted text-xs font-mono mt-1 leading-relaxed line-clamp-3">
+          {feed.text}
+        </p>
+      )}
+
+      {status === 'complete' && feed.findings.length > 0 && (
+        <ul className="mt-2 space-y-2">
+          {feed.findings.map((f, i) => {
+            const sev = coerceSeverity(f.severity ?? 'medium');
+            const text = f.text ?? f.finding ?? f.description ?? 'Untitled finding';
+            const conf = typeof f.confidence === 'number' ? f.confidence : null;
+            return (
+              <li key={`${f.fhirResourceId ?? 'finding'}-${i}`} className="flex gap-2 items-start">
+                <span className={`mt-1 flex-shrink-0 w-2 h-2 rounded-full ${severityDot(sev)}`} />
+                <div className="min-w-0">
+                  <p className="text-text text-sm leading-snug">{text}</p>
+                  <div className="flex items-center gap-3 mt-0.5">
+                    <span className="text-text-dim text-xs font-mono truncate">{f.fhirResourceId ?? 'unsourced'}</span>
+                    {conf !== null && (
+                      <span className="text-text-dim text-xs flex-shrink-0">Conf: {conf.toFixed(2)}</span>
+                    )}
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {feed.summary && (
+        <div className="mt-2 pt-2 border-t border-border text-[11px] text-text-muted">
+          <span data-testid={SUMMARY_TESTID[agentId]}>
+            {agentId === 'risk'
+              ? `${feed.summary.riskLevel ?? 'unknown'} risk · score ${feed.summary.riskScore ?? '—'}`
+              : `${feed.summary.findingCount} findings · ${feed.summary.droppedCount} dropped`}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Lead's `ActionCard` adapted to the current project's `DisplayAction` shape.
+ *  Severity pill + finding body + FHIR citation + confidence bar + "Create
+ *  Task" stub button. Same local-only creation affordance as CinemaView's
+ *  ActionCard — real Task resources are created by the actionPlanner's stream
+ *  `task` event handler in `handleRunAnalysis`. */
+function PanelActionCard({ action, isCreated, onCreated }: {
+  action: DisplayAction;
+  isCreated: boolean;
+  onCreated: (key: string) => void;
+}) {
+  const [loading, setLoading] = useState(false);
+  const handleCreate = async () => {
+    if (isCreated || loading) return;
+    setLoading(true);
+    try {
+      await new Promise((r) => setTimeout(r, 250));
+    } finally {
+      onCreated(action.key);
+      setLoading(false);
+    }
+  };
+  return (
+    <div className="bg-surface-raised rounded-lg p-4 mb-3 border border-border-light">
+      <div className="flex items-center gap-2 mb-2">
+        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide ${priorityBadgeClasses(action.severity)}`}>
+          {action.severity}
+        </span>
+      </div>
+      <p className="font-medium text-text text-sm leading-snug mb-1">{action.text}</p>
+      <p className="text-text-dim text-xs font-mono mb-3">{action.citation}</p>
+      <div className="mb-3">
+        <div className="flex justify-between mb-1">
+          <span className="text-text-dim text-xs">Confidence</span>
+          <span className="text-text-dim text-xs">{(action.confidence * 100).toFixed(0)}%</span>
+        </div>
+        <div className="w-full h-1 bg-surface rounded-full overflow-hidden">
+          <div
+            className={`h-full rounded-full ${confidenceBarColor(action.confidence)}`}
+            style={{ width: `${action.confidence * 100}%` }}
+          />
+        </div>
+      </div>
+      <button
+        onClick={handleCreate}
+        disabled={isCreated || loading}
+        data-testid={`panel-create-task-${action.citation}`}
         className={`text-xs px-3 py-1 rounded border transition-colors ${
           isCreated
             ? 'bg-emerald-dim text-emerald border-emerald cursor-default'
@@ -941,10 +1064,19 @@ export function PatientDetail() {
   const queryClient = useQueryClient();
 
   // Real data fetch (backend pattern).
+  // Don't retry 4xx — a 404 means the patient id isn't in HAPI, retrying
+  // would just delay the UI's fall-through to the MOCK-fixture display path
+  // (and keep the "Loading patient…" message on screen for ~30s while the
+  // library's default 3-retry exponential backoff runs out).
   const { data: patientData, isLoading, isError, error } = useQuery({
     queryKey: ['patient', id],
     queryFn: () => getPatient(id!),
     enabled: !!id,
+    retry: (failureCount, err) => {
+      const msg = (err as Error).message ?? '';
+      if (/not found|404/i.test(msg)) return false;
+      return failureCount < 2;
+    },
   });
 
   // Cross-surface sync (backend pattern): a `task-updated` event for THIS
@@ -969,10 +1101,12 @@ export function PatientDetail() {
   const [lastMode, setLastMode] = useState<'cached' | 'live' | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('panel');
   const [createdActionKeys, setCreatedActionKeys] = useState<Set<string>>(new Set());
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
 
   async function handleRunAnalysis(live: boolean) {
     if (!id || running) return;
     setRunning(true);
+    setAnalysisError(null);
     setLastMode(live ? 'live' : 'cached');
     setFeeds(makeFeeds());
     setCreatedTasks([]);
@@ -1002,6 +1136,14 @@ export function PatientDetail() {
         },
         { live },
       );
+    } catch (err) {
+      // S12 follow-up — stream errors were previously swallowed in the
+      // finally block, leaving the UI in `running=false` with no feedback
+      // (the "Run Analysis" button just stops spinning). Surface the
+      // message inline so the user knows why nothing happened — e.g. the
+      // API returned 404 for a patient id that has no MOCK analysis
+      // fallback.
+      setAnalysisError((err as Error).message);
     } finally {
       setRunning(false);
     }
@@ -1013,6 +1155,20 @@ export function PatientDetail() {
 
   const patient = buildDisplayPatient(patientData, id);
   const actions = buildActionPlan(feeds, createdTasks);
+
+  // Real-implementation risk override: the hero badge reflects the live analysis
+  // (feeds.risk.summary carries riskScore + riskLevel emitted by the backend's
+  // risk agent) once a run completes, so ANY seeded HAPI patient — not just the
+  // MOCK fixtures — gets a meaningful score. Falls back to the MOCK-derived
+  // patient.riskScore/riskLevel only before the first analysis runs.
+  const liveRisk = feeds.risk.summary;
+  const displayRiskScore =
+    typeof liveRisk?.riskScore === 'number' ? liveRisk.riskScore : patient.riskScore;
+  const displayRiskLevel: DisplayPatient['riskLevel'] =
+    liveRisk?.riskLevel === 'critical' || liveRisk?.riskLevel === 'high' ||
+    liveRisk?.riskLevel === 'medium' || liveRisk?.riskLevel === 'low'
+      ? liveRisk.riskLevel
+      : patient.riskLevel;
 
   const ViewToggle = () => (
     <div className="inline-flex items-center bg-surface border border-border rounded-lg p-0.5 text-xs font-medium">
@@ -1092,153 +1248,175 @@ export function PatientDetail() {
     );
   }
 
-  // Panel view (default — the view the existing test suite asserts against) --
+  // Panel view (default — 3-column layout ported from lead project) --------
+  // Render the grid off the `patient` view-model, which is ALWAYS populated
+  // (buildDisplayPatient falls back to MOCK_PATIENTS when the API 404s). This
+  // means the screen renders for every patient — HAPI-seeded, MOCK-only, or
+  // unknown — and the API error is shown inline instead of blocking the UI.
   return (
     <>
-      <div className="flex items-center justify-between">
-        <BackLink />
-        <ViewToggle />
-      </div>
-
       {isLoading && <p className="text-body text-text-muted mt-4">Loading patient…</p>}
-      {isError && <p className="text-body text-red mt-4">{(error as Error).message}</p>}
+      {isError && (
+        <p className="text-body text-amber mt-4" data-testid="patient-fallback-notice">
+          Showing demo data — live record unavailable: {(error as Error).message}
+        </p>
+      )}
 
-      {patientData && (
-        <div className="mt-4">
-          {/* Top bar matches reference-materials/caresync-ai.html's .pt-bar. */}
-          <div className="h-11 flex items-center gap-2.5 px-4 -mx-6 -mt-6 mb-6 border-b border-border bg-surface">
-            <span className="text-section font-bold text-text">{patientData.patient.name}</span>
-            <span className="text-body text-text-muted">{ageSexLabel(patientData.patient.birthDate, patientData.patient.gender)}</span>
-            <span className="font-mono text-xs text-text-dim flex-1 truncate">| Patient/{patientData.patient.id}</span>
-            {lastMode && (
-              <span
-                className="font-mono text-[10px] text-text-dim uppercase tracking-wide"
-                data-testid="analysis-mode"
-                aria-live="polite"
+      {!isLoading && (
+      <div className="grid h-[calc(100vh-48px)] overflow-hidden gap-4 p-4" style={{ gridTemplateColumns: '25% 40% 35%' }}>
+          {/* ── Left column: Patient Profile ───────────────────────────── */}
+          <div className="bg-surface rounded-xl border border-border p-5 overflow-y-auto flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <BackLink />
+              <ViewToggle />
+            </div>
+
+            <p className="text-text-muted text-xs uppercase tracking-wider">Patient Profile</p>
+
+            <div>
+              <h1 className="text-xl font-bold text-text">{patient.name}</h1>
+              <p className="text-text-muted text-sm mt-0.5">
+                {patient.age}y {patient.sex} · MRN {patient.mrn}
+              </p>
+            </div>
+
+            {/* Hero risk badge — driven by live analysis once available, so it
+                reflects the real implementation for any patient, not just the
+                MOCK fixtures in PatientDetail.fixtures.ts. */}
+            <div className="flex justify-center">
+              <div
+                className={`px-6 py-3 rounded-full flex flex-col items-center ${riskBadgeClasses(displayRiskLevel)}`}
+                style={displayRiskLevel === 'critical' ? { boxShadow: '0 0 32px rgba(232,72,72,0.4)' } : undefined}
+                data-testid="panel-risk-badge"
               >
-                {lastMode === 'live' ? 'requested: live' : 'requested: cached'}
-              </span>
-            )}
-            <button
-              onClick={() => handleRunAnalysis(true)}
-              disabled={running}
-              className="flex items-center gap-2 bg-transparent border border-border-light text-text-muted font-mono text-label font-bold tracking-wide px-3 py-1.5 rounded-md disabled:opacity-60 disabled:cursor-default"
-            >
-              Run live
-            </button>
-            <button
-              onClick={() => handleRunAnalysis(false)}
-              disabled={running}
-              className="flex items-center gap-2 bg-cyan-dim border border-cyan text-cyan font-mono text-label font-bold tracking-wide px-4 py-1.5 rounded-md disabled:opacity-85 disabled:cursor-default"
-            >
-              {running ? (
-                <span className="w-3 h-3 rounded-full border-2 border-cyan/25 border-t-cyan animate-spin" aria-hidden="true" />
-              ) : (
-                <svg width="10" height="12" viewBox="0 0 10 12" fill="none" aria-hidden="true">
-                  <path d="M1 1.2v9.6L9 6 1 1.2Z" fill="#00C8FF" />
-                </svg>
-              )}
-              <span>{running ? 'Analyzing…' : 'Run Analysis'}</span>
-            </button>
-          </div>
-
-          {/* Agent graph — live SSE events update node status here. */}
-          <div className="mb-6">
-            <AgentGraph state={graphState} />
-          </div>
-
-          {/* Per-agent feed cards. Each one updates exactly one feed per
-              SSE event — no cross-agent bleed (the bug the lead-port version
-              had via runMockSim's overlapping timeouts). */}
-          <div className="grid grid-cols-4 gap-2.5 mb-6">
-            {AGENT_KEYS.map((agentId) => {
-              const feed = feeds[agentId];
-              return (
-                <div
-                  key={agentId}
-                  className={`bg-surface border border-border ${AGENT_ACCENT[agentId].border} border-l-[3px] rounded-card flex flex-col overflow-hidden min-h-[112px]`}
-                >
-                  <div className={`text-[9.5px] font-bold tracking-wide uppercase px-2.5 pt-2 pb-1 ${AGENT_ACCENT[agentId].text}`}>
-                    {AGENT_LABELS[agentId]}
-                  </div>
-                  <div className="flex-1 px-2.5 pb-2.5 text-xs leading-relaxed overflow-y-auto">
-                    {!feed.started && <span className="italic text-text-dim">Awaiting analysis run…</span>}
-                    {feed.started && (
-                      <>
-                        <span className={feed.summary ? 'text-text' : 'text-text-muted'}>{feed.text}</span>
-                        {feed.findings.length > 0 && (
-                          <div className="mt-1.5 flex flex-wrap gap-1">
-                            {feed.findings.map((flag, i) => (
-                              <span
-                                key={`${flag.fhirResourceId ?? 'finding'}-${i}`}
-                                className="font-mono text-[10px] text-text-dim bg-bg border border-border rounded-chip px-1.5 py-0.5"
-                              >
-                                {flag.fhirResourceId ?? 'unsourced'}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                        {feed.summary && (
-                          <div className="mt-2 pt-2 border-t border-border text-[11px] text-text-muted">
-                            <span data-testid={SUMMARY_TESTID[agentId]}>
-                              {agentId === 'risk'
-                                ? `${feed.summary.riskLevel} risk · score ${feed.summary.riskScore}`
-                                : `${feed.summary.findingCount} findings · ${feed.summary.droppedCount} dropped`}
-                            </span>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <h2 className="text-section text-text mb-2">Active Conditions</h2>
-          <div className="border border-border rounded-card overflow-hidden mb-6">
-            {patientData.conditions.map((condition) => (
-              <div key={condition.id} className="px-4 py-3 border-b border-border last:border-b-0 bg-surface">
-                <p className="text-body text-text">{condition.display}</p>
-                <p className="text-xs font-mono text-text-dim">
-                  ICD-10 {condition.code} · Condition/{condition.id}
-                </p>
-              </div>
-            ))}
-          </div>
-
-          <div className="flex items-center gap-2 mb-2">
-            <h2 className="text-section text-text">Tasks</h2>
-            <span className="text-xs font-bold text-cyan bg-cyan-dim border border-cyan rounded-pill px-2.5 py-0.5">
-              {patientData.tasks.length + createdTasks.length} open
-            </span>
-          </div>
-          {patientData.tasks.length === 0 && createdTasks.length === 0 && (
-            <p className="text-body text-text-muted">No open tasks.</p>
-          )}
-          {[...patientData.tasks.map((t) => ({ key: `existing-${t.id}`, title: t.title, priority: t.priority, due: t.due, status: t.status, ref: `Task/${t.id}` })),
-            ...createdTasks.map((t) => ({ key: `created-${t.id}`, title: t.title, priority: coerceSeverity(t.priority), due: `Due in ${t.dueInDays ?? '—'}d`, status: 'Open', ref: t.reference })),
-          ].map((task) => (
-            <div
-              key={task.key}
-              data-testid={task.key}
-              className="bg-surface-raised border border-border rounded-card p-2.5 mb-2"
-            >
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-[9px] font-bold tracking-wide rounded-pill border px-2 py-0.5 bg-surface-raised text-text-muted">
-                  {task.priority}
-                </span>
-                <span className="text-xs text-text-muted">{task.due}</span>
-              </div>
-              <p className="text-body font-bold text-text mb-1.5">{task.title}</p>
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-[10.5px] text-text-dim">{task.ref}</span>
-                <span className="text-xs font-semibold text-text-muted border border-border-light rounded-pill px-2 py-px">
-                  {task.status}
+                <span className="text-3xl font-bold leading-none">{displayRiskScore || '—'}</span>
+                <span className="text-xs font-semibold uppercase tracking-wider mt-1 opacity-80">
+                  {displayRiskLevel} risk
                 </span>
               </div>
             </div>
-          ))}
+
+            {/* Conditions */}
+            <div>
+              <p className="text-text-muted text-xs uppercase tracking-wider mb-2">Conditions</p>
+              <ul className="space-y-1.5">
+                {patient.conditions.map((condition, i) => {
+                  // Mirror lead's conditionDot scheme — assign critical/high/medium/low
+                  // round-robin so the demo shows the colour scale.
+                  const sev: Severity = (['critical', 'high', 'medium', 'low'] as Severity[])[
+                    Math.min(i, 3)
+                  ];
+                  return (
+                    <li key={condition} className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${severityDot(sev)}`} />
+                      <span className="text-text text-sm">{condition}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+
+            {/* Key vitals */}
+            <div>
+              <p className="text-text-muted text-xs uppercase tracking-wider mb-2">Key Vitals</p>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+                {DEFAULT_VITALS.map((vital) => (
+                  <div key={vital.label}>
+                    <p className="text-text-muted text-xs">{vital.label}</p>
+                    <p className="text-text font-mono text-sm font-medium">{vital.value}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Last contact */}
+            <div className="mt-auto pt-4 border-t border-border-light">
+              <p className="text-text-muted text-xs">
+                Last contact:{' '}
+                <span
+                  className={`font-medium ${
+                    patient.daysSinceContact <= 3
+                      ? 'text-emerald'
+                      : patient.daysSinceContact <= 14
+                        ? 'text-amber'
+                        : 'text-red'
+                  }`}
+                >
+                  {patient.daysSinceContact}d ago
+                </span>
+              </p>
+            </div>
+          </div>
+
+          {/* ── Middle column: AI Agent Analysis ────────────────────────── */}
+          <div className="bg-surface rounded-xl border border-border p-5 overflow-y-auto flex flex-col">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-text font-semibold text-base">AI Agent Analysis</h2>
+              <div className="flex items-center gap-2">
+                {lastMode && (
+                  <span
+                    className="font-mono text-[10px] text-text-dim uppercase tracking-wide"
+                    data-testid="analysis-mode"
+                    aria-live="polite"
+                  >
+                    {lastMode === 'live' ? 'requested: live' : 'requested: cached'}
+                  </span>
+                )}
+                <button
+                  onClick={() => handleRunAnalysis(true)}
+                  disabled={running}
+                  className="bg-transparent border border-border-light text-text-muted font-mono text-label font-bold tracking-wide px-3 py-1.5 rounded-md disabled:opacity-60 disabled:cursor-default"
+                >
+                  Run live
+                </button>
+                <button
+                  onClick={() => handleRunAnalysis(false)}
+                  disabled={running}
+                  data-testid="panel-run-analysis"
+                  className="bg-violet text-white px-4 py-2 rounded-lg text-sm font-medium hover:opacity-80 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {running ? 'Running…' : 'Run Analysis'}
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1">
+              {analysisError && (
+                <p className="text-amber text-xs mb-2" data-testid="analysis-error">
+                  Analysis unavailable: {analysisError}
+                </p>
+              )}
+              {AGENT_KEYS.map((agentId) => (
+                <PanelAgentCard key={agentId} agentId={agentId} feed={feeds[agentId]} />
+              ))}
+            </div>
+          </div>
+
+          {/* ── Right column: Action Plan ───────────────────────────────── */}
+          <div className="bg-surface rounded-xl border border-border p-5 overflow-y-auto flex flex-col">
+            <p className="text-text-muted text-xs uppercase tracking-wider mb-4">Action Plan</p>
+
+            {actions.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-center gap-3">
+                <span className="text-4xl">🤖✨</span>
+                <p className="text-text font-medium">No action plan yet</p>
+                <p className="text-text-muted text-sm max-w-xs">
+                  Run analysis to let the AI agents generate a prioritised action plan for this patient.
+                </p>
+              </div>
+            ) : (
+              <div className="flex-1">
+                {actions.map((action) => (
+                  <PanelActionCard
+                    key={action.key}
+                    action={action}
+                    isCreated={createdActionKeys.has(action.key)}
+                    onCreated={handleActionCreated}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

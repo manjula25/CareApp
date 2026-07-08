@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth';
-import { FhirReadService, ScopeDeniedError } from '../fhir/client';
+import { FhirReadService, ScopeDeniedError, FhirNotFoundError } from '../fhir/client';
 
 export function createPatientsRouter(fhirService: FhirReadService): Router {
   const router = Router();
@@ -22,6 +22,14 @@ export function createPatientsRouter(fhirService: FhirReadService): Router {
     } catch (err) {
       if (err instanceof ScopeDeniedError) {
         res.status(403).json({ error: err.message });
+        return;
+      }
+      // S12 follow-up — HAPI returns 404 for unknown patient ids (e.g. a
+      // demo route like `/patients/maria-chen-4829` that exists only in the
+      // MOCK fixtures). Return a clean JSON 404 so the UI's `buildDisplayPatient`
+      // MOCK-fallback path runs instead of Express's default HTML error page.
+      if (err instanceof FhirNotFoundError) {
+        res.status(404).json({ error: 'Patient not found', patientId: req.params.id });
         return;
       }
       throw err;

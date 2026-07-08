@@ -1,11 +1,12 @@
 import { Router, Response } from 'express';
 import Database from 'better-sqlite3';
 import { requireAuth } from '../middleware/auth';
-import { FhirReadService, PatientBundle, ScopeDeniedError } from '../fhir/client';
+import { FhirReadService, PatientBundle, ScopeDeniedError, FhirNotFoundError } from '../fhir/client';
 import { orchestrate } from '../agents/orchestrator';
 import { AgentEvent, AgentId } from '../agents/agent';
 import { validateCitations, validateCitationList, createNarrationBuffer, NarrationBuffer, AgentFlag } from '../agents/citationValidator';
 import { readAnalysisCache, writeAnalysisCache, AnalysisCacheEntry, AnalysisCacheRow } from '../db/analysisCache';
+import { getMockAnalysis } from './mockAnalysis';
 import { writeAudit } from '../db/audit';
 // All four agent modules currently export the same MODEL constant
 // ('gpt-5.5') — riskAgent's is used here as the single source of truth for
@@ -45,17 +46,21 @@ export function writeSseEvent(res: Response, event: string, data: unknown): void
 export interface AnalysisResultJson {
   risk: {
     narration: string;
-    findings: AgentFlag[];
+    // Findings carry agent-specific extras (severity, confidence, finding
+    // text) that are forwarded verbatim to the SSE event payload. The wire
+    // shape is permissive — extras show up in the web's `AnalysisFinding`
+    // via its `[key: string]: unknown` index signature.
+    findings: (AgentFlag & { finding?: string; severity?: string; confidence?: number })[];
     complete: { riskScore: number; riskLevel: string; readmissionProbability: number; findingCount: number; droppedCount: number };
   };
   careGap: {
     narration: string;
-    findings: { gapType: string; description: string; lastDone?: string; dueDate?: string; urgency: string; fhirResourceId: string }[];
+    findings: { gapType: string; description: string; lastDone?: string; dueDate?: string; urgency: string; fhirResourceId: string; severity?: string; confidence?: number }[];
     complete: { findingCount: number; droppedCount: number };
   };
   sdoh: {
     narration: string;
-    findings: { domain: string; finding: string; severity: string; fhirResourceId: string }[];
+    findings: { domain: string; finding: string; severity: string; fhirResourceId: string; confidence?: number }[];
     complete: { findingCount: number; droppedCount: number; referralsNeeded: string[] };
   };
   actionPlanner: {
@@ -220,6 +225,25 @@ export function createAnalysisRouter(
     } catch (err) {
       if (err instanceof ScopeDeniedError) {
         res.status(403).json({ error: err.message });
+        return;
+      }
+      // HAPI 404 — patient id isn't in the FHIR store. Two demo-friendly paths:
+      //   (a) a MOCK-fixture patient id (e.g. `maria-chen-4829`) has a canned
+      //       analysis we can replay so the UI shows the full analysis flow.
+      //   (b) genuinely unknown id → clean JSON 404 (no HTML stack trace).
+      if (err instanceof FhirNotFoundError) {
+        const mock = getMockAnalysis(patientId);
+        if (mock) {
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive',
+          });
+          replayCachedAnalysis(res, mock);
+          res.end();
+          return;
+        }
+        res.status(404).json({ error: 'Patient not found', patientId });
         return;
       }
       throw err;

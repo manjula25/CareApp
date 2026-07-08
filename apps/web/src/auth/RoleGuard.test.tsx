@@ -48,8 +48,10 @@ describe('roleHome', () => {
     expect(roleHome('director')).toBe('/population');
   });
 
-  it('sends coordinator to the My Patient Panel', () => {
-    expect(roleHome('coordinator')).toBe('/panel');
+  it('sends coordinator to the Task Center (S12 — was /panel)', () => {
+    // S12 follow-up: /panel is now the director's My Patients list;
+    // coordinators land on /task-center (W13 Task Management).
+    expect(roleHome('coordinator')).toBe('/task-center');
   });
 
   it('sends social_worker to the mobile task queue (M02)', () => {
@@ -62,7 +64,7 @@ function renderPopulationGuard() {
     <MemoryRouter initialEntries={['/population']}>
       <AuthProvider>
         <Routes>
-          <Route path="/panel" element={<div>Coordinator Panel</div>} />
+          <Route path="/task-center" element={<div>Coordinator Task Center</div>} />
           <Route
             path="/population"
             element={
@@ -96,7 +98,7 @@ describe('RoleGuard role restriction', () => {
   it('redirects a coordinator away from a director-only route to their own home', () => {
     setAuthedUser('coordinator');
     renderPopulationGuard();
-    expect(screen.getByText('Coordinator Panel')).toBeInTheDocument();
+    expect(screen.getByText('Coordinator Task Center')).toBeInTheDocument();
     expect(screen.queryByText('Population Dashboard')).not.toBeInTheDocument();
   });
 });

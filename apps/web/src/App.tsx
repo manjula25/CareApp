@@ -44,7 +44,7 @@ function App() {
           </RoleGuard>
         }
       >
-        <Route path="/panel" element={<RoleGuard role="coordinator"><PatientPanel /></RoleGuard>} />
+        <Route path="/panel" element={<RoleGuard role="director"><PatientPanel /></RoleGuard>} />
         <Route path="/patients/:id" element={<PatientDetail />} />
         <Route path="/patients/:id/profile" element={<PatientProfile />} />
         <Route path="/patients/:id/sdoh" element={<Sdoh />} />

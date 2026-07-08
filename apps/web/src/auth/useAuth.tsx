@@ -81,7 +81,10 @@ export function useAuth(): AuthContextValue {
 
 export function roleHome(role: Role): string {
   if (role === 'director') return '/population';
-  if (role === 'coordinator') return '/panel';
+  // S12 follow-up — `/panel` is the director's "My Patients" list now
+  // (was the coordinator's). Coordinators land on the Task Center
+  // (the W13 page ported from the lead) instead.
+  if (role === 'coordinator') return '/task-center';
   // S7 B1 — the Social Worker's mobile task queue (M02) now exists;
   // '/coming-soon' was always a placeholder for this exact screen.
   return '/tasks';

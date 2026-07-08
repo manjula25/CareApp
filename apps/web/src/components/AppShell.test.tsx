@@ -153,12 +153,24 @@ describe('AppShell — Sidebar navigation', () => {
     expect(screen.getByTitle('Population')).toBeInTheDocument();
   });
 
-  it('shows a Patients nav button for all roles', () => {
-    localStorage.setItem('caresync_token', tokenFor('coordinator'));
+  it('shows a Patients nav button only for the director (S12 — was all roles)', () => {
+    // S12 follow-up: `/panel` is now the director's My Patients list.
+    // Coordinators land on /task-center instead, so the sidebar Patients
+    // link is director-only.
+    localStorage.setItem('caresync_token', tokenFor('director'));
     const queryClient = new QueryClient();
 
     renderShell(queryClient);
 
     expect(screen.getByTitle('Patients')).toBeInTheDocument();
+  });
+
+  it('hides the Patients nav button for a coordinator', () => {
+    localStorage.setItem('caresync_token', tokenFor('coordinator'));
+    const queryClient = new QueryClient();
+
+    renderShell(queryClient);
+
+    expect(screen.queryByTitle('Patients')).not.toBeInTheDocument();
   });
 });
