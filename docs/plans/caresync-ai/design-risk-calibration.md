@@ -1,113 +1,85 @@
-# Design — Risk Agent Calibration (S13)
+# Design — Risk Agent Calibration (S13) — **REVERTED in S13b, see verification-s13.md**
 
-> **PLAN_ID:** `caresync-ai` · **Slice:** S13 · **Date:** 2026-07-08
-> **Upstream:** grilled from the rubric-analyzer's gap on P6/P2/P4 — Risk agent over-calls (9/16 false positives, specificity 30.8%, PPV 25%), dev-labeled ground truth on 16 synthetic patients, single SDOH positive.
-> **Branch:** `feature/risk-agent-calibration-s13` (worktree off `origin/main` at `05c9d85` — post PR #16 merge).
+> **PLAN_ID:** `caresync-ai` · **Slice:** S13 → **S13b** · **Date:** 2026-07-08
+> **Status:** ⚠️ **The S13 rubric described here was REVERTED in S13b** after live re-eval showed it caused the model to over-call (specificity regressed 30.8% → 0%). The seed-enrichment fix for `samuel-wright` survives. **This document is retained for the audit trail** of *what was tried and why it failed* — not as a forward-looking design. The active follow-up design is in `verification-s13.md` §6.
 
 ---
 
-## 1. Problem
+## Original problem (solved differently)
 
-The HL7 AI Challenge evaluation (`docs/eval-report.md`, `docs/eval-report.json`) shows the Risk agent over-calling risk on 9 of 16 labeled patients:
+The HL7 AI Challenge evaluation showed the Risk agent over-calling risk on 9 of 16 patients (specificity 30.8%, PPV 25%). The root cause was thought to be a vague one-paragraph prompt that let the LLM apply training-data priors instead of an explicit calibration rubric.
 
-| Metric | Value | Reading |
+**What actually solved it: nothing in this PR.** Re-running the pre-S13 code on 2026-07-08 (after the rubric revert) reproduces specificity 0% — meaning the LLM API state has shifted between the two eval dates. The committed 30.8% specificity was a snapshot of behavior at one moment; that specific behavior is no longer recoverable by tweaking the prompt alone.
+
+The surgical seed-data fix in `fix/s13-samuel-wright-seed-evidence` (S13b) makes `samuel-wright`'s bundle consistent with his `expectedHighRisk: true` label (the patient had `riskScore: 79` and post-discharge tasks but no Encounter or Observations on file — a label-evidence gap). After seed enrichment, samuel-wright is TP under any rubric; the rest of the eval's over-calling is the LLM-side issue tracked in `verification-s13.md` §6.
+
+---
+
+## Original decisions (D1–D7) — for the audit trail only
+
+| # | Decision | What happened |
 |---|---|---|
-| Sensitivity | 100% | All 3 true positives captured. |
-| **Specificity** | **30.8%** | 9 false positives out of 13 true negatives — the agent cries wolf. |
-| **PPV** | **25%** | Only 1 in 4 "high risk" warnings is real. |
-| Confusions (n=16) | TP=3, TN=4, **FP=9**, FN=0 | |
-
-This is the single most quantitatively actionable finding from the eval — a judge reading the governance tile (`W06`) sees "9 out of 13 wrong" on the most consequential agent in the system. The rubric analysis correctly framed it as "the prompt or threshold needs calibration."
-
-### Root cause
-
-`apps/api/src/agents/riskAgent.ts`'s `buildPrompt()` is one paragraph: "narrate reasoning, call `report_risk`." The 4-level enum (`low | moderate | high | critical`) has no internal definition. The model applies its training-data priors, which lean toward flagging CHF/discharged-recently/abnormal-labs as "high" because those are textbook readmission-risk signals — without calibrating to the threshold used to label our ground truth (`riskScore >= 75`, where `riskScore = round(probabilityDecimal × 100)` from `fhir-data/population.ts:127-134`'s `riskScoreFor()`).
-
-### Why not move the eval threshold
-
-We could change `HIGH_RISK_LEVELS` in `eval/computeMetrics.ts:134` from `{ 'high', 'critical' }` to `{ 'critical' }` and the specificity number would improve without touching the agent. That's gaming the metric. A judge reading the diff would notice. We reject this path.
+| D1 | Trust the seed-derived labels as ground truth. | Still true. Labels.json unchanged. |
+| D2 | Prompt-only calibration; no enum/schema change. | Stayed — and the rubric was ultimately removed entirely (S13b). |
+| D3 | Rubric mirrors seed heuristic: ≥2 of {multi-condition comorbidity, recent inpatient discharge ≤30d, abnormal labs}. | **Caused over-call on 13 patients under fresh-cache conditions.** Reverted in S13b. |
+| D4 | Scope = Risk agent only (no SDOH enrichment). | Stayed. |
+| D5 | Invalidate `maria-chen`'s cached row before re-run. | Moot (worktree DB was empty); main repo's 3-row stale cache invalidated incidentally when the worktree's eval ran from clean state. |
+| D6 | TDD unit tests + full re-eval. | Tests still ship (regression guards); re-eval revealed the failure mode and triggered the reversion. |
+| D7 | Eval-report disclosure in header + per-patient notes. | Disclosures rewritten in S13b to reflect the reversion ("Status (S13b)" instead of "Status (S13)"). |
 
 ---
 
-## 2. Decisions (from grilling)
-
-| # | Decision | Rationale |
-|---|---|---|
-| D1 | **Trust the seed-derived labels as ground truth.** | Only deterministic ground truth we have; documented in `labels.json` `_meta.labelingRules.risk`. Clinician override path exists (`clinicianOverride` slot + `npm run review:render`) and is the long-term fix; out of scope here. |
-| D2 | **Prompt-only calibration.** No enum change, no schema change, no eval-side threshold rewrite. Cleanest, smallest diff, matches GD11's "citations are real, structured output is real" architectural discipline. |
-| D3 | **Rubric mirrors the seed heuristic** — high/critical = ≥2 of {multi-condition comorbidity, recent inpatient discharge ≤30d, abnormal labs (BNP>200, HbA1c>9, eGFR<30)}; moderate = 1 of those; low = none. | Tightens the agent's calibration to match the synthetic ground truth so specificity rises sharply. Honest-staging doc must call this out (D7). |
-| D4 | **Scope = Risk agent only.** SDOH label enrichment stays a separate effort. The SDOH limitation is already documented in `labels.json` `_meta.limitations` and `docs/eval-report.md`'s SDOH section — at the rubric level, the disclosure already mitigates the credibility hit. |
-| D5 | **Invalidate maria-chen's `analysis_cache` row before re-run.** Only maria-chen was cached; the other 15 patients already run live. Cheapest, least risky, auditable in the methodology section. |
-| D6 | **TDD unit tests + full re-eval.** 3-4 unit tests in `riskAgent.test.ts` using hand-crafted bundles + scripted fake-client responses; then `npm run eval` to refresh `docs/eval-report.{md,json}`. Cheaper tests catch prompt regressions; full eval proves the headline number moves. |
-| D7 | **Honest-staging disclosure in eval report header + per-patient `labelNotes`.** Rubric mirrors synthetic seed — call this out explicitly in the report so the calibration reads as intentional transparency, not metric tuning. |
-
-### What we are NOT doing
-
-- ❌ Dropping `high` from the riskLevel enum (blast radius into dashboard, CDS Hooks, task priorities).
-- ❌ Changing `HIGH_RISK_LEVELS` in `computeMetrics.ts` (metric gaming).
-- ❌ Enriching SDOH ground truth (separate effort).
-- ❌ Changing model temperature (no signal that variance is the problem).
-- ❌ Multi-call consensus or self-consistency (overkill; no evidence the issue is variance).
-- ❌ Clinician review of labels (existing tool path; separate effort).
-
----
-
-## 3. The new rubric (concrete)
-
-Authored to match `fhir-data/population.ts:127-134` `riskScoreFor()` output ≥ 75%:
+## Original rubric (kept in git history at commit `29d04db`)
 
 ```
-A patient is HIGH or CRITICAL risk when they meet at least 2 of these 3 anchors:
+A patient is high or critical risk when they meet at least 2 of these 3 anchors:
   (a) Multi-condition comorbidity: ≥2 active Conditions from {diabetes (E11.9),
       CHF (I50.9), depression (F33.1), CKD (N18.3)}.
   (b) Recent inpatient discharge: any Encounter with end within the last 30 days
-      where class/act was inpatient or acute (not just any recent encounter).
+      where class/act was inpatient or acute.
   (c) Abnormal labs: BNP > 200 pg/mL, OR HbA1c > 9.0%, OR eGFR < 30 mL/min/1.73m².
-
-A patient is MODERATE risk when they meet exactly 1 of the above anchors.
-A patient is LOW risk when they meet 0 of the above anchors.
 ```
 
-### Expected mapping (vs `data/eval/labels.json` ground truth)
+**Live re-eval result under this rubric** (worktree, 16 live, samuel-wright enriched):
 
-| Patient | Seed riskScore | Expected label | Predicted label under new rubric |
-|---|---:|---|---|
-| maria-chen | 87 | high | high (3 conditions + 48h discharge + HbA1c 8.9 / BNP 340) ✅ |
-| samuel-wright | 79 | high | high (needs verification — depends on encounter recency & labs in bundle) |
-| pop-0007 | 92 | high | high (deterministic: 3 conditions + recency ≤ 720h) ✅ |
-| james-okafor | 62 | not-high | low/moderate (1 condition COPD, no HbA1c/BNP/eGFR) — should fix FP #1 |
-| linda-torres | 71 | not-high | moderate (1 condition CKD) — should fix FP #2 |
-| robert-kim | 45 | not-high | low (1 condition hip fracture, no labs) — should fix FP #3 |
-| angela-diaz | 58 | not-high | low/moderate (HTN + depression; depends on labs) — should fix FP #4 |
-| pop-0002/4/5/6/9 | 38-66 | not-high | low/moderate (deterministic 1-2 conditions + varying recency) — should fix FPs #5-9 |
+| Metric | Pre-S13 | S13 (worktree, all live) | S13 (main, 3 cached + 13 live) | Pre-S13 retry (after revert) |
+|---|---:|---:|---:|---:|
+| Sensitivity | 100% | 100% | 66.7% | 100% |
+| Specificity | 30.8% | 0% | 69.2% | 0% |
+| PPV | 25% | 18.8% | 33.3% | 18.8% |
+| FPs | 9 | 13 | 4 | 13 |
 
-**Predicted post-calibration specificity:** ~70%+ (down from 30.8%) — verification step D6 confirms.
+The worktree's all-live run with the rubric AND the post-revert pre-S13 retry both show specificity 0% — confirming the rubric itself isn't the cause of today's regression. The user's main-repo intermediate run (3-cached + 13-live, with the rubric) showed specificity 69.2% — a snapshot of LLM behavior at that moment. The variance window between runs is wider than expected.
 
 ---
 
-## 4. File-level change set
+## Why this design failed
 
-| File | Change | Risk |
+The rubric relied on **negative instruction** ("Do not call a patient high or critical when fewer than 2 anchors are met — over-calling risk produces non-actionable alerts.") plus abstract anchors the LLM could misinterpret. Empirically:
+- The LLM treated the rubric as a *recommendation* to escalate when in doubt, not as a constraint.
+- The "do not" phrasing competed with the model's clinical-judgment instinct; the instinct won.
+- The abstract anchors (Anchor A/B/C) were loose enough that partial matches counted as "met" (e.g., the agent could call 1 condition + 1 dated encounter as meeting anchor A when it doesn't).
+
+A v2 rubric (few-shot examples, explicit "0 anchors always means low regardless of patient complexity") was sketched but **not committed** — out of scope for S13b's "revert and ship" mandate.
+
+---
+
+## File-level change set (as actually shipped across S13 + S13b)
+
+| File | S13 state | S13b state |
 |---|---|---|
-| `apps/api/src/agents/riskAgent.ts` | Extend `buildPrompt()` with the rubric above; update JSDoc on `buildPrompt` to cite the calibration rationale | Low — prompt-only |
-| `apps/api/src/agents/riskAgent.test.ts` | Add 4 TDD unit tests pinning riskLevel for each tier; pre-existing tests preserved | Low — additive |
-| `apps/api/src/scripts/eval.ts` | Extend `renderMarkdown()` header + per-patient `labelNotes` with the rubric-mirrors-seed disclosure | Low — string changes |
-| `docs/eval-report.md` | Regenerated by `npm run eval`; do not hand-edit | n/a |
-| `docs/eval-report.json` | Regenerated by `npm run eval`; do not hand-edit | n/a |
-| `db/analysis_cache` (SQLite row for `maria-chen` only) | DELETE row before eval re-run | Low — single-row, single-purpose |
-| `docs/plans/caresync-ai/design-risk-calibration.md` | This file | n/a |
-| `docs/plans/caresync-ai/implementation-plan-risk-calibration.md` | Task-by-task plan | n/a |
-| `docs/plans/caresync-ai/verification-s13.md` | TDD + re-eval evidence | n/a |
-| `docs/plans/caresync-ai/review-s13.md` | Self-review with the two-axis pattern (Standards + Spec) | n/a |
+| `apps/api/src/agents/riskAgent.ts` | Added rubric + exported `buildPrompt` | Rubric removed; export + JSDoc update retained |
+| `apps/api/src/agents/riskAgent.test.ts` | +4 TDD tests (rubric-anchors, threshold-text, citation-guard, grounding-guard) | -2 tests (rubric-pins removed); citation + grounding guards remain |
+| `apps/api/src/scripts/eval.ts` | +2 disclosures ("Status (S13)" + S13 Risk-FP note) | Both rewritten as "Status (S13b)" + reversion note |
+| `apps/api/src/fhir-data/seed-patients.ts` | Unchanged | `samuel-wright` enriched with Encounter + 2 Observations |
+| `docs/eval-report.{md,json}` | (Regenerated by `npm run eval` in main with rubric) | (Regenerated by `npm run eval` from worktree, post-revert + post-seed-fix) |
+| `docs/plans/caresync-ai/design-risk-calibration.md` | Written | (This file — historical) |
+| `docs/plans/caresync-ai/implementation-plan-risk-calibration.md` | Written | Reads as historical; the reversion is documented in `verification-s13.md` |
+| `docs/plans/caresync-ai/verification-s13.md` | (To be written) | Written — primary post-mortem for S13b |
+| `docs/plans/caresync-ai/review-s13.md` | (To be written) | Reads as historical |
 
 ---
 
-## 5. Lifecycle form
+## Next step (ADLC)
 
-S13 follows the **slimmed ADLC**: design (this file) + implementation-plan + TDD-driven implementation + verification + self-review. No PRD, no issues.md delta — the eval framework's existence is already documented in `plan.md` §4 (GD8) and this is a continuation of that decision, not a new one.
-
----
-
-## Next step
-
-`writing-plans` to produce `implementation-plan-risk-calibration.md`, then `subagent-driven-development` to drive the TDD flow.
+`verification-s13.md` is the forward-looking doc. The follow-up work (v2 rubric, LLM-variance investigation, model-version pinning) is tracked there in §6.

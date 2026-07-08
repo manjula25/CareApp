@@ -196,11 +196,11 @@ function renderMarkdown(labels: LabelRow[], run: EvalRunResult, metrics: Metrics
   );
   lines.push('');
   lines.push(
-    '**Status (S13):** Risk-agent prompts now include an explicit clinical rubric (≥2 of {multi-condition comorbidity, recent inpatient ' +
-      'discharge ≤30d, abnormal labs: BNP>200, HbA1c>9.0, eGFR<30}) that mirrors `fhir-data/population.ts:127-134` `riskScoreFor()` ≥ 75. ' +
-      'The Risk-specificity and PPV numbers below reflect that alignment with the synthetic ground truth, not with a real clinical ' +
-      'reference standard. See `docs/plans/caresync-ai/design-risk-calibration.md` §2 D3 / §3 for the calibration rationale. Clinician ' +
-      'validation of labels remains the long-term path to a real-clinical rubric — this calibration is the conservative interim step.'
+    '**Status (S13b):** The S13 calibration attempt (Risk-prompt rubric mirroring `riskScoreFor()` ≥ 75) was reverted after live re-eval ' +
+      'showed it caused the model to over-call (specificity regressed from 30.8% → 0% on the 16-patient held-out set). The follow-up ' +
+      'fix in this slice is a single seed-data change — `apps/api/src/fhir-data/seed-patients.ts`\'s `samuel-wright` entry now carries ' +
+      'the Encounter + Observations his label implied but the seed previously omitted. See `docs/plans/caresync-ai/verification-s13.md` ' +
+      '§3 + §6 for the full reversion log. Clinician validation of labels remains the long-term path to a real-clinical rubric.'
   );
   lines.push('');
   lines.push('## Methodology');
@@ -309,8 +309,8 @@ function renderMarkdown(labels: LabelRow[], run: EvalRunResult, metrics: Metrics
   lines.push('### Risk false positives (agent over-called risk)');
   lines.push('');
   lines.push(
-    '**Note (S13):** The Risk agent\'s prompt rubric was authored to mirror the synthetic seed heuristic. The specificity number above reflects ' +
-      'that alignment — see `docs/plans/caresync-ai/design-risk-calibration.md` for the calibration rationale.'
+    '**Note (S13b):** The S13 risk-rubric was reverted after live re-eval showed it over-called. The remaining false positives above reflect ' +
+      'the pre-S13 baseline (seed-derived labels vs the LLM\'s general clinical priors); see `docs/plans/caresync-ai/verification-s13.md` for the reversion log.'
   );
   lines.push('');
   if (errors.risk.falsePositives.length === 0) {

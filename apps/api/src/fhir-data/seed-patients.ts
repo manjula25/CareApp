@@ -123,7 +123,20 @@ export const PANEL_PATIENTS: SeedPatient[] = [
     gender: 'male',
     birthDate: '1955-01-30',
     phone: '+1-555-0194',
+    // S13 follow-up — the seed previously carried only a 1-condition (CHF)
+    // record, but `riskScore: 79` plus the post-discharge tasks ("Daily weight
+    // monitoring", "Sodium-restricted diet education") implied a CHF inpatient
+    // admit with BNP evidence. The S13 Risk rubric (≥2 of {multi-condition,
+    // recent inpatient discharge ≤30d, abnormal labs}) couldn't see that
+    // evidence because the bundle didn't carry it, and the post-S13 eval
+    // flipped him from TP to FN. Enriching the seed with the encounter + obs
+    // the label implied gives the agent real evidence to evaluate against.
     conditions: [{ id: 'samuel-wright-chf', system: 'ICD-10', code: 'I50.9', display: 'Heart failure, unspecified' }],
+    observations: [
+      { id: 'samuel-wright-bnp', loincCode: '30934-4', display: 'Natriuretic peptide B', value: 380, unit: 'pg/mL' },
+      { id: 'samuel-wright-potassium', loincCode: '2823-3', display: 'Potassium', value: 3.5, unit: 'mmol/L' },
+    ],
+    encounter: { id: 'samuel-wright-chf-admit', conditionId: 'samuel-wright-chf', dischargedHoursAgo: 36 },
     riskScore: 79,
     tasks: [
       { id: 'samuel-wright-task-weight', description: 'Daily weight monitoring check-in', priority: 'high', dueInDays: 0 },
