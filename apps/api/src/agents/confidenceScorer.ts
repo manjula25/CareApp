@@ -191,13 +191,21 @@ export function scoreCareGap(gap: { fhirResourceId: string }, bundle: PatientBun
 /**
  * SDOH barrier confidence:
  *  - 0.9 if the cited resource is an AHC-HRSN Observation (LOINC 71802-3)
- *    whose `valueString` does NOT match `/no barriers/i` — the screening
- *    is real and the finding is positive.
+ *    whose `valueString` does NOT match the explicit-negative pattern
+ *    `/\bno\s+\w+\s+barriers?\b/i` — the screening is real and the
+ *    finding is positive.
  *  - 0.4 if the cited resource is in the bundle but is NOT an AHC-HRSN
  *    Observation (e.g., the agent cites a Patient or a different
  *    Observation — the screening itself is weak).
  *  - 0.2 if the cited resource is not in the bundle at all (a fabricated
  *    citation; the validator already dropped it).
+ *
+ * The explicit-negative pattern tolerates an optional word between "no" and
+ * "barriers" because the actual seed text in this repo is
+ * "AHC-HRSN screening: no social barriers identified"
+ * (see `seed-patients.ts:robert-kim-sdoh` and
+ * `population.ts:pop-0005-sdoh`). Mirrors the pattern in
+ * `eval/labelFromBundle.ts:SDOH_NEGATIVE_SCREENING`.
  */
 export function scoreSdohBarrier(barrier: { fhirResourceId: string }, bundle: PatientBundle): number {
   const resource = findResource(bundle, barrier?.fhirResourceId);
@@ -208,8 +216,8 @@ export function scoreSdohBarrier(barrier: { fhirResourceId: string }, bundle: Pa
   }
 
   const valueString = typeof resource.valueString === 'string' ? resource.valueString : '';
-  if (/no barriers/i.test(valueString)) {
-    // Cited an AHC-HRSN screening, but it explicitly says "no barriers".
+  if (/\bno\s+\w+\s+barriers?\b/i.test(valueString)) {
+    // Cited an AHC-HRSN screening, but it explicitly says "no ... barriers".
     // The barrier claim is not supported — 0.4 (cited, wrong content).
     return 0.4;
   }

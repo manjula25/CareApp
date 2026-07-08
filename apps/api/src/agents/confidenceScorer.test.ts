@@ -99,6 +99,28 @@ describe('confidenceScorer — per-finding bundle-evidence heuristic (S14 Commit
 
       expect(scoreSdohBarrier(barrier, bundle)).toBe(0.9);
     });
+
+    it('cites an AHC-HRSN Observation whose valueString says "no social barriers identified" → 0.4 (explicit-negative screening)', () => {
+      // Pre-S16 latent bug: the regex was `/no barriers/i` which does NOT
+      // match "no social barriers identified" (the actual seed text in
+      // `seed-patients.ts:robert-kim-sdoh` and `population.ts:pop-0005-sdoh`).
+      // Pin the fix to the same wording the S15 `labelFromBundle.ts` test
+      // uses, so the two codepaths stay in sync.
+      const bundle: PatientBundle = {
+        resources: [
+          {
+            resourceType: 'Observation',
+            id: 'robert-kim-sdoh',
+            code: { coding: [{ system: 'http://loinc.org', code: '71802-3' }] },
+            valueString: 'AHC-HRSN screening: no social barriers identified',
+          },
+        ],
+        validIds: new Set(['Observation/robert-kim-sdoh']),
+      };
+      const barrier = { fhirResourceId: 'Observation/robert-kim-sdoh' };
+
+      expect(scoreSdohBarrier(barrier, bundle)).toBe(0.4);
+    });
   });
 
   describe('deriveActionPlannerTaskConfidence (task.confidence = min of contributing findings, floor 0.2)', () => {
