@@ -5,7 +5,7 @@ import clsx from 'clsx';
 import { getAlerts, type AlertEntry } from '../api/client';
 import { DemoFallbackBadge } from '../components/DemoFallbackBadge';
 
-type Severity = AlertSeverity;
+type Severity = AlertEntry['severity'];
 type AlertCategory = AlertEntry['category'];
 
 const MOCK_ALERTS: AlertEntry[] = [
@@ -94,27 +94,53 @@ async function fetchAlerts(): Promise<AlertEntry[]> {
   return getAlerts();
 }
 
+/**
+ * Honest reason for the demo-fallback badge. A 401 never reaches here (it
+ * clears auth and redirects to /login), so the remaining failure modes are a
+ * network-level failure (API down/restarting — `fetch` throws before a
+ * response) versus any other HTTP error surfaced by `apiFetch` as
+ * "Request failed: <status>". Naming the difference keeps the badge from
+ * claiming "server unreachable" when the server actually answered.
+ */
+function fallbackReason(error: unknown): string {
+  const message = error instanceof Error ? error.message : '';
+  if (/failed to fetch|networkerror|load failed/i.test(message)) return 'server unreachable';
+  return 'data unavailable';
+}
+
 export default function AlertsPage() {
   const navigate = useNavigate();
   // Real implementation is primary. `MOCK_ALERTS` is a SAFETY NET only —
   // kicks in when the API errors AND we have no real data, surfaced via
   // the `DemoFallbackBadge`. Same pattern as TaskQueue.tsx.
-  const { data, isLoading, isError } = useQuery({
+  const { data, isError, error } = useQuery({
     queryKey: ['alerts'],
     queryFn: fetchAlerts,
     retry: 1,
   });
   const isUsingFallback = isError;
-  const alerts: AlertEntry[] = isError ? MOCK_ALERTS : (data ?? []);
   const [categoryFilter, setCategoryFilter] = useState<AlertCategory | 'all'>('all');
   const [showAcknowledged, setShowAcknowledged] = useState(false);
+  // Acknowledgement is local-only (no write endpoint yet): track the IDs the
+  // user has acked this session and overlay them onto whatever list is live —
+  // real query data or the MOCK_ALERTS safety net.
+  const [acknowledgedIds, setAcknowledgedIds] = useState<Set<string>>(() => new Set());
+
+  const baseAlerts: AlertEntry[] = isError ? MOCK_ALERTS : (data ?? []);
+  const alerts: AlertEntry[] = baseAlerts.map((a) =>
+    acknowledgedIds.has(a.id) ? { ...a, acknowledged: true } : a
+  );
 
   function acknowledge(id: string) {
-    setAlerts((prev) => prev.map((a) => (a.id === id ? { ...a, acknowledged: true } : a)));
+    setAcknowledgedIds((prev) => new Set(prev).add(id));
   }
 
   function acknowledgeAll() {
-    setAlerts((prev) => prev.map((a) => ({ ...a, acknowledged: true })));
+    setAcknowledgedIds((prev) => {
+      const next = new Set(prev);
+      alerts.forEach((a) => next.add(a.id));
+      return next;
+    });
   }
 
   const filtered = alerts.filter((a) => {
@@ -139,7 +165,7 @@ export default function AlertsPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {isUsingFallback && <DemoFallbackBadge />}
+          {isUsingFallback && <DemoFallbackBadge reason={fallbackReason(error)} />}
           {unackCount > 0 && !isUsingFallback && (
             <button
               onClick={acknowledgeAll}
