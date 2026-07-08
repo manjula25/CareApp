@@ -58,6 +58,11 @@ Closes 3 of 5 secondary gaps surfaced in the HL7 evaluation, makes real progress
 - `b3f8167` — **fix(S14): review:apply flips source on non-empty notes (grill §3)**. External code review (Spec axis) caught a partial implementation: grill §3 says "any dim with a non-endorse choice or any non-empty notes" should flip `source: "clinician"`. The pre-fix code only checked `hasOverride || hasAbstain`. The existing round-trip test's james-okafor fixture had non-empty 'Endorsed' notes while asserting source stayed 'dev' — that pinned the bug. Fix: added `hasNotes` check (any notes non-empty after trim) to the source-flip guard. Fixture updated + new test "flips source to clinician when all dims endorse but notes are non-empty (grill §3 'touched' trigger)" pins the path.
 - `2a5b1c9` — `docs/plans/caresync-ai/review-s14.md` aggregated the external code review (Standards + Spec sub-axes); added a "Code-review-aggregated" section above the existing self-review.
 
+### Commits 9–11 (changelog + post-PR regression fix)
+
+- `5752744` — `docs/superpowers/specs/feature-s14-secondary-gaps/2026-07-08-changelog.md` (this file).
+- `f8d0862` — **fix(S14): smartAuth runs AFTER requireAuth + no-double-auth pass-through** (post-Commit-4 regression caught by live smoke test after the PR was open). The 281/281 unit-test suite could not catch a mount-order bug in `index.ts`: smartAuth was mounted via `app.use('/api/patients', smartAuth, createPatientsRouter(fhirService))` which ran smartAuth BEFORE the route's inner `requireAuth`. Login JWTs hit smartAuth first, failed signature verification (smartAuth expects SMART tokens signed with `serverSecret`, login JWTs use `auth/jwt.ts`'s `JWT_SECRET`), and were rejected with `{"error":"smart_auth_failed","reason":"invalid_signature"}` before `requireAuth` ever saw them. Fix: (a) added a 4-line `if (req.auth) return next()` pass-through at the top of smartAuth; (b) moved the smartAuth mount INSIDE each route via a new `wrapRouterWithSmartAuth(router, smartAuth)` helper. New 6th unit test pins the pass-through path. Live smoke test after fix: login JWT → 200, no token → 401 from requireAuth, garbage SMART-shape token → 401 from requireAuth (smartAuth never runs). **Methodology lesson**: mount-order bugs don't surface from per-route test apps. Future slices need at least one integration smoke test against the running `npm run dev` server, not just per-route unit tests.
+
 ## Open Follow-ups (NOT in this slice)
 
 1. **Confidence-bucketed eval sub-tables.** Requires plumbing `confidence: number` through `PatientFindings` (so `computeMetrics` can group findings by bucket) + adding the bucketing logic + rendering. Owned by: next iteration (not S15 — S15 is model-variance). One small commit. Tracked in `verification-s14.md` §6 #1.
@@ -66,15 +71,22 @@ Closes 3 of 5 secondary gaps surfaced in the HL7 evaluation, makes real progress
 4. **Risk agent v2 rubric + LLM-variance root cause** — owned by S15. Per `verification-s13.md` §6. **Explicitly NOT pulled into S14.** Reaffirmed by reading `verification-s13.md` §6 before S14 implementation.
 5. **Model-version pin for the LLM API** — owned by S15 (cross-cutting concern affecting all 3 classifier agents).
 6. **Pre-existing test flake** — `src/routes/analysis.test.ts` "leaves only the second run's Tasks" fails under disk pressure but passes in isolation. Pre-S14, documented in the Commit 2 handoff. Not a regression. Tracked in `verification-s14.md` §6 #6.
+7. **Post-Commit-4 mount-order regression** — **FIXED in `f8d0862`**. Tracked in `verification-s14.md` §6 #7. The live smoke test revealed that smartAuth was mounted AHEAD of the route's inner `requireAuth`; the 281/281 unit-test suite couldn't catch this because each `routes/*.test.ts` builds its own Express app without mounting smartAuth.
+8. **requireAuth should learn SMART-shape tokens too** — asymmetry left by the `f8d0862` fix. Out of scope for the immediate regression. Tracked in `verification-s14.md` §6 #8.
 
 ## Verification
 
 - `npx tsc --noEmit` clean.
-- `npx jest` → 281/281 (43 suites) at HEAD; the pre-existing analysis.test.ts flake happened to pass this run; was 279/280 in earlier session.
-- `npx jest src/middleware/smartAuth.test.ts src/routes/patients.test.ts src/routes/analysis.test.ts` (the S14-touched surface) → 23/23.
+- `npx jest` → 282/282 (43 suites) at HEAD (was 281/281 after `b3f8167`; the `f8d0862` pass-through test is the +1).
+- `npx jest src/middleware/smartAuth.test.ts src/routes/patients.test.ts src/routes/analysis.test.ts` (the S14-touched surface) → 24/24.
 - `npx jest src/eval/` → 11/11 (including the new `AgreementMetrics.matrix` shape assertion).
 - `npx jest src/agents/` → 38/38 across 7 suites.
 - `npm run eval` → 3/16 patients scored (OpenAI quota exhausted mid-run on 13/16; pre-existing limitation). 3 of 4 plan E1 acceptance criteria are now visible in the regenerated `docs/eval-report.md` (SDOH agreement 66.7%, SDOH matrix TP=1/TN=1/FP=0/FN=1, Status "0 of 16 clinician-validated (0.0%), 16 of 16 dev-labeled (100.0%)"); 4th (confidence buckets) deferred.
+- **Live smoke tests** (this session, after PR was open):
+  - SDOH: 5× `curl /fhir/Observation/<id>` confirmed all 5 new screenings in HAPI
+  - review:apply: end-to-end CLI in `/tmp` mutated `labels.json` correctly, then restored
+  - confidence: code-level wiring verified (live SSE-with-confidence blocked on OpenAI quota; cached rows predate S14)
+  - SMART: docker inspect confirmed env vars + bind-mount; HAPI returns 200 (not 401) confirming stock image lacks the security filter (documented Phase D deferral); **caught the mount-order regression; fixed in `f8d0862`**
 
 ## Migration / Revert
 
