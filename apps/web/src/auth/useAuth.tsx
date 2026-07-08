@@ -25,6 +25,12 @@ function decodeUser(token: string): AuthUser | null {
     const [, payloadB64] = token.split('.');
     const payload = JSON.parse(atob(payloadB64));
     if (!payload.id || !payload.role) return null;
+    // Reject expired tokens (`exp` is seconds since epoch, per the API's
+    // `signToken`). Without this, an expired-but-well-formed JWT counts as
+    // "logged in" until a request happens to 401 — the user sits on a
+    // protected page showing the demo-fallback badge instead of being sent
+    // to /login. Tokens with no `exp` claim are left alone (backward-compat).
+    if (typeof payload.exp === 'number' && payload.exp * 1000 <= Date.now()) return null;
     return { id: payload.id, name: payload.name, role: payload.role };
   } catch {
     return null;
