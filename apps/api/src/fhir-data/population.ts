@@ -124,7 +124,7 @@ function raceEthnicityFor(rng: () => number): RaceEthnicity {
  * patients with all three tracked conditions whose last encounter ended
  * within the last 30 days (<= 720h) — i.e. any non-zero recency bonus.
  */
-function riskScoreFor(conditionCount: number, recencyHours: number): number {
+export function riskScoreFor(conditionCount: number, recencyHours: number): number {
   const base = 0.1;
   const conditionBonus = 0.18 * conditionCount;
   const recencyBonus = recencyHours <= 72 ? 0.2 : recencyHours <= 168 ? 0.1 : recencyHours <= 720 ? 0.04 : 0;
