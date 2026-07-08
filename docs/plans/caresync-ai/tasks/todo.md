@@ -6,9 +6,9 @@ Source: `implementation-plan-s16.md` · Spec: `prd-s16.md` (D1–D11) · Decisio
 
 **Goal:** Close sub-gap 3 of the HL7 evaluation's biggest-risk decomposition — the Risk agent's 9-FP rate (specificity 30.8%, PPV 25%) — in a single 3-commit PR: (1) docs [DONE at 193dcdb], (2) temperature + seed pin across all 4 agents + varianceProbe.ts, (3) risk rubric v2 (few-shot examples + 0-anchors rule). 2x2 acceptance gate (dev-labeled + held-out, specificity + sensitivity) is the merge gate for commit 3.
 
-**Architecture:** 2 new modules (`eval/varianceProbe.ts` + its TDD test); 1 new artifact (`design-risk-calibration-v2.md` — already in commit 1); 5 modified files (4 `*Agent.ts` for the pin + `riskAgent.ts` for the prompt rewrite + 4 corresponding test files + `scripts/eval.ts` for the transient `--rubric` flag). TDD where applicable (commits 2 and 3); data-driven for commit 1.
+**Architecture:** 1 new module (`eval/varianceProbe.ts`); 1 new artifact (`design-risk-calibration-v2.md` — already in commit 1); 4 modified `*Agent.ts` files for the temperature + seed pin; 1 modified `riskAgent.ts` for the prompt rewrite; 4 corresponding `*.test.ts` files for TDD pins. TDD where applicable (commits 2 and 3); data-driven for commit 1.
 
-**Ponytail pass applied:** minimum new seams (1 new module + 1 transient flag); the temperature + seed pin is a 2-line addition to 4 existing `client.responses.create(...)` calls; `varianceProbe.ts` follows the existing `eval/` pure-function + I/O-script pattern; no feature flag in the agents themselves (the 2x2 acceptance gate is the merge gate, per `prd-s16.md D5`); no model-snapshot ID hunt (per grill §4); no cross-agent rubric work (per grill §8); no in-app review queue.
+**Ponytail pass applied:** minimum new seams (1 new module, no flags); the temperature + seed pin is a 2-line addition to 4 existing `client.responses.create(...)` calls; `varianceProbe.ts` follows the existing `eval/` pure-function + I/O-script pattern; no `--rubric` flag in `eval.ts` (2x2 baseline is the audit trail, not a runtime comparison); no feature flag in the agents themselves (the 2x2 acceptance gate is the merge gate, per `prd-s16.md D5`); no pre-pin probe run (the baseline is `verification-s13.md §4`, already documented); no model-snapshot ID hunt (per grill §4); no cross-agent rubric work (per grill §8); no in-app review queue.
 
 **Branch state (per skill warning):** implementation is on `feature/s16-risk-calibration-v2` (off `main` at `feca132`); commit 1 already pushed at `193dcdb`.
 
@@ -32,19 +32,12 @@ Source: `implementation-plan-s16.md` · Spec: `prd-s16.md` (D1–D11) · Decisio
 - [ ] **B1.** Read `riskAgent.ts:146-151` (the `client.responses.create(...)` call).
 - [ ] **B2.** Add `temperature: 0` + `seed: 42` to the call's params. **GREEN**: A2's tests pass.
 - [ ] **B3.** Verify `streamMockRisk` (the `MOCK_RISK_OUTPUT` fallback) is unchanged — pin lands on the real call only, per `never-override-real-with-fake.md`.
-- [ ] **C1.** Repeat A2+B2 for `careGapAgent.ts` + `careGapAgent.test.ts`. Tests pass.
-- [ ] **C2.** Repeat for `sdohAgent.ts` + `sdohAgent.test.ts`. Tests pass.
-- [ ] **C3.** Repeat for `actionPlannerAgent.ts` + `actionPlannerAgent.test.ts`. Tests pass.
-- [ ] **C4.** `cd apps/api && npx tsc --noEmit` clean; `npx jest --runInBand` 309 tests pass (301 S15 baseline + 8 new variance-pin tests).
+- [ ] **C1.** Mirror A+B for `careGapAgent.ts`, `sdohAgent.ts`, `actionPlannerAgent.ts` (2 TDD tests + 2-line `client.responses.create(...)` addition in each).
 - [ ] **D1.** Read `eval/labelFromBundle.test.ts` for the existing TDD pattern.
 - [ ] **D2.** Create `eval/varianceProbe.test.ts` with 3 tests (agreement math, LLM-required, real-LLM-not-mock). **RED**: module doesn't exist.
 - [ ] **E1.** Create `eval/varianceProbe.ts` with `computeAgreement` (named export) + `main()` (real LLM, aborts on `OPENAI_API_KEY` unset, emits markdown table). **GREEN**: D2's tests pass.
-- [ ] **E2.** Add `devLabeledPatients()` helper (reads `labels.json`; returns 16 patients not in `_meta.heldOutRows`).
-- [ ] **F1.** Temporarily revert the pin in `riskAgent.ts` (use `git stash` to restore cleanly). `grep -n "temperature\|seed" riskAgent.ts` returns nothing.
-- [ ] **F2.** Run pre-pin probe: `cd apps/api && npx tsx src/eval/varianceProbe.ts > /tmp/s16-pre-pin-probe.md`. Expected: 1/3-2/3 agreement.
-- [ ] **F3.** Restore pin. Run post-pin probe: `npx tsx src/eval/varianceProbe.ts > /tmp/s16-post-pin-probe.md`. Expected: ≥80% agreement.
-- [ ] **F4.** Save probes to `docs/plans/caresync-ai/variance-probe-{pre,post}-pin.md`. Update `docs/eval-report.md` disclosure: "Variance investigation (S16): pre-pin X% agreement, post-pin Y%."
-- [ ] **G1.** `npx tsc --noEmit` clean; `npx jest --runInBand` 309 pass.
+- [ ] **F1.** Run probe: `cd apps/api && npx tsx src/eval/varianceProbe.ts > docs/plans/caresync-ai/variance-probe.md`. **Verify:** ≥80% per-patient agreement (substrate check).
+- [ ] **G1.** `npx tsc --noEmit` clean; `npx jest --runInBand` all green.
 - [ ] **G2.** Commit: `feat(S16): temperature + seed pin (all 4 agents) + varianceProbe.ts`. Push to origin.
 
 **Verify:** variance probe pre/post-pin numbers in eval-report disclosure; 309 tests pass; tsc clean.
@@ -58,17 +51,12 @@ Source: `implementation-plan-s16.md` · Spec: `prd-s16.md` (D1–D11) · Decisio
 - [ ] **B1.** Read `riskAgent.ts:85-100` (current 1-paragraph `buildPrompt`).
 - [ ] **B2.** Replace `buildPrompt` body with v2 structure per `design-risk-calibration-v2.md`. **GREEN**: A2's tests pass.
 - [ ] **B3.** Verify `runRiskAgent` is unchanged (only `buildPrompt` body was rewritten).
-- [ ] **C1.** Read `scripts/eval.ts` CLI flags section (S15's `--dev-only`, `--held-out-only`, `--no-live`).
-- [ ] **C2.** Add transient `--rubric=v1|v2` flag (default v1). v1 = inline copy of pre-commit-3 `buildPrompt` body; v2 = imports `buildPrompt` from `riskAgent.ts`. `npx tsc --noEmit` clean.
-- [ ] **C3.** Add 1 integration test in `eval.test.ts`: `--rubric=v2` selects v2 prompt; `--rubric=v1` (default) selects v1.
-- [ ] **D1.** Quorum check: OpenAI quota available? If exhausted, document gate as "deferred" in `verification-s16.md`; do NOT merge.
-- [ ] **D2.** Run gate: `cd apps/api && npx tsx src/scripts/eval.ts --rubric=v2 --risk-only`.
-- [ ] **D3.** Extract 4 numbers: dev-labeled specificity (≥30%) + sensitivity (≥67%); held-out specificity (≥30%) + sensitivity (≥50%).
-- [ ] **D4.** If all 4 hit thresholds → proceed to E. If any miss → branch stays open; iterate in follow-up commit.
-- [ ] **E1.** Remove `--rubric` flag from `eval.ts`; v2 is the only prompt. v1 in-script copy deleted. Eval imports `buildPrompt` from `riskAgent.ts` unconditionally.
-- [ ] **E2.** Update `docs/eval-report.md` Status + Methodology to reflect v2 as the only prompt (no more "S16 verification window" disclosure).
-- [ ] **F1.** `npx tsc --noEmit` clean; `npx jest --runInBand` 309 + 3 + 1 (transient, may be removed) = 312-313 pass.
-- [ ] **F2.** Commit: `feat(S16): risk rubric v2 — replace buildPrompt with few-shot + 0-anchors rule`. Push to origin.
+- [ ] **C1.** Quorum check: OpenAI quota available? If exhausted, document gate as "deferred" in `verification-s16.md`; do NOT commit; branch stays open. (Ponytail: no `--rubric` flag in `eval.ts` — the v2 prompt is the only prompt after commit 3 lands; the 2x2 baseline is `verification-s13.md §4`'s pre-S13 30.8% specificity number, already in the audit trail.)
+- [ ] **C2.** Run gate: `cd apps/api && npx tsx src/scripts/eval.ts --risk-only`.
+- [ ] **C3.** Extract 4 numbers: dev-labeled specificity (≥30%) + sensitivity (≥67%); held-out specificity (≥30%) + sensitivity (≥50%).
+- [ ] **C4.** If all 4 hit thresholds → proceed to D. If any miss → branch stays open; iterate in follow-up commit.
+- [ ] **D1.** `npx tsc --noEmit` clean; `npx jest --runInBand` all green.
+- [ ] **D2.** Commit: `feat(S16): risk rubric v2 — replace buildPrompt with few-shot + 0-anchors rule`. Push to origin.
 
 **Verify:** 2x2 gate passes; eval-report shows post-rubric dev-labeled + held-out numbers; P2 4→5 in HL7 evaluation.
 
