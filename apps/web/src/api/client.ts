@@ -48,6 +48,10 @@ export interface PanelPatient {
   riskScore: number;
   taskCount: number;
   conditionTags: string[];
+  /** Caresync-coordinator-grid-my-patients — real implementation. Days
+   *  between now and the patient's most recent Encounter.period.end. null
+   *  if no Encounter was found (UI shows "—" rather than fabricating). */
+  daysSinceContact: number | null;
 }
 
 export function getAssignedPanel(): Promise<PanelPatient[]> {

@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { PatientDetail } from './PatientDetail';
 import * as client from '../api/client';
 import type { AnalysisHandlers } from '../api/client';
+import { AuthProvider } from '../auth/useAuth';
 
 vi.mock('../api/client', async () => {
   const actual = await vi.importActual<typeof import('../api/client')>('../api/client');
@@ -23,14 +24,21 @@ const mockPatient = {
 };
 
 function renderPatientDetail(route = '/patients/maria-1') {
+  // Caresync-coordinator-grid-my-patients — PatientDetail now uses useAuth
+  // (for the role-aware back link), so wrap with AuthProvider + a director
+  // token so useAuth() returns a populated user.
+  const payload = btoa(JSON.stringify({ id: 'dir-1', name: 'Test Director', role: 'director' }));
+  localStorage.setItem('caresync_token', `header.${payload}.signature`);
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={[route]}>
-        <Routes>
-          <Route path="/patients/:id" element={<PatientDetail />} />
-        </Routes>
-      </MemoryRouter>
+      <AuthProvider>
+        <MemoryRouter initialEntries={[route]}>
+          <Routes>
+            <Route path="/patients/:id" element={<PatientDetail />} />
+          </Routes>
+        </MemoryRouter>
+      </AuthProvider>
     </QueryClientProvider>
   );
 }

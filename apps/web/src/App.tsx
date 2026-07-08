@@ -3,6 +3,7 @@ import { AppShell } from './components/AppShell';
 import { RoleGuard } from './auth/RoleGuard';
 import { useAuth, roleHome } from './auth/useAuth';
 import { Login } from './pages/Login';
+import { MyPatients } from './pages/coordinator/MyPatients';
 import { PatientPanel } from './pages/PatientPanel';
 import { PatientDetail } from './pages/PatientDetail';
 import { Population } from './pages/Population';
@@ -45,6 +46,7 @@ function App() {
         }
       >
         <Route path="/panel" element={<RoleGuard role="director"><PatientPanel /></RoleGuard>} />
+        <Route path="/coordinator" element={<MyPatients />} />
         <Route path="/patients/:id" element={<PatientDetail />} />
         <Route path="/patients/:id/profile" element={<PatientProfile />} />
         <Route path="/patients/:id/sdoh" element={<Sdoh />} />

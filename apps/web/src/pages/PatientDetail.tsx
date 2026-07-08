@@ -13,6 +13,7 @@ import {
   type PatientDetail as PatientDetailPayload,
 } from '../api/client';
 import { ageSexLabel, sexLabel } from '../lib/patient';
+import { useAuth } from '../auth/useAuth';
 import { useAnalysisGraph } from '../lib/analysisGraph';
 import {
   MOCK_PATIENTS,
@@ -1062,6 +1063,7 @@ export function PatientDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
 
   // Real data fetch (backend pattern).
   // Don't retry 4xx — a 404 means the patient id isn't in HAPI, retrying
@@ -1197,8 +1199,13 @@ export function PatientDetail() {
     </div>
   );
 
+  // Caresync-coordinator-grid-my-patients — directors go back to /panel
+  // (their list view), coordinators go back to /coordinator (the grid view
+  // ported from the lead project). The RoleGuard would redirect anyway,
+  // but going to the correct path skips the extra navigation.
+  const backPath = user?.role === 'coordinator' ? '/coordinator' : '/panel';
   const BackLink = () => (
-    <Link to="/panel" className="text-label text-cyan hover:underline">
+    <Link to={backPath} className="text-label text-cyan hover:underline">
       ← My Patient Panel
     </Link>
   );

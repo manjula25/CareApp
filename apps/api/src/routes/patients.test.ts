@@ -40,6 +40,9 @@ describe('patients routes', () => {
       riskScore: 87,
       gender: 'female',
       conditionTags: expect.arrayContaining(['CHF', 'Diabetes']),
+      // Caresync-coordinator-grid-my-patients — real daysSinceContact from
+      // Maria's most recent Encounter (discharged 48h ago → 2 days).
+      daysSinceContact: 2,
     });
   });
 

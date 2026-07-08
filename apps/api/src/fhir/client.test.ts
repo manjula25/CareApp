@@ -72,6 +72,22 @@ describe('FhirReadService', () => {
     expect(panel.length).toBeGreaterThanOrEqual(6);
   });
 
+  // Caresync-coordinator-grid-my-patients — real `daysSinceContact` from the
+  // most recent Encounter.period.end, not a mock value. Maria Chen's seed
+  // encounters are discharged 48h ago, so her `daysSinceContact` should
+  // resolve to 2. Other panel patients have no encounters seeded, so they
+  // resolve to null (UI shows "—" rather than fabricating a value).
+  it('derives daysSinceContact from the most recent Encounter.period.end', async () => {
+    const panel = await service.getAssignedPanel(coordinator);
+    const maria = panel.find((p) => p.id === 'maria-chen');
+    expect(maria).toBeDefined();
+    expect(maria!.daysSinceContact).toBe(2);
+
+    const noEncounter = panel.find((p) => p.id === 'james-okafor');
+    expect(noEncounter).toBeDefined();
+    expect(noEncounter!.daysSinceContact).toBeNull();
+  });
+
   describe('getPatientBundle ($everything — GD11 citation source)', () => {
     it("returns Maria's full record including her Conditions and Observations", async () => {
       const { resources } = await service.getPatientBundle(coordinator, 'maria-chen');
