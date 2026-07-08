@@ -1,7 +1,7 @@
 {
   "_meta": {
     "description": "S9 A1 — committed ground-truth label file for the eval harness (Phase B: `npm run eval`). Covers all 6 curated hero/panel patients (`ALL_PATIENTS`, apps/api/src/fhir-data/seed-patients.ts) plus the first 10 deterministic procedural patients (`pop-0001`..`pop-0010`, apps/api/src/fhir-data/population.ts's `generatePopulation()`) — the plan's '~5 curated hero + ~10 Synthea' with the disclosed S5 substitution (no real Synthea/Java in this repo; `pop-XXXX` deterministic patients stand in, precedent: docs/plans/caresync-ai/verification-s5.md).",
-    "clinicianStatus": "DEV-LABELED BASELINE, NOT CLINICIAN-VALIDATED (GD8). Every row's `source` is \"dev\" and every row carries a `clinicianOverride` slot (currently `null`) that a clinician can fill in later to upgrade a row without any code change (GD8's 4->5 lever). Do not present these labels as clinician-reviewed.",
+    "clinicianStatus": "Status (S15): N clinician-validated (X%), M dev-labeled (Y%), K held-out (Z%). The held-out 10 (pop-0011..pop-0020) are labeled via the same dev-interpreted rules as the dev-labeled 16, applied to independently-generated bundles. Held-out labels are mechanical; clinician-validated labels are tracked separately via the clinicianOverride slot.",
     "labelingRules": {
       "careGap": "expectedHasGap is derived ONLY from Observation-type coverage for the two (three, counting CKD) conditions that already have an established LOINC convention elsewhere in this codebase: diabetes (E11.9) needs an HbA1c Observation (LOINC 4548-4, as seeded for maria-chen); CHF (I50.9) needs a BNP Observation (LOINC 30934-4, as seeded for maria-chen); CKD (N18.3) needs an eGFR Observation (LOINC 62238-1, also seeded for maria-chen, general renal marker). A patient with one of these conditions and NO matching Observation on file is labeled true (a real, defensible monitoring gap: the record shows the test was never done). A patient with the condition AND a matching Observation on file is labeled false. Conditions with no established Observation/LOINC convention anywhere in this codebase (depression F33.1, COPD J44.9, HTN I10, acute hip fracture S72.001A) are left UNLABELED (expectedHasGap: null) rather than guessing — see `clinicianStatus`/GD8 for the override path.",
       "risk": "expectedHighRisk is true iff the patient's own seed/generator riskScore (SeedPatient.riskScore for curated patients; the deterministic riskScoreFor() output for procedural patients — both documented, pre-existing values, not invented for this label file) is >= 75, the same CRITICAL_RISK_THRESHOLD population.ts already uses for its 'critical zone'. Ground truth is compared against whether the Risk agent's `riskLevel` output is 'high' or 'critical'.",
@@ -11,6 +11,18 @@
     "limitations": [
       "Care Gap ground truth is skewed positive (10 true / 1 false / 5 unlabeled across the 16 rows) because population.ts never generates baseline preventive-care Observations for any procedural patient — there is only one real negative example (maria-chen, who has both her HbA1c and BNP on file). Specificity for Care Gap in this baseline rests on a single data point and should be read as illustrative, not statistically robust, until clinician-reviewed rows or richer procedural Observation data exist.",
       "SDOH ground truth has only one positive example (maria-chen) for the same reason (no other patient has any seeded AHC-HRSN data) — the agreement rate is easy to game with an agent that always predicts 'no barrier' and should be read alongside the error-analysis section Phase B's report is required to include, not in isolation."
+    ],
+    "heldOutRows": [
+      "pop-0011",
+      "pop-0012",
+      "pop-0013",
+      "pop-0014",
+      "pop-0015",
+      "pop-0016",
+      "pop-0017",
+      "pop-0018",
+      "pop-0019",
+      "pop-0020"
     ]
   },
   "patients": [
@@ -352,6 +364,216 @@
       },
       "actionPlanner": {
         "notes": "Qualitative only — see Phase B report."
+      }
+    },
+    {
+      "patientId": "pop-0011",
+      "source": "dev",
+      "clinicianOverride": null,
+      "careGap": {
+        "expectedHasGap": true,
+        "notes": "Held-out set patient generated 2026-07-08 for S15; bundle is independently generated, label derived from `_meta.labelingRules.careGap` (E11.9 + I50.9, no HbA1c on file and no BNP on file — both classifiable gaps)."
+      },
+      "risk": {
+        "expectedHighRisk": false,
+        "seedRiskScore": 46,
+        "notes": "Held-out set patient; risk label derived from `_meta.labelingRules.risk` (riskScoreFor ≥ 75) — generator riskScore 46 < 75."
+      },
+      "sdoh": {
+        "expectedHasBarrier": null,
+        "notes": "Held-out set patient; SDOH label derived from `_meta.labelingRules.sdoh` — no seeded AHC-HRSN screening Observation (buildSdohForIndex(i=10) returns undefined per the deterministic generator), so unlabeled."
+      },
+      "actionPlanner": {
+        "notes": "Qualitative only — held-out set."
+      }
+    },
+    {
+      "patientId": "pop-0012",
+      "source": "dev",
+      "clinicianOverride": null,
+      "careGap": {
+        "expectedHasGap": true,
+        "notes": "Held-out set patient generated 2026-07-08 for S15; bundle is independently generated, label derived from `_meta.labelingRules.careGap` (E11.9 has no HbA1c on file; F33.1 has no established Observation/LOINC convention and contributes no classifiable dimension — E11.9 alone is enough to label this true)."
+      },
+      "risk": {
+        "expectedHighRisk": false,
+        "seedRiskScore": 66,
+        "notes": "Held-out set patient; risk label derived from `_meta.labelingRules.risk` (riskScoreFor ≥ 75) — generator riskScore 66 < 75."
+      },
+      "sdoh": {
+        "expectedHasBarrier": null,
+        "notes": "Held-out set patient; SDOH label derived from `_meta.labelingRules.sdoh` — no seeded AHC-HRSN screening Observation (buildSdohForIndex(i=11) returns undefined), so unlabeled."
+      },
+      "actionPlanner": {
+        "notes": "Qualitative only — held-out set."
+      }
+    },
+    {
+      "patientId": "pop-0013",
+      "source": "dev",
+      "clinicianOverride": null,
+      "careGap": {
+        "expectedHasGap": true,
+        "notes": "Held-out set patient generated 2026-07-08 for S15; bundle is independently generated, label derived from `_meta.labelingRules.careGap` (I50.9 has no BNP on file; F33.1 has no established Observation/LOINC convention and contributes no classifiable dimension — I50.9 alone is enough to label this true)."
+      },
+      "risk": {
+        "expectedHighRisk": false,
+        "seedRiskScore": 56,
+        "notes": "Held-out set patient; risk label derived from `_meta.labelingRules.risk` (riskScoreFor ≥ 75) — generator riskScore 56 < 75."
+      },
+      "sdoh": {
+        "expectedHasBarrier": null,
+        "notes": "Held-out set patient; SDOH label derived from `_meta.labelingRules.sdoh` — no seeded AHC-HRSN screening Observation (buildSdohForIndex(i=12) returns undefined), so unlabeled."
+      },
+      "actionPlanner": {
+        "notes": "Qualitative only — held-out set."
+      }
+    },
+    {
+      "patientId": "pop-0014",
+      "source": "dev",
+      "clinicianOverride": null,
+      "careGap": {
+        "expectedHasGap": true,
+        "notes": "Held-out set patient generated 2026-07-08 for S15; bundle is independently generated, label derived from `_meta.labelingRules.careGap` (E11.9 + I50.9 have no HbA1c and no BNP on file; F33.1 has no convention — the two classifiable conditions both contribute)."
+      },
+      "risk": {
+        "expectedHighRisk": false,
+        "seedRiskScore": 72,
+        "notes": "Held-out set patient; risk label derived from `_meta.labelingRules.risk` (riskScoreFor ≥ 75) — generator riskScore 72 < 75 (just under threshold)."
+      },
+      "sdoh": {
+        "expectedHasBarrier": null,
+        "notes": "Held-out set patient; SDOH label derived from `_meta.labelingRules.sdoh` — no seeded AHC-HRSN screening Observation (buildSdohForIndex(i=13) returns undefined), so unlabeled."
+      },
+      "actionPlanner": {
+        "notes": "Qualitative only — held-out set."
+      }
+    },
+    {
+      "patientId": "pop-0015",
+      "source": "dev",
+      "clinicianOverride": null,
+      "careGap": {
+        "expectedHasGap": true,
+        "notes": "Held-out set patient generated 2026-07-08 for S15; bundle is independently generated, label derived from `_meta.labelingRules.careGap` (E11.9 has no HbA1c on file)."
+      },
+      "risk": {
+        "expectedHighRisk": false,
+        "seedRiskScore": 38,
+        "notes": "Held-out set patient; risk label derived from `_meta.labelingRules.risk` (riskScoreFor ≥ 75) — generator riskScore 38 < 75."
+      },
+      "sdoh": {
+        "expectedHasBarrier": null,
+        "notes": "Held-out set patient; SDOH label derived from `_meta.labelingRules.sdoh` — no seeded AHC-HRSN screening Observation (buildSdohForIndex(i=14) returns undefined), so unlabeled."
+      },
+      "actionPlanner": {
+        "notes": "Qualitative only — held-out set."
+      }
+    },
+    {
+      "patientId": "pop-0016",
+      "source": "dev",
+      "clinicianOverride": null,
+      "careGap": {
+        "expectedHasGap": true,
+        "notes": "Held-out set patient generated 2026-07-08 for S15; bundle is independently generated, label derived from `_meta.labelingRules.careGap` (I50.9 has no BNP on file)."
+      },
+      "risk": {
+        "expectedHighRisk": false,
+        "seedRiskScore": 28,
+        "notes": "Held-out set patient; risk label derived from `_meta.labelingRules.risk` (riskScoreFor ≥ 75) — generator riskScore 28 < 75."
+      },
+      "sdoh": {
+        "expectedHasBarrier": null,
+        "notes": "Held-out set patient; SDOH label derived from `_meta.labelingRules.sdoh` — no seeded AHC-HRSN screening Observation (buildSdohForIndex(i=15) returns undefined), so unlabeled."
+      },
+      "actionPlanner": {
+        "notes": "Qualitative only — held-out set."
+      }
+    },
+    {
+      "patientId": "pop-0017",
+      "source": "dev",
+      "clinicianOverride": null,
+      "careGap": {
+        "expectedHasGap": null,
+        "notes": "Held-out set patient generated 2026-07-08 for S15; bundle is independently generated, label derived from `_meta.labelingRules.careGap` (F33.1 only — depression has no established Observation/LOINC monitoring convention anywhere in this codebase, so this dimension is left unlabeled rather than guessed)."
+      },
+      "risk": {
+        "expectedHighRisk": false,
+        "seedRiskScore": 48,
+        "notes": "Held-out set patient; risk label derived from `_meta.labelingRules.risk` (riskScoreFor ≥ 75) — generator riskScore 48 < 75."
+      },
+      "sdoh": {
+        "expectedHasBarrier": null,
+        "notes": "Held-out set patient; SDOH label derived from `_meta.labelingRules.sdoh` — no seeded AHC-HRSN screening Observation (buildSdohForIndex(i=16) returns undefined), so unlabeled."
+      },
+      "actionPlanner": {
+        "notes": "Qualitative only — held-out set."
+      }
+    },
+    {
+      "patientId": "pop-0018",
+      "source": "dev",
+      "clinicianOverride": null,
+      "careGap": {
+        "expectedHasGap": true,
+        "notes": "Held-out set patient generated 2026-07-08 for S15; bundle is independently generated, label derived from `_meta.labelingRules.careGap` (E11.9 + I50.9, no HbA1c on file and no BNP on file — both classifiable gaps)."
+      },
+      "risk": {
+        "expectedHighRisk": false,
+        "seedRiskScore": 66,
+        "notes": "Held-out set patient; risk label derived from `_meta.labelingRules.risk` (riskScoreFor ≥ 75) — generator riskScore 66 < 75."
+      },
+      "sdoh": {
+        "expectedHasBarrier": null,
+        "notes": "Held-out set patient; SDOH label derived from `_meta.labelingRules.sdoh` — no seeded AHC-HRSN screening Observation (buildSdohForIndex(i=17) returns undefined), so unlabeled."
+      },
+      "actionPlanner": {
+        "notes": "Qualitative only — held-out set."
+      }
+    },
+    {
+      "patientId": "pop-0019",
+      "source": "dev",
+      "clinicianOverride": null,
+      "careGap": {
+        "expectedHasGap": true,
+        "notes": "Held-out set patient generated 2026-07-08 for S15; bundle is independently generated, label derived from `_meta.labelingRules.careGap` (E11.9 has no HbA1c on file; F33.1 has no established Observation/LOINC convention and contributes no classifiable dimension — E11.9 alone is enough to label this true)."
+      },
+      "risk": {
+        "expectedHighRisk": false,
+        "seedRiskScore": 56,
+        "notes": "Held-out set patient; risk label derived from `_meta.labelingRules.risk` (riskScoreFor ≥ 75) — generator riskScore 56 < 75."
+      },
+      "sdoh": {
+        "expectedHasBarrier": null,
+        "notes": "Held-out set patient; SDOH label derived from `_meta.labelingRules.sdoh` — no seeded AHC-HRSN screening Observation (buildSdohForIndex(i=18) returns undefined), so unlabeled."
+      },
+      "actionPlanner": {
+        "notes": "Qualitative only — held-out set."
+      }
+    },
+    {
+      "patientId": "pop-0020",
+      "source": "dev",
+      "clinicianOverride": null,
+      "careGap": {
+        "expectedHasGap": true,
+        "notes": "Held-out set patient generated 2026-07-08 for S15; bundle is independently generated, label derived from `_meta.labelingRules.careGap` (I50.9 has no BNP on file; F33.1 has no established Observation/LOINC convention and contributes no classifiable dimension — I50.9 alone is enough to label this true)."
+      },
+      "risk": {
+        "expectedHighRisk": false,
+        "seedRiskScore": 66,
+        "notes": "Held-out set patient; risk label derived from `_meta.labelingRules.risk` (riskScoreFor ≥ 75) — generator riskScore 66 < 75."
+      },
+      "sdoh": {
+        "expectedHasBarrier": null,
+        "notes": "Held-out set patient; SDOH label derived from `_meta.labelingRules.sdoh` — no seeded AHC-HRSN screening Observation (buildSdohForIndex(i=19) returns undefined), so unlabeled."
+      },
+      "actionPlanner": {
+        "notes": "Qualitative only — held-out set."
       }
     }
   ]
