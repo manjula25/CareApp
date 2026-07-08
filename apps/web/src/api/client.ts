@@ -1,6 +1,17 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000';
 const TOKEN_KEY = 'caresync_token';
 
+/** Dispatched on `window` whenever a request comes back 401. `useAuth`
+ *  listens for it and calls `logout()` so App.tsx's `<Navigate to="/login">`
+ *  kicks in — without this, a stale token (server restart, JWT expiry, secret
+ *  rotation) silently degrades every page to the demo-fallback badge and
+ *  the user has no idea why their data isn't loading. */
+export const AUTH_LOGOUT_EVENT = 'caresync:auth-logout';
+
+function emitAuthLogout() {
+  window.dispatchEvent(new CustomEvent(AUTH_LOGOUT_EVENT));
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const token = localStorage.getItem(TOKEN_KEY);
   const res = await fetch(`${API_BASE_URL}${path}`, {
@@ -12,6 +23,13 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
   if (!res.ok) {
+    if (res.status === 401) {
+      // Token is stale or invalid — wipe it so the auth context can drop
+      // back to the login screen instead of leaving the user stuck on
+      // "Demo data — server unreachable" forever.
+      localStorage.removeItem(TOKEN_KEY);
+      emitAuthLogout();
+    }
     const body = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(body.error ?? `Request failed: ${res.status}`);
   }
@@ -225,6 +243,28 @@ export interface QualityMeasureResult {
 
 export function getQualityMeasures(): Promise<QualityMeasureResult> {
   return apiFetch('/api/quality/measures');
+}
+
+// --- S12 B.2 — Clinical alerts derived from real FHIR data -----------------
+
+export type AlertSeverity = 'critical' | 'high' | 'medium' | 'low';
+export type AlertCategory = 'clinical' | 'medication' | 'sdoh' | 'gap';
+
+export interface AlertEntry {
+  id: string;
+  severity: AlertSeverity;
+  category: AlertCategory;
+  patientId: string;
+  patientName: string;
+  title: string;
+  detail: string;
+  fhirRef: string;
+  time: string;
+  acknowledged: boolean;
+}
+
+export function getAlerts(): Promise<AlertEntry[]> {
+  return apiFetch('/api/alerts');
 }
 
 // --- S11 A3 — Team performance aggregate (W04) ---------------------------

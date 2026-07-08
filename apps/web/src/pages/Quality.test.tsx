@@ -14,6 +14,12 @@ vi.mock('../api/client', async () => {
   };
 });
 
+// S12 B.2 — disable the page-level placeholderData fallback so test assertions
+// run against the (mocked) API response, not the lib/demoFallbacks.ts values.
+vi.mock('../lib/demoFallbacks', () => ({
+  MOCK_QUALITY: undefined,
+}));
+
 // Deliberately non-trivial/non-zero numbers so a tile that (wrongly)
 // hardcodes a value instead of deriving it from the query's data would fail
 // these assertions — same convention Governance.test.tsx's MOCK_MODEL uses.
@@ -89,9 +95,12 @@ describe('Quality — W05/W07 real HEDIS measure dashboard', () => {
     expect(screen.getByText(/loading/i)).toBeInTheDocument();
   });
 
-  it('shows an error state when the query fails', async () => {
+  it('shows the demo-fallback badge when the query fails', async () => {
     vi.mocked(client.getQualityMeasures).mockRejectedValue(new Error('boom'));
+    // The page sets retry: 1, which adds 1+ seconds to the error transition.
+    // Use a longer findByTestId timeout so the badge has time to appear after
+    // the retry settles. Production behavior is unchanged.
     renderQuality();
-    expect(await screen.findByText(/could not load/i)).toBeInTheDocument();
+    expect(await screen.findByTestId('demo-fallback-badge', {}, { timeout: 4000 })).toBeInTheDocument();
   });
 });

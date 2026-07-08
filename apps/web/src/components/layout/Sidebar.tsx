@@ -68,7 +68,7 @@ const LogoutIcon = () => (
 
 const navItems: NavItem[] = [
   { icon: <GridIcon />, label: 'Population', path: '/population', roles: ['director'] },
-  { icon: <PersonIcon />, label: 'Patients', path: '/panel' },
+  { icon: <PersonIcon />, label: 'Patients', path: '/panel', roles: ['coordinator', 'director'] },
   { icon: <BarChartIcon />, label: 'Quality', path: '/quality', roles: ['director'] },
   { icon: <ShieldIcon />, label: 'Governance', path: '/governance', roles: ['director'] },
   { icon: <DollarIcon />, label: 'Cost/ROI', path: '/cost-roi' },

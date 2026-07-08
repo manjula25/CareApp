@@ -1,4 +1,4 @@
-import { projectedCostAvoidance, READMISSION_UNIT_COST_USD, AVOIDED_READMISSION_RATE } from './service';
+import { projectedCostAvoidance, READMISSION_UNIT_COST_USD, AVOIDED_READMISSION_RATE, _testing } from './service';
 
 describe('projectedCostAvoidance', () => {
   // Deterministic fixture — no HAPI involved. Documents the exact formula:
@@ -21,5 +21,33 @@ describe('projectedCostAvoidance', () => {
 
   it('scales linearly with risk score magnitude', () => {
     expect(projectedCostAvoidance([100])).toBe(Math.round(1 * AVOIDED_READMISSION_RATE * READMISSION_UNIT_COST_USD));
+  });
+});
+
+// S12 A.3 — pure bucketing for the risk-distribution bar chart. Boundary
+// tests pin each threshold exactly: a score of 75 must land in `critical`
+// (>= CRITICAL_RISK_THRESHOLD), 74 must drop to `high`, etc. Keeping these
+// tests next to the formula makes the contract auditable.
+describe('bucketFor (risk-distribution)', () => {
+  const { bucketFor } = _testing;
+
+  it('classifies >=75 as critical', () => {
+    expect(bucketFor(75)).toBe('critical');
+    expect(bucketFor(100)).toBe('critical');
+  });
+
+  it('classifies 60-74 as high (boundary at 74)', () => {
+    expect(bucketFor(74)).toBe('high');
+    expect(bucketFor(60)).toBe('high');
+  });
+
+  it('classifies 40-59 as medium (boundary at 59)', () => {
+    expect(bucketFor(59)).toBe('medium');
+    expect(bucketFor(40)).toBe('medium');
+  });
+
+  it('classifies <40 as low (boundary at 0)', () => {
+    expect(bucketFor(39)).toBe('low');
+    expect(bucketFor(0)).toBe('low');
   });
 });

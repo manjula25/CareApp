@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../auth/useAuth';
 
 const roleLabels: Record<string, { label: string; color: string }> = {
@@ -8,12 +9,30 @@ const roleLabels: Record<string, { label: string; color: string }> = {
   social_worker: { label: 'Social Worker', color: '#0FC48A' },
 };
 
-const SYSTEM_STATUS = [
-  { name: 'FHIR R4 Server', status: 'operational', latency: '42ms' },
-  { name: 'AI Agent Engine', status: 'operational', latency: '180ms' },
-  { name: 'SSE Streaming', status: 'operational', latency: '—' },
-  { name: 'Auth Service', status: 'operational', latency: '18ms' },
-];
+interface HealthProbe {
+  ok: boolean;
+  latencyMs: number | null;
+  error?: string;
+}
+
+/** Probe `/api/health` and measure round-trip latency. Real value, not hardcoded. */
+async function probeHealth(): Promise<HealthProbe> {
+  const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:4000';
+  const token = localStorage.getItem('caresync_token');
+  const start = performance.now();
+  try {
+    const res = await fetch(`${baseUrl}/api/health`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      cache: 'no-store',
+    });
+    const elapsed = Math.round(performance.now() - start);
+    if (!res.ok) return { ok: false, latencyMs: elapsed, error: `HTTP ${res.status}` };
+    return { ok: true, latencyMs: elapsed };
+  } catch (err) {
+    const elapsed = Math.round(performance.now() - start);
+    return { ok: false, latencyMs: elapsed, error: (err as Error).message };
+  }
+}
 
 function initials(name: string): string {
   return name
@@ -31,6 +50,15 @@ export default function SettingsPage() {
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
   const roleInfo = user ? (roleLabels[user.role] ?? { label: user.role, color: '#00C8FF' }) : null;
+
+  const healthQuery = useQuery({
+    queryKey: ['health'],
+    queryFn: probeHealth,
+    // Keep the status fresh while the page is open; this is the actual
+    // round-trip time to the API, useful for the demo presenter.
+    refetchInterval: 30_000,
+    retry: 0,
+  });
 
   function handleLogout() {
     logout();
@@ -64,26 +92,41 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      <section className="mb-6">
+      <section className="mb-6" data-testid="system-status">
         <h2 className="text-xs font-semibold text-text-dim uppercase tracking-widest mb-3">System Status</h2>
         <div className="bg-surface border border-border rounded-xl divide-y divide-border">
-          {SYSTEM_STATUS.map((svc) => (
-            <div key={svc.name} className="flex items-center justify-between px-5 py-3.5">
-              <span className="text-text-muted text-sm">{svc.name}</span>
-              <div className="flex items-center gap-3">
-                {svc.latency !== '—' && (
-                  <span className="text-text-dim text-xs font-mono">{svc.latency}</span>
-                )}
-                <span className="flex items-center gap-1.5 text-xs font-medium" style={{ color: '#0FC48A' }}>
-                  <span
-                    className="w-1.5 h-1.5 rounded-full"
-                    style={{ background: '#0FC48A', boxShadow: '0 0 4px #0FC48A' }}
-                  />
-                  Operational
-                </span>
-              </div>
+          {/* Single live row — a real round-trip probe of `/api/health`. The
+              `latencyMs` is whatever the browser just measured, not a
+              hardcoded "42ms" string. No fake statuses for subsystems that
+              aren't independently measurable here (AI Engine, SSE Streaming)
+              — better to show nothing than invent numbers. */}
+          <div className="flex items-center justify-between px-5 py-3.5" data-testid="health-row">
+            <span className="text-text-muted text-sm">CareSync API (round-trip)</span>
+            <div className="flex items-center gap-3">
+              <span className="text-text-dim text-xs font-mono" data-testid="health-latency">
+                {healthQuery.isLoading && healthQuery.data === undefined
+                  ? 'measuring…'
+                  : healthQuery.data?.latencyMs !== null && healthQuery.data?.latencyMs !== undefined
+                    ? `${healthQuery.data.latencyMs}ms`
+                    : '—'}
+              </span>
+              <span
+                className="flex items-center gap-1.5 text-xs font-medium"
+                style={{
+                  color: healthQuery.data?.ok ? '#0FC48A' : '#E84848',
+                }}
+              >
+                <span
+                  className="w-1.5 h-1.5 rounded-full"
+                  style={{
+                    background: healthQuery.data?.ok ? '#0FC48A' : '#E84848',
+                    boxShadow: healthQuery.data?.ok ? '0 0 4px #0FC48A' : '0 0 4px #E84848',
+                  }}
+                />
+                {healthQuery.data?.ok ? 'Operational' : (healthQuery.data?.error ?? 'Unreachable')}
+              </span>
             </div>
-          ))}
+          </div>
         </div>
       </section>
 
@@ -92,10 +135,8 @@ export default function SettingsPage() {
         <div className="bg-surface border border-border rounded-xl divide-y divide-border">
           {[
             ['Application', 'CareSync AI'],
-            ['Version', '1.0.0-hl7-2026'],
             ['FHIR Standard', 'R4 (4.0.1)'],
             ['Competition', 'HL7 AI Challenge 2026'],
-            ['License', 'MIT'],
           ].map(([label, value]) => (
             <div key={label} className="flex items-center justify-between px-5 py-3.5">
               <span className="text-text-dim text-sm">{label}</span>

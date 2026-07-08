@@ -47,3 +47,52 @@ describe('POST /api/auth/login', () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe('GET /api/auth/me', () => {
+  function setup() {
+    const db = new Database(':memory:');
+    migrate(db);
+    seedDemoUsers(db);
+    return { app: buildApp(db), db };
+  }
+
+  async function loginAndGetToken(email: string, password: string): Promise<string> {
+    const res = await request(buildApp(new Database(':memory:')))
+      .post('/api/auth/login')
+      .send({ email, password });
+    return res.body.token as string;
+  }
+
+  it('returns 401 without a bearer token', async () => {
+    const { app } = setup();
+    const res = await request(app).get('/api/auth/me');
+    expect(res.status).toBe(401);
+  });
+
+  it('returns the full user row + computed initials for a valid token', async () => {
+    // Login via a separate seeded DB so we get a real token.
+    const db = new Database(':memory:');
+    migrate(db);
+    seedDemoUsers(db);
+    const loginRes = await request(buildApp(db))
+      .post('/api/auth/login')
+      .send({ email: 'coordinator@caresync.demo', password: DEMO_PASSWORD });
+    const token = loginRes.body.token as string;
+
+    const res = await request(buildApp(db)).get('/api/auth/me').set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      name: 'Cara Coordinator',
+      email: 'coordinator@caresync.demo',
+      role: 'coordinator',
+    });
+    expect(res.body.id).toEqual(expect.any(String));
+    expect(res.body.initials).toBe('CC');
+  });
+
+  it('returns 401 when the token is malformed', async () => {
+    const { app } = setup();
+    const res = await request(app).get('/api/auth/me').set('Authorization', 'Bearer not-a-real-jwt');
+    expect(res.status).toBe(401);
+  });
+});

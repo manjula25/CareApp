@@ -132,7 +132,7 @@ export function TaskDetail() {
   const disableActions = transitionMutation.isPending;
 
   return (
-    <div className="max-w-2xl">
+    <div className="max-w-2xl px-6 py-6">
       <Link to="/tasks" className="text-label text-cyan hover:underline">
         ← Back to Tasks
       </Link>

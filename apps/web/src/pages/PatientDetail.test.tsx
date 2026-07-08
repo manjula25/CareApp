@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -39,7 +39,7 @@ function renderPatientDetail(route = '/patients/maria-1') {
 function captureStreamHandlers() {
   let captured: AnalysisHandlers | undefined;
   let resolveFn: () => void = () => {};
-  vi.mocked(client.streamAnalysis).mockImplementation((_id, handlers) => {
+  vi.mocked(client.streamAnalysis).mockImplementation((_id, handlers, _opts) => {
     captured = handlers;
     return new Promise<void>((res) => { resolveFn = res; });
   });
@@ -49,182 +49,106 @@ function captureStreamHandlers() {
   };
 }
 
-describe('PatientDetail — Phase 1 lead-port data wiring + view modes', () => {
+describe('PatientDetail — backend-branch core SSE flow', () => {
   beforeEach(() => {
     vi.mocked(client.getPatient).mockResolvedValue(mockPatient);
     vi.mocked(client.subscribeToEvents).mockReturnValue(() => {});
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it('renders the Maria Chen mock patient fallback when the route id is unknown', async () => {
-    vi.mocked(client.getPatient).mockRejectedValue(new Error('404'));
-    renderPatientDetail('/patients/never-seen-before');
+  it('renders the patient with conditions after the query resolves', async () => {
+    renderPatientDetail();
     await waitFor(() => expect(screen.getAllByText('Maria Chen').length).toBeGreaterThanOrEqual(1));
-    // The hero risk badge is the most visible marker of the panel-mode render.
-    expect(screen.getByTestId('patient-risk-badge')).toBeInTheDocument();
+    expect(screen.getByText('Type 2 diabetes')).toBeInTheDocument();
   });
 
-  it('shows the view-mode toggle (panel / cinema / orchestrator)', async () => {
+  it('renders a fallback "Loading patient…" when the query is pending and an error message when it rejects', async () => {
+    vi.mocked(client.getPatient).mockRejectedValue(new Error('404'));
     renderPatientDetail();
-    await waitFor(() => screen.getByText('Maria Chen'));
-    expect(screen.getByTestId('view-mode-panel')).toBeInTheDocument();
-    expect(screen.getByTestId('view-mode-cinema')).toBeInTheDocument();
-    expect(screen.getByTestId('view-mode-orchestrator')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/404/)).toBeInTheDocument());
   });
 
-  it('switches to cinema view and shows its hero risk badge', async () => {
+  it('shows "Run live" + "Run Analysis" buttons after the patient query resolves', async () => {
     renderPatientDetail();
-    await waitFor(() => screen.getByText('Maria Chen'));
-    fireEvent.click(screen.getByTestId('view-mode-cinema'));
-    await waitFor(() => expect(screen.getByTestId('cinema-risk-badge')).toBeInTheDocument());
-    // Cinema mode has its own Run Analysis button with a different testid.
-    expect(screen.getByTestId('cinema-run-analysis')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByText('Maria Chen').length).toBeGreaterThanOrEqual(1));
+    expect(screen.getByRole('button', { name: /run live/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /run analysis/i })).toBeInTheDocument();
   });
 
-  it('switches to orchestrator view and reveals the FHIR Bundle toggle', async () => {
+  it('invokes streamAnalysis with the route id when "Run Analysis" is clicked', async () => {
     renderPatientDetail();
-    await waitFor(() => screen.getByText('Maria Chen'));
-    fireEvent.click(screen.getByTestId('view-mode-orchestrator'));
-    await waitFor(() => expect(screen.getByTestId('fhir-bundle-toggle')).toBeInTheDocument());
-    expect(screen.getByTestId('fhir-bundle-panel')).toBeInTheDocument();
-  });
-});
-
-describe('PatientDetail — Run Analysis SSE event mapping', () => {
-  beforeEach(() => {
-    vi.mocked(client.getPatient).mockResolvedValue(mockPatient);
-    vi.mocked(client.subscribeToEvents).mockReturnValue(() => {});
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it('invokes streamAnalysis with the route id', async () => {
-    renderPatientDetail();
-    await waitFor(() => screen.getByText('Maria Chen'));
+    await waitFor(() => expect(screen.getAllByText('Maria Chen').length).toBeGreaterThanOrEqual(1));
     captureStreamHandlers();
-    fireEvent.click(screen.getByTestId('run-analysis'));
-    // The new lead-ported PatientDetail doesn't pass an opts arg — `live`
-    // toggling is not exposed in the simplified Run Analysis button. We
-    // assert the patient id + handler bundle were passed and leave the
-    // argument-length contract loose (vitest records exact-args).
+    fireEvent.click(screen.getByRole('button', { name: /run analysis/i }));
     expect(client.streamAnalysis).toHaveBeenCalledTimes(1);
     const [firstArg, secondArg] = vi.mocked(client.streamAnalysis).mock.calls[0];
     expect(firstArg).toBe('maria-1');
     expect(typeof (secondArg as AnalysisHandlers).onToken).toBe('function');
   });
 
-  it('appends a token to Risk Agent\'s stream text on a `token` event', async () => {
+  it('routes a `token` event to the correct agent feed (no bleed)', async () => {
     renderPatientDetail();
-    await waitFor(() => screen.getByText('Maria Chen'));
+    await waitFor(() => expect(screen.getAllByText('Maria Chen').length).toBeGreaterThanOrEqual(1));
     const c = captureStreamHandlers();
-    fireEvent.click(screen.getByTestId('run-analysis'));
+    fireEvent.click(screen.getByRole('button', { name: /run analysis/i }));
 
     act(() => c.handlers().onToken?.('risk', 'Risk is elevated.'));
-    // Risk Agent's card has status "running" and the streamed text appears in the body.
-    expect(screen.getByText(/Risk is elevated\./)).toBeInTheDocument();
-  });
-
-  it('appends every finding to Risk Agent\'s findings list with severity-dot + confidence label', async () => {
-    renderPatientDetail();
-    await waitFor(() => screen.getByText('Maria Chen'));
-    const c = captureStreamHandlers();
-    fireEvent.click(screen.getByTestId('run-analysis'));
-
-    act(() => c.handlers().onFinding?.({
-      agentId: 'risk',
-      text: 'HbA1c 8.9%',
-      fhirResourceId: 'Observation/hba1c-1',
-      severity: 'critical',
-      confidence: 0.92,
-    }));
-    // Findings only render once the agent transitions to `complete` (matches
-    // the lead project's AgentCard render condition) — flip it and verify.
-    act(() => c.handlers().onComplete?.({
-      agentId: 'risk',
-      findingCount: 1,
-      droppedCount: 0,
-      riskScore: 87,
-      riskLevel: 'high',
-    }));
-    act(() => c.finish());
-
-    expect(screen.getByText('Observation/hba1c-1')).toBeInTheDocument();
-    expect(screen.getByTestId('confidence-riskAgent-0').textContent).toMatch(/0\.92/);
-    expect(screen.getByTestId('summary-riskAgent').textContent).toMatch(/high.*87/);
-  });
-
-  it('never bleeds Care Gap tokens into Risk Agent\'s card', async () => {
-    renderPatientDetail();
-    await waitFor(() => screen.getByText('Maria Chen'));
-    const c = captureStreamHandlers();
-    fireEvent.click(screen.getByTestId('run-analysis'));
-
-    act(() => c.handlers().onToken?.('risk', 'Risk narration.'));
     act(() => c.handlers().onToken?.('careGap', 'Care gap narration.'));
-
+    act(() => c.handlers().onToken?.('sdoh', 'SDOH narration.'));
+    act(() => c.handlers().onToken?.('actionPlanner', 'Action plan narration.'));
     act(() => c.finish());
 
-    // Each agent has a unique stream-text testid (`stream-{agentKey}`) so the
-    // isolation check is direct — no risk of colliding with the
-    // AnalysisProgressFloat's repeated "Risk Agent" labels.
-    const riskStream = screen.getByTestId('stream-riskAgent');
-    const careGapStream = screen.getByTestId('stream-careGapAgent');
-    expect(riskStream.textContent).toBe('Risk narration.');
-    expect(careGapStream.textContent).toBe('Care gap narration.');
+    // The feeds grid renders each agent's stream text directly (no separate
+    // testid for the stream itself; the text is the assertion). All four
+    // text fragments must be present and never collapsed into one.
+    expect(screen.getByText(/Risk is elevated\./)).toBeInTheDocument();
+    expect(screen.getByText(/Care gap narration\./)).toBeInTheDocument();
+    expect(screen.getByText(/SDOH narration\./)).toBeInTheDocument();
+    expect(screen.getByText(/Action plan narration\./)).toBeInTheDocument();
   });
 
-  it('passes a `task` event through to the action-planner findings so it surfaces in the Action Plan column', async () => {
+  it('fires a `complete` event for ALL FOUR agents (not just Risk/Care Gap) — the S12 fix', async () => {
     renderPatientDetail();
-    await waitFor(() => screen.getByText('Maria Chen'));
+    await waitFor(() => expect(screen.getAllByText('Maria Chen').length).toBeGreaterThanOrEqual(1));
     const c = captureStreamHandlers();
-    fireEvent.click(screen.getByTestId('run-analysis'));
+    fireEvent.click(screen.getByRole('button', { name: /run analysis/i }));
+
+    // All four complete events fire.
+    act(() => c.handlers().onComplete?.({ agentId: 'risk', findingCount: 3, droppedCount: 0, riskScore: 87, riskLevel: 'critical', readmissionProbability: 0.7 }));
+    act(() => c.handlers().onComplete?.({ agentId: 'careGap', findingCount: 5, droppedCount: 0 }));
+    act(() => c.handlers().onComplete?.({ agentId: 'sdoh', findingCount: 2, droppedCount: 0, referralsNeeded: ['Food pantry'] }));
+    act(() => c.handlers().onComplete?.({ agentId: 'actionPlanner', findingCount: 4, droppedCount: 0 }));
+    act(() => c.finish());
+
+    // All four summary lines render — this is the exact assertion the user
+    // reported as failing before the fix (SDOH and Action Planner were
+    // empty after a real run).
+    expect(screen.getByTestId('risk-summary').textContent).toMatch(/critical.*87/);
+    expect(screen.getByTestId('care-gap-summary').textContent).toMatch(/5 findings.*0 dropped/);
+    expect(screen.getByTestId('sdoh-summary').textContent).toMatch(/2 findings.*0 dropped/);
+    expect(screen.getByTestId('action-planner-summary').textContent).toMatch(/4 findings.*0 dropped/);
+  });
+
+  it('surfaces a `task` event into the Tasks list with its priority pill', async () => {
+    renderPatientDetail();
+    await waitFor(() => expect(screen.getAllByText('Maria Chen').length).toBeGreaterThanOrEqual(1));
+    const c = captureStreamHandlers();
+    fireEvent.click(screen.getByRole('button', { name: /run analysis/i }));
 
     act(() => {
       c.handlers().onTask?.({
         agentId: 'actionPlanner',
         id: 'new-task-1',
-        reference: 'Condition/x',
+        reference: 'Task/new-task-1',
         title: 'Cardiology follow-up',
         description: 'Schedule within 72h — BNP elevation',
         priority: 'critical',
         dueInDays: 0,
-        fhirResources: ['Observation/y'],
+        fhirResources: ['Observation/bnp-1'],
       });
       c.finish();
     });
 
-    const plan = await screen.findByTestId('action-plan');
-    expect(plan.textContent).toContain('Cardiology follow-up');
-    expect(plan.textContent).toContain('Condition/x');
+    expect(await screen.findByText('Cardiology follow-up')).toBeInTheDocument();
+    expect(screen.getByText('Task/new-task-1')).toBeInTheDocument();
   });
-
-  it('falls back to the simulated MOCK_ANALYSIS run when streamAnalysis rejects (real stream unreachable)', async () => {
-    renderPatientDetail();
-    await waitFor(() => screen.getByText('Maria Chen'));
-    vi.mocked(client.streamAnalysis).mockRejectedValue(new Error('network down'));
-
-    fireEvent.click(screen.getByTestId('run-analysis'));
-    // runMockSim's staggered timeouts (300/600/900/4200ms starts, 2400/3900/5300/7000ms completes,
-    // 7400ms isRunning=false) need ~8s of wall clock to all fire under real timers.
-    await new Promise((r) => setTimeout(r, 8500));
-
-    // Each agent's card has its mock-side findings text rendered.
-    expect(screen.getAllByText(/Complete/).length).toBeGreaterThan(0);
-  }, 15000);
-
-  it('falls back to the simulated run when streamAnalysis never produces an event within the 4s timeout', async () => {
-    renderPatientDetail();
-    await waitFor(() => screen.getByText('Maria Chen'));
-    vi.mocked(client.streamAnalysis).mockReturnValue(new Promise(() => {})); // never resolves
-
-    fireEvent.click(screen.getByTestId('run-analysis'));
-    // 4s anyEventTimeout → runMockSim fires; then ~7.4s more for staggered timeouts. ~12s total.
-    await new Promise((r) => setTimeout(r, 12500));
-    expect(screen.getAllByText(/Complete/).length).toBeGreaterThan(0);
-  }, 20000);
 });

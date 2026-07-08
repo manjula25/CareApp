@@ -45,7 +45,7 @@ The phases and the skills that drive them:
 | **1. Understand & design** | `research`, `domain-modeling`, `codebase-design`, `grilling` / `grill-with-docs` | `design.md`, `grill.md` |
 | **2. Specify** | `to-prd`, then `to-issues` | `prd.md`, `issues.md` |
 | **3. Plan & simplify** | `writing-plans`, then `ponytail` | `implementation-plan.md` |
-| **4. Implement** | `subagent-driven-development` (loads `tdd`, uses `using-git-worktrees`); `diagnosing-bugs` and `improve-codebase-architecture` as needed. For any screen with a matching `reference-materials/*.html` mockup, also loads `html-mockup-fidelity`; for any change to what a screen renders or how it behaves, also loads `frontend-e2e-verification` (test-first, per screen) | code + tests |
+| **4. Implement** | `subagent-driven-development` (loads `tdd`, uses `using-git-worktrees`); `diagnosing-bugs` and `improve-codebase-architecture` as needed. For any screen , also loads `html-mockup-fidelity`; for any change to what a screen renders or how it behaves, also loads `frontend-e2e-verification` (test-first, per screen) | code + tests |
 | **5. Verify & review** | `verification-before-completion` (for UI-visible changes, requires `frontend-e2e-verification` evidence before it), then `code-review` | `verification.md`, `review.md` |
 | **6. Ship** | `finishing-a-development-branch`, `handoff` | PR + context handoff |
 

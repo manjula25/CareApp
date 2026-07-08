@@ -21,6 +21,41 @@ export function createSdohRouter(fhirService: FhirReadService): Router {
     res.json(listResourcesByCategory(category));
   });
 
+  // S12 A.5 — `GET /api/sdoh/screening/:patientId` returns any
+  // QuestionnaireResponse resources on the patient's record (the AHC-HRSN
+  // screening tool stores its answers as `item[]` on a single QR per
+  // encounter). Empty screening is a valid state — `screeningFound: false`,
+  // `responses: []`, status 200 — not a 404, so the mobile UI can render
+  // "no screening on file" without an error toast. Uses the dedicated
+  // SDOH-domain `FhirReadService.getSdohScreening` so a Social Worker can read
+  // it without tripping the clinical scope guard on `getPatientBundle`.
+  router.get('/screening/:patientId', async (req, res) => {
+    try {
+      const responses = await fhirService.getSdohScreening(req.auth!, req.params.patientId);
+
+      res.json({
+        patientId: req.params.patientId,
+        screeningFound: responses.length > 0,
+        // Keep only the clinician-relevant slice of each QR (id, status,
+        // authored, questionnaire reference, item count) — the raw `item`
+        // tree is verbose and the UI flattens it client-side.
+        responses: responses.map((r: any) => ({
+          id: r.id,
+          status: r.status,
+          authored: r.authored,
+          questionnaire: r.questionnaire,
+          itemCount: Array.isArray(r.item) ? r.item.length : 0,
+        })),
+      });
+    } catch (err) {
+      if (err instanceof ScopeDeniedError) {
+        res.status(403).json({ error: err.message });
+        return;
+      }
+      throw err;
+    }
+  });
+
   router.post('/referrals', async (req, res) => {
     const { patientId, resourceId, note } = (req.body ?? {}) as {
       patientId?: string;

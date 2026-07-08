@@ -12,6 +12,13 @@ vi.mock('../api/client', async () => {
   return { ...actual, getPopulationScatter: vi.fn(), getPopulationSummary: vi.fn() };
 });
 
+// S12 B.2 — disable the page-level placeholderData fallback so test assertions
+// run against the (mocked) API response, not the lib/demoFallbacks.ts values.
+vi.mock('../lib/demoFallbacks', () => ({
+  MOCK_POPULATION_SUMMARY: undefined,
+  MOCK_POPULATION_SCATTER: [],
+}));
+
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');

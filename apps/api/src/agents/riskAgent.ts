@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { PatientBundle } from '../fhir/client';
 import { AgentEvent, RiskOutput } from './agent';
+import { MOCK_RISK_OUTPUT } from './mock-outputs';
 
 // Re-exported for existing importers (routes/analysis.ts, tests) — the shared
 // Agent contract now owns these types (see ./agent.ts).
@@ -82,6 +83,26 @@ function buildPrompt(bundle: PatientBundle): string {
 }
 
 /**
+ * S12 B.1 — demo fallback. When `OPENAI_API_KEY` is unset, the real path
+ * can't run (lazy `getOpenAiClient()` would throw). Yields one narrated
+ * token + the deterministic `MOCK_RISK_OUTPUT` so the SSE stream still
+ * emits the right shape. Citations are likely to be dropped downstream
+ * (mock ids aren't in any real bundle) — acceptable for a demo where the
+ * point is "show the pipeline", not "show validated citations".
+ */
+async function* streamMockRisk(bundle: PatientBundle): AsyncIterable<AgentEvent> {
+  yield {
+    type: 'token',
+    agentId: 'risk',
+    text:
+      '[demo fallback — OPENAI_API_KEY is unset] Synthesizing risk assessment from the patient FHIR bundle. ' +
+      'Lab values, active conditions, and care-continuity signals indicate critical readmission risk.',
+  };
+  yield { type: 'result', agentId: 'risk', output: MOCK_RISK_OUTPUT };
+  void bundle;
+}
+
+/**
  * Runs the Risk agent over a patient's FHIR bundle on OpenAI gpt-5.5 (GD13,
  * revised 2026-07-04), streaming narrated reasoning as `token` events and
  * finishing with a single `result` event carrying the structured
@@ -92,7 +113,19 @@ function buildPrompt(bundle: PatientBundle): string {
  * inject a fake and avoid any live network/API call (and avoid ever
  * constructing the real client at all).
  */
-export async function* runRiskAgent(bundle: PatientBundle, client = getOpenAiClient()): AsyncIterable<AgentEvent> {
+export async function* runRiskAgent(bundle: PatientBundle, client?: OpenAI): AsyncIterable<AgentEvent> {
+  // S12 B.1 — fallback path activates only when no client was injected AND
+  // the OpenAI key is missing. When the caller passes a fake/test client,
+  // we trust it and run the real path regardless of env-var state (so the
+  // existing fake-client tests don't accidentally trigger the mock).
+  if (!client) {
+    if (!process.env.OPENAI_API_KEY) {
+      yield* streamMockRisk(bundle);
+      return;
+    }
+    client = getOpenAiClient();
+  }
+
   const stream = await client.responses.create({
     model: MODEL,
     input: buildPrompt(bundle),

@@ -455,6 +455,21 @@ export class FhirReadService {
     return { resources, validIds };
   }
 
+  /**
+   * S12 A.5 — read a patient's AHC-HRSN/social-needs screening records
+   * (QuestionnaireResponse resources scoped to that patient). SDOH-domain
+   * access (not clinical) so a Social Worker can call it without tripping the
+   * clinical scope guard that protects the full `$everything` bundle used by
+   * the agent analysis path.
+   */
+  async getSdohScreening(actor: AuthTokenPayload, patientId: string): Promise<any[]> {
+    const resource = `QuestionnaireResponse?subject=Patient/${patientId}`;
+    this.guard(actor, 'sdoh', resource);
+    const bundle = await this.fhirFetch<FhirBundle<any>>(`/${resource}`);
+    writeAudit(this.db, { actor: actor.id, action: 'read', fhirResource: resource, outcome: 'success' });
+    return (bundle.entry ?? []).map((e) => e.resource);
+  }
+
   async getAssignedPanel(actor: AuthTokenPayload): Promise<PanelEntry[]> {
     const resource = `Group/${COORDINATOR_PANEL_GROUP_ID}`;
     this.guard(actor, 'clinical', resource);
@@ -811,6 +826,59 @@ export class FhirReadService {
       actor: actor.id,
       action: 'create',
       fhirResource: `ServiceRequest/${created.id}`,
+      outcome: 'success',
+    });
+    return { id: created.id };
+  }
+
+  /**
+   * S12 C.2 — creates an audited FHIR CarePlan from the page-level
+   * `CarePlanBuilder.tsx` payload (goals / interventions / SDOH actions).
+   * Mirrors `createServiceRequest`'s guard→POST→audit shape, but gates on
+   * `'clinical'` scope (the action planner creates CarePlans, action plans
+   * are clinical-domain, same convention as `createTask`). The CarePlan's
+   * `activity` array is built from the page's `interventions`; goals go
+   * into `CarePlan.goal` (one `CarePlan.goal` per goal text).
+   */
+  async createCarePlan(
+    actor: AuthTokenPayload,
+    patientId: string,
+    input: { goals: string[]; interventions: { text: string; frequency?: string }[]; sdohActions?: { barrier: string; resource?: string; status?: string }[] }
+  ): Promise<CreatedTask> {
+    const resource = `CarePlan/${patientId}`;
+    this.guard(actor, 'clinical', resource, 'create');
+
+    const body: Record<string, unknown> = {
+      resourceType: 'CarePlan',
+      status: 'active',
+      intent: 'plan',
+      subject: { reference: `Patient/${patientId}` },
+      authoredOn: new Date().toISOString(),
+      title: `Care Plan — Patient/${patientId}`,
+      // FHIR CarePlan.goal — each goal text becomes its own entry.
+      goal: input.goals.filter((g) => g.trim().length > 0).map((text) => ({ display: text })),
+      // CarePlan.activity — one entry per intervention, detail.text carries the
+      // human description; frequency lands in `scheduledTiming` when present.
+      activity: input.interventions
+        .filter((i) => i.text.trim().length > 0)
+        .map((intervention) => {
+          const activityDetail: Record<string, unknown> = { description: intervention.text };
+          if (intervention.frequency) {
+            activityDetail.scheduledTiming = { repeat: { frequency: 1, period: 1, periodUnit: 'd' }, code: { text: intervention.frequency } };
+          }
+          return { detail: activityDetail };
+        }),
+    };
+
+    const created = await this.fhirFetch<{ id: string }>('/CarePlan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/fhir+json' },
+      body: JSON.stringify(body),
+    });
+    writeAudit(this.db, {
+      actor: actor.id,
+      action: 'create',
+      fhirResource: `CarePlan/${created.id}`,
       outcome: 'success',
     });
     return { id: created.id };

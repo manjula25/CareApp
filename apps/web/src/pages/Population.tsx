@@ -4,6 +4,8 @@ import { useQuery } from '@tanstack/react-query';
 import { getPopulationScatter, getPopulationSummary, type ScatterPoint } from '../api/client';
 import type { Patient } from '../types';
 import { MOCK_PATIENTS, CRITICAL_RISK_THRESHOLD, HIGH_RISK_THRESHOLD } from './Population.fixtures';
+// S12 B.2 — reapply demo-fallback wiring on top of PR #14's lead-port.
+import { DemoFallbackBadge } from '../components/DemoFallbackBadge';
 
 /**
  * Phase 2 of the lead-project integration: `Population.tsx` is now lead's
@@ -437,7 +439,19 @@ export function Population() {
   const isLoading = scatterQuery.isLoading || summaryQuery.isLoading;
 
   return (
-    <div className="flex h-[calc(100vh-48px)] overflow-hidden bg-bg">
+    <div className="flex h-[calc(100vh-48px)] overflow-hidden bg-bg flex-col">
+      {/* S12 B.2 — fallback safety net: when the scatter endpoint is unreachable,
+          surface the DemoFallbackBadge at the top of the page so a judge never
+          sees a "Demo mode" notice without a visible indicator. (PR #14
+          already has the usingMockFallback text notice below the scatter.) */}
+      {usingMockFallback && (
+        <div className="flex items-center gap-2 px-6 py-2 border-b border-border bg-surface-raised">
+          <DemoFallbackBadge />
+          <span className="text-text-dim text-xs">Real scatter endpoint unreachable — showing 8-patient demo list.</span>
+        </div>
+      )}
+
+      <div className="flex flex-1 overflow-hidden">
       {/* LEFT — Patient list */}
       <aside
         className="flex flex-col border-r border-border bg-surface overflow-hidden"
@@ -566,5 +580,6 @@ export function Population() {
         )}
       </main>
     </div>
+      </div>
   );
 }

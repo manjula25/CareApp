@@ -20,7 +20,11 @@ describe('OpenAI client construction is lazy (boot-time safety)', () => {
     });
   });
 
-  it('only throws once the agent is actually invoked without an explicit client', async () => {
+  // S12 B.1 — when OPENAI_API_KEY is unset AND no client is injected, the
+  // agent falls back to `MOCK_RISK_OUTPUT` rather than throwing. Demo-resilience
+  // contract: the SSE stream must emit the right event shape regardless of
+  // whether the OpenAI key is available.
+  it('falls back to MOCK_RISK_OUTPUT when OPENAI_API_KEY is unset (no client injected)', async () => {
     delete process.env.OPENAI_API_KEY;
     let freshRunRiskAgent!: typeof runRiskAgent;
     await jest.isolateModulesAsync(async () => {
@@ -29,11 +33,21 @@ describe('OpenAI client construction is lazy (boot-time safety)', () => {
     });
 
     const bundle = { resources: [], validIds: new Set<string>() };
-    await expect(async () => {
-      for await (const _event of freshRunRiskAgent(bundle)) {
-        // drain
-      }
-    }).rejects.toThrow();
+    const events: AgentEvent[] = [];
+    for await (const event of freshRunRiskAgent(bundle)) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(2);
+    expect(events[0].type).toBe('token');
+    expect(events[0].agentId).toBe('risk');
+    expect(events[1].type).toBe('result');
+    expect((events[1] as Extract<AgentEvent, { type: 'result' }>).output).toMatchObject({
+      riskScore: expect.any(Number),
+      riskLevel: expect.stringMatching(/low|moderate|high|critical/),
+      flags: expect.any(Array),
+      readmissionProbability: expect.any(Number),
+    });
   });
 });
 

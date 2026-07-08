@@ -15,6 +15,11 @@ vi.mock('../api/client', async () => {
   };
 });
 
+// S12 B.2 — disable page-level placeholderData fallback.
+vi.mock('../lib/demoFallbacks', () => ({
+  MOCK_SDOH_RESOURCES: [],
+}));
+
 const MOCK_RESOURCES: CommunityResource[] = [
   {
     id: 'metro-transit-assistance',

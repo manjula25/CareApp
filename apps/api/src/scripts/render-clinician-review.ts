@@ -111,7 +111,7 @@ function agentPredictionText(dim: BinaryDim, prediction: AgentPrediction | undef
     return 'Agrees with label (not in eval-report error analysis)';
   }
   if (dim === 'risk') {
-    return `Disagrees — predicted "${esc(prediction.predicted)}" (label expected ${labelExpected ? 'high' : 'low/moderate'})`;
+    return `Disagrees — predicted "${esc(String(prediction.predicted))}" (label expected ${labelExpected ? 'high' : 'low/moderate'})`;
   }
   const predWord = prediction.predicted ? 'positive' : 'negative';
   const expWord = labelExpected ? 'positive' : 'negative';

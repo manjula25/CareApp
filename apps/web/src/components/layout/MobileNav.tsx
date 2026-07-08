@@ -1,7 +1,18 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 import clsx from 'clsx';
+import { useAuth } from '../../auth/useAuth';
 
-const tabs = [
+type Role = 'coordinator' | 'social_worker' | 'director';
+
+interface NavTab {
+  label: string;
+  path: string;
+  icon: React.ReactNode;
+  /** Roles allowed to see this tab. Omit to show to everyone. */
+  roles?: Role[];
+}
+
+const tabs: NavTab[] = [
   {
     label: 'Tasks',
     path: '/tasks',
@@ -15,6 +26,7 @@ const tabs = [
   {
     label: 'Patients',
     path: '/panel',
+    roles: ['coordinator', 'director'],
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
@@ -38,10 +50,15 @@ const tabs = [
 export function MobileNav() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { user } = useAuth();
+
+  // Filter tabs by role so a social_worker never sees a "Patients" link that
+  // would 403 against `/api/patients/assigned` (clinical scope required).
+  const visibleTabs = tabs.filter((tab) => !tab.roles || (user && tab.roles.includes(user.role)));
 
   return (
     <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-surface border-t border-border flex z-40">
-      {tabs.map((tab) => {
+      {visibleTabs.map((tab) => {
         const isActive = location.pathname.startsWith(tab.path);
         return (
           <button

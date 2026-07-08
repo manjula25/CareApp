@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { getSdohResources, postSdohReferral, type CommunityResource } from '../api/client';
+import { DemoFallbackBadge } from '../components/DemoFallbackBadge';
+import { MOCK_SDOH_RESOURCES } from '../lib/demoFallbacks';
 
 /**
  * S11 A1 — M05 SDOH resource directory + referral, rendered against
@@ -96,22 +98,31 @@ export function Sdoh() {
   const { id: patientId } = useParams<{ id: string }>();
   const [category, setCategory] = useState('all');
 
+  // Real implementation is primary. `MOCK_SDOH_RESOURCES` is a SAFETY NET only
+  // — kicks in when the query has errored AND we have no real data. The
+  // `DemoFallbackBadge` makes the fallback visible.
   const { data, isLoading, isError } = useQuery({
     queryKey: ['sdoh-resources'],
     queryFn: () => getSdohResources(),
+    retry: 1,
   });
 
-  const filtered = (data ?? []).filter((r) => category === 'all' || r.category === category);
+  const isUsingFallback = isError;
+  const resources = isError ? MOCK_SDOH_RESOURCES : data;
+  const filtered = (resources ?? []).filter((r) => category === 'all' || r.category === category);
 
   return (
-    <div>
+    <div className="px-6 py-6">
       {patientId && (
         <Link to={`/patients/${patientId}`} className="text-label text-cyan hover:underline">
           ← Back to Patient
         </Link>
       )}
 
-      <h1 className="text-section text-text font-bold mt-2 mb-4">SDOH Resources</h1>
+      <div className="flex items-center gap-3 mt-2 mb-4">
+        <h1 className="text-section text-text font-bold">SDOH Resources</h1>
+        {isUsingFallback && <DemoFallbackBadge />}
+      </div>
 
       <div className="flex gap-1 border-b border-border mb-4 overflow-x-auto" data-testid="sdoh-category-tabs">
         {CATEGORY_TABS.map((tab) => (

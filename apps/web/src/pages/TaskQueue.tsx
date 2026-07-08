@@ -1,45 +1,42 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { listTasks, completeTask, type TaskListEntry } from '../api/client';
-import { PRIORITY_LABEL, PRIORITY_CLASS, dueLabel } from '../lib/task';
+import { useQuery } from '@tanstack/react-query';
+import { listTasks, type TaskListEntry } from '../api/client';
+import { DemoFallbackBadge } from '../components/DemoFallbackBadge';
+import { MOCK_TASKS } from '../lib/demoFallbacks';
 import { FILTER_TABS, type TaskFilter } from './TaskQueue.fixtures';
 
 /**
- * Phase 3 of the lead-project integration: `TaskQueue.tsx` is now lead's
- * `pages/mobile/TaskQueue.tsx` (295 lines) — filterable task queue with
- * priority left-border cards + Due/Status pills + Done button — adapted
- * to:
- *   - my real `listTasks()` API (lead's `fetch('/api/tasks')` was unwrapped
- *     ad-hoc; the same endpoint now goes through my client)
- *   - my `TaskListEntry` shape (no description/fhirResourceId/assignedTo/
- *     createdAt; `due` field name not `dueDate`; priority enum is
- *     critical/high/medium not urgent/high/medium/low)
- *   - my real `completeTask(id)` mutation (lead's Done button was UI-only;
- *     ours PATCHes `/api/tasks/:id/status` with `transition: 'complete'`)
- *   - my `/tasks/:id` route (not lead's `/mobile/tasks/:id`)
+ * TaskQueue — compact lead-port row design with the project's real
+ * `listTasks()` API + safety-net MOCK_TASKS fallback.
  *
- * Honest-staging deviations from lead's mobile-styled screen:
- *   - Dropped the 390px phone frame wrapper per user direction (regression
- *     from S7 B1 GD4) — this page now renders at full web width inside
- *     `AppShell.tsx` like every other per-screen content.
- *   - Dropped `StatusBarChrome` — purely decorative, AppShell provides the
- *     real Header chrome.
- *   - Dropped the FAB + `CreateTaskSheet` — no `/api/tasks/:patientId/assign`
- *     endpoint exists on my backend; surfacing a UI for a stub would be a
- *     placebo. Tasks are created by the action-planner agent stream instead.
- *   - Dropped `MobileNav` (Tasks/SDOH bottom bar) — AppShell already provides
- *     Header + Sidebar nav.
- *   - Mapped lead's `urgent` priority → my `critical`; lead's `low` priority
- *     not surfaced (my `TaskSummary.priority` enum doesn't include it).
- *   - Wired Done button to real `completeTask(id)` mutation (lead's Done was
- *     a UI-only no-op — its only "success" was a local state flip).
- *   - Replaced lead's `border-l-cyan` (medium priority) with `border-l-violet`
- *     to match my established `PRIORITY_CLASS` medium color and keep card
- *     left-borders consistent with the priority pills elsewhere in the app.
- *   - Replaced lead's `bg-red` urgent-count badge with the existing 3-stat
- *     Open/Critical/Patients summary bar (already used in the previous
- *     in-tree version of this page).
+ * Visual layer (lead):
+ *   - One card per task with priority-colored left-border stripe.
+ *   - Two-column row: patient name + task title on the LEFT, due date +
+ *     priority pill on the RIGHT (matches reference-materials/caresync-mobile
+ *     .task-card mockup).
+ *   - "Overdue" treatment on dates that have passed.
+ *   - In Progress chip below the title when status === 'In Progress'.
+ *   - Empty "All caught up!" state when no tasks match the active filter.
+ *
+ * Real-data layer (project):
+ *   - `useQuery(['tasks'], listTasks)` is the only source of truth while in
+ *     flight. `MOCK_TASKS` is a SAFETY NET that fires only when the API
+ *     errors and we have no real data — surfaced via the `DemoFallbackBadge`.
+ *   - No `placeholderData`: a screenshot taken during a normal load shows
+ *     the honest "Loading…" state, never mock rows impersonating real data.
+ *   - Filter chips drive client-side filtering (real data, no extra fetch).
+ *   - Card click navigates to /tasks/:id for the real per-task detail surface.
+ *
+ * Honest-staging deviations from lead:
+ *   - Removed the FAB + CreateTaskSheet (no /api/tasks/:patientId/assign
+ *     endpoint exists; tasks are created by the action-planner agent stream).
+ *   - Removed MobileNav (AppShell provides Header + Sidebar already).
+ *   - Removed the Done button on the card — task completion lives on the
+ *     detail page (TaskDetail.tsx) where the defer/escalate/confirm flow
+ *     can be expressed safely.
+ *   - Lead's `urgent` priority → our `critical`; lead's `low` priority not
+ *     surfaced (our `TaskSummary.priority` enum doesn't include it).
  */
 
 const PRIORITY_BORDER_L: Record<TaskListEntry['priority'], string> = {
@@ -48,14 +45,43 @@ const PRIORITY_BORDER_L: Record<TaskListEntry['priority'], string> = {
   medium: 'border-l-violet',
 };
 
+const PRIORITY_PILL: Record<TaskListEntry['priority'], string> = {
+  critical: 'bg-red/20 text-red border border-red/30',
+  high: 'bg-amber/20 text-amber border border-amber/30',
+  medium: 'bg-violet/20 text-violet border border-violet/30',
+};
+
+const PRIORITY_LABEL: Record<TaskListEntry['priority'], string> = {
+  critical: 'URGENT',
+  high: 'HIGH',
+  medium: 'MEDIUM',
+};
+
 const PRIORITY_ORDER: Record<TaskListEntry['priority'], number> = {
   critical: 0,
   high: 1,
   medium: 2,
 };
 
+const TODAY_ISO = new Date().toISOString().split('T')[0];
+
+function isOverdue(due: string): boolean {
+  // `due` is an ISO datetime ("2026-07-10T05:25:48.764Z"); compare on the
+  // day boundary so an 11pm-due task doesn't show as overdue at 1am the same
+  // day — only the date matters for the queue list.
+  return due.split('T')[0] < TODAY_ISO;
+}
+
 function isOpenStatus(status: string): boolean {
   return status !== 'Done' && status !== 'Cancelled';
+}
+
+function dueDisplay(due: string): { label: string; overdue: boolean } {
+  if (isOverdue(due)) return { label: 'Overdue', overdue: true };
+  // Show the date in compact form: "Jul 10". Keep year for clarity.
+  const d = new Date(due);
+  const month = d.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' });
+  return { label: `${month} ${d.getUTCDate()}`, overdue: false };
 }
 
 /** Open tasks first (priority, then due date), completed tasks last. */
@@ -69,96 +95,54 @@ function sortTasks(tasks: TaskListEntry[]): TaskListEntry[] {
   });
 }
 
-function SummaryStat({ label, value, className, testId }: { label: string; value: number; className: string; testId: string }) {
-  return (
-    <div
-      data-testid={testId}
-      className={`flex-1 flex items-center justify-center gap-1.5 text-label font-semibold ${className}`}
-    >
-      <span className="text-body font-bold">{value}</span> {label}
-    </div>
-  );
-}
-
-function CompletedTaskCard({ task }: { task: TaskListEntry }) {
+function CompletedTaskRow({ task }: { task: TaskListEntry }) {
   const navigate = useNavigate();
   return (
-    <div
-      data-testid={`task-${task.id}`}
+    <button
+      type="button"
       onClick={() => navigate(`/tasks/${task.id}`)}
-      className="bg-surface border border-border border-l-[3px] border-l-emerald rounded-card p-3 mb-2.5 opacity-60 cursor-pointer"
+      data-testid={`task-${task.id}`}
+      className="w-full text-left bg-surface rounded-xl border border-border border-l-4 border-l-emerald p-3 mb-2 flex items-center justify-between gap-3 opacity-60 hover:opacity-80 transition-opacity"
     >
-      <div className="flex items-center gap-2.5">
-        <span className="w-[22px] h-[22px] rounded-full bg-emerald-dim border border-emerald flex items-center justify-center flex-none text-emerald">
-          <svg width="11" height="9" viewBox="0 0 11 9" fill="none" aria-hidden="true">
-            <path d="M1 4.5 L4 7.5 L10 1" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </span>
-        <div className="flex-1 min-w-0">
-          <p className="text-body font-bold text-text-muted line-through truncate">{task.title}</p>
-          <p className="text-xs text-text-dim mt-0.5 font-mono">{`Task/${task.id}`}</p>
-        </div>
-        <span className="text-[9px] font-bold tracking-wide rounded-pill border px-2 py-0.5 text-emerald bg-emerald-dim border-emerald flex-none">
-          Done
-        </span>
+      <div className="flex-1 min-w-0">
+        <p className="text-text font-semibold text-sm leading-tight line-through">{task.patientName}</p>
+        <p className="text-text-muted text-[13px] mt-0.5 leading-snug line-through">{task.title}</p>
       </div>
-    </div>
+      <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase bg-emerald-dim text-emerald border border-emerald">
+        Done
+      </span>
+    </button>
   );
 }
 
-function OpenTaskCard({
-  task,
-  onComplete,
-  completing,
-}: {
-  task: TaskListEntry;
-  onComplete: (id: string) => void;
-  completing: boolean;
-}) {
+function OpenTaskRow({ task }: { task: TaskListEntry }) {
   const navigate = useNavigate();
+  const due = dueDisplay(task.due);
   return (
-    <div
-      data-testid={`task-${task.id}`}
+    <button
+      type="button"
       onClick={() => navigate(`/tasks/${task.id}`)}
-      className={`bg-surface-raised border border-border ${PRIORITY_BORDER_L[task.priority]} border-l-[3px] rounded-card p-3 mb-2.5 cursor-pointer`}
+      data-testid={`task-${task.id}`}
+      className={`w-full text-left bg-surface rounded-xl border border-border ${PRIORITY_BORDER_L[task.priority]} border-l-4 p-3 mb-2 flex items-start justify-between gap-3 hover:bg-surface-raised transition-colors`}
     >
-      <div className="flex items-center gap-2 mb-2">
-        <span className={`text-[9px] font-bold tracking-wide rounded-pill border px-2 py-0.5 ${PRIORITY_CLASS[task.priority]}`}>
-          {PRIORITY_LABEL[task.priority]}
-        </span>
-        <span className="text-xs font-semibold text-text-muted truncate">{task.patientName}</span>
-        {task.conditionTag && (
-          <span className="text-xs font-semibold text-text-muted bg-surface border border-border rounded-pill px-2 py-0.5 whitespace-nowrap">
-            {task.conditionTag}
+      <div className="flex-1 min-w-0">
+        <p className="text-text font-semibold text-sm leading-tight">{task.patientName}</p>
+        <p className="text-text-muted text-[13px] mt-0.5 leading-snug line-clamp-2">{task.title}</p>
+        {task.status === 'In Progress' && (
+          <span className="inline-block mt-1.5 text-[10px] font-medium bg-violet/20 text-violet border border-violet/30 px-1.5 py-0.5 rounded">
+            In Progress
           </span>
         )}
       </div>
-
-      <p className="text-body font-bold text-text mb-1.5">{task.title}</p>
-      <p className="font-mono text-[10.5px] text-text-dim mb-2.5">{`Task/${task.id}`}</p>
-
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-xs font-semibold text-text-muted bg-bg border border-border rounded-md px-2.5 py-1 whitespace-nowrap">
-            Due: {dueLabel(task.due)}
-          </span>
-          <span className="text-xs font-semibold text-text-muted border border-border-light rounded-pill px-2 py-px whitespace-nowrap">
-            {task.status}
-          </span>
-        </div>
-        <button
-          data-testid={`task-done-${task.id}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            onComplete(task.id);
-          }}
-          disabled={completing}
-          className="h-7 px-3.5 rounded-md bg-surface border border-border text-text text-xs font-semibold disabled:opacity-60 disabled:cursor-default flex-none"
-        >
-          Done
-        </button>
+      <div className="flex flex-col items-end gap-1 shrink-0">
+        <span className={`text-[11px] font-medium ${due.overdue ? 'text-red' : 'text-text-muted'}`}>
+          {due.label}
+        </span>
+        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase ${PRIORITY_PILL[task.priority]}`}>
+          {PRIORITY_LABEL[task.priority]}
+        </span>
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -166,7 +150,7 @@ function EmptyState() {
   return (
     <div
       data-testid="task-queue-empty-state"
-      className="flex flex-col items-center justify-center h-48 text-emerald text-base font-semibold gap-2"
+      className="flex flex-col items-center justify-center py-12 text-emerald text-base font-semibold gap-2"
     >
       <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <polyline points="20 6 9 17 4 12" />
@@ -176,46 +160,75 @@ function EmptyState() {
   );
 }
 
+function SkeletonRows() {
+  return (
+    <>
+      {Array.from({ length: 4 }).map((_, i) => (
+        <div
+          key={i}
+          className="bg-surface rounded-xl border border-border border-l-4 border-l-border-light p-3 mb-2 flex items-start justify-between gap-3 animate-pulse"
+        >
+          <div className="flex-1 min-w-0 space-y-2">
+            <div className="h-3 bg-surface-raised rounded w-2/5" />
+            <div className="h-3 bg-surface-raised rounded w-4/5" />
+          </div>
+          <div className="flex flex-col items-end gap-1.5 shrink-0">
+            <div className="h-2.5 bg-surface-raised rounded w-12" />
+            <div className="h-3 bg-surface-raised rounded w-14" />
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
 export function TaskQueue() {
-  const queryClient = useQueryClient();
-  const { data, isLoading, isError } = useQuery({ queryKey: ['tasks'], queryFn: listTasks });
-  const completeMutation = useMutation({
-    mutationFn: completeTask,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tasks'] }),
+  // Real implementation is primary. `MOCK_TASKS` is a SAFETY NET only —
+  // fires when the API errors AND we have no real data. The
+  // `DemoFallbackBadge` makes the fallback visible.
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['tasks'],
+    queryFn: listTasks,
+    retry: 1,
   });
+  const isUsingFallback = isError;
+  const tasks = isError ? MOCK_TASKS : data;
 
   const [filter, setFilter] = useState<TaskFilter>('all');
 
-  const tasks = data ?? [];
-  const openCount = tasks.filter((t) => isOpenStatus(t.status)).length;
-  const criticalCount = tasks.filter((t) => t.priority === 'critical').length;
-  const patientsCount = new Set(tasks.map((t) => t.patientId)).size;
+  // `safeTasks` is `[]`-safe during loading. The summary copy above tells
+  // the user data is on its way; an empty list is the honest "no tasks" state.
+  const safeTasks = tasks ?? [];
+  const openCount = safeTasks.filter((t) => isOpenStatus(t.status)).length;
 
-  const filtered = sortTasks(tasks).filter((t) => {
+  const filtered = sortTasks(safeTasks).filter((t) => {
     if (filter === 'critical') return t.priority === 'critical';
-    if (filter === 'today') return dueLabel(t.due) === 'Today';
+    if (filter === 'today') return t.due.split('T')[0] === TODAY_ISO;
     if (filter === 'in_progress') return t.status === 'In Progress';
     return true;
   });
 
   return (
-    <div>
-      <h1 className="text-section text-text font-bold mb-3">My Tasks</h1>
-
-      {/* Summary bar — 3 real stats from listTasks data (not lead's hardcoded "12"). */}
-      <div className="h-11 flex-none bg-surface-raised border border-border rounded-card flex items-center mb-3" data-testid="task-queue-summary">
-        <SummaryStat label="Open" value={openCount} className="text-cyan" testId="task-queue-summary-open" />
-        <span className="w-px h-[18px] bg-border-light" aria-hidden="true" />
-        <SummaryStat label="Critical" value={criticalCount} className="text-red" testId="task-queue-summary-critical" />
-        <span className="w-px h-[18px] bg-border-light" aria-hidden="true" />
-        <SummaryStat label="Patients" value={patientsCount} className="text-text-muted" testId="task-queue-summary-patients" />
+    <div className="px-6 py-6">
+      {/* Top bar — title + (when relevant) the badge. */}
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-section text-text font-bold flex items-center gap-2">
+          My Tasks
+          {openCount > 0 && (
+            <span className="text-xs font-bold text-cyan bg-cyan-dim border border-cyan rounded-pill px-2 py-0.5">
+              {openCount}
+            </span>
+          )}
+        </h1>
+        {isUsingFallback && <DemoFallbackBadge />}
       </div>
 
       {/* Filter chips */}
-      <div className="flex gap-2 mb-3 overflow-x-auto pb-0.5">
+      <div className="flex gap-2 mb-4 overflow-x-auto pb-0.5">
         {FILTER_TABS.map((f) => (
           <button
             key={f.key}
+            type="button"
             onClick={() => setFilter(f.key)}
             data-testid={f.testId}
             className={`shrink-0 px-3 py-1 rounded-pill text-xs font-medium border transition-colors ${
@@ -230,21 +243,15 @@ export function TaskQueue() {
       </div>
 
       {/* Task list */}
-      <div>
-        {isLoading && <p className="text-body text-text-muted">Loading tasks…</p>}
-        {isError && <p className="text-body text-red">Could not load the task queue.</p>}
-        {data && filtered.length === 0 && <EmptyState />}
-        {filtered.map((task) =>
+      <div data-testid="task-queue-list">
+        {isLoading && <SkeletonRows />}
+        {!isLoading && filtered.length === 0 && <EmptyState />}
+        {!isLoading && filtered.map((task) =>
           task.status === 'Done' ? (
-            <CompletedTaskCard key={task.id} task={task} />
+            <CompletedTaskRow key={task.id} task={task} />
           ) : (
-            <OpenTaskCard
-              key={task.id}
-              task={task}
-              onComplete={(id) => completeMutation.mutate(id)}
-              completing={completeMutation.isPending && completeMutation.variables === task.id}
-            />
-          )
+            <OpenTaskRow key={task.id} task={task} />
+          ),
         )}
       </div>
     </div>

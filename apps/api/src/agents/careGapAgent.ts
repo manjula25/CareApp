@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { PatientBundle } from '../fhir/client';
 import { AgentEvent, CareGapOutput } from './agent';
+import { MOCK_CARE_GAP_OUTPUT } from './mock-outputs';
 
 // Re-exported for parity with riskAgent — the shared Agent contract owns these
 // types (see ./agent.ts).
@@ -92,7 +93,29 @@ function buildPrompt(bundle: PatientBundle): string {
  * a fake and avoid any live network/API call (and avoid ever constructing the
  * real client at all).
  */
-export async function* runCareGapAgent(bundle: PatientBundle, client = getOpenAiClient()): AsyncIterable<AgentEvent> {
+async function* streamMockCareGap(bundle: PatientBundle): AsyncIterable<AgentEvent> {
+  yield {
+    type: 'token',
+    agentId: 'careGap',
+    text:
+      '[demo fallback — OPENAI_API_KEY is unset] Reviewing preventive and chronic-care items. ' +
+      'Identifying overdue screenings and missing monitoring items.',
+  };
+  yield { type: 'result', agentId: 'careGap', output: MOCK_CARE_GAP_OUTPUT };
+  void bundle;
+}
+
+export async function* runCareGapAgent(bundle: PatientBundle, client?: OpenAI): AsyncIterable<AgentEvent> {
+  // S12 B.1 — fallback path activates only when no client was injected AND
+  // the OpenAI key is missing (see riskAgent.ts for the rationale).
+  if (!client) {
+    if (!process.env.OPENAI_API_KEY) {
+      yield* streamMockCareGap(bundle);
+      return;
+    }
+    client = getOpenAiClient();
+  }
+
   const stream = await client.responses.create({
     model: MODEL,
     input: buildPrompt(bundle),

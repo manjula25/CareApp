@@ -78,4 +78,26 @@ describe('population routes', () => {
     const res = await request(app).get('/api/population/scatter');
     expect(res.status).toBe(401);
   });
+
+  // S12 A.3 — `/risk-distribution` returns the same four buckets regardless
+  // of cohort size, summing to the patient count. Live HAPI-dependent (matches
+  // the `/scatter` + `/summary` test pattern above); the bucketing boundaries
+  // themselves are pinned in service.test.ts.
+  it('GET /api/population/risk-distribution returns all four risk levels summing to cohort size', async () => {
+    const token = await loginAs(app, 'director@caresync.demo');
+    const res = await request(app).get('/api/population/risk-distribution').set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(4);
+    expect(res.body.map((b: { level: string }) => b.level)).toEqual(['critical', 'high', 'medium', 'low']);
+    const total = res.body.reduce((sum: number, b: { count: number }) => sum + b.count, 0);
+    // Same tolerant lower bound as the scatter test — cohort size varies with
+    // HAPI seed state but should be >0 for a Director.
+    expect(total).toBeGreaterThanOrEqual(400);
+  }, 20000);
+
+  it('GET /api/population/risk-distribution is denied for a Coordinator', async () => {
+    const token = await loginAs(app, 'coordinator@caresync.demo');
+    const res = await request(app).get('/api/population/risk-distribution').set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(403);
+  });
 });

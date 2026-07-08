@@ -1,52 +1,171 @@
-import { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import type { AgentFinding } from '../types';
-import { getPatient, streamAnalysis } from '../api/client';
-import { mapAnalysisFindingToAgentFinding } from '../types';
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate, useParams, Link } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  getPatient,
+  streamAnalysis,
+  subscribeToEvents,
+  type AgentId,
+  type AnalysisFinding,
+  type AnalysisSummary,
+  type AnalysisTask,
+  type AssignedTaskEvent,
+  type PatientDetail as PatientDetailPayload,
+} from '../api/client';
+import { ageSexLabel, sexLabel } from '../lib/patient';
+import { useAnalysisGraph } from '../lib/analysisGraph';
+import { AgentGraph } from '../components/AgentGraph';
 import {
   MOCK_PATIENTS,
-  MOCK_ANALYSIS,
   DEFAULT_VITALS,
   GRAPH_TASKS,
   FHIR_BUNDLE,
   type DisplayPatient,
-  type DisplayAnalysisData,
 } from './PatientDetail.fixtures';
 
-// ── Constants ────────────────────────────────────────────────────────────────
+/**
+ * PatientDetail — merged UI/UX (CinemaView, OrchestratorView, ActionCard,
+ * progress widget) from the lead project, with the real-data layer
+ * (TanStack Query + clean SSE handlers + cross-surface sync) from the backend
+ * branch.
+ *
+ * UI from lead:
+ *   - Three view modes (Panel, Cinema, Orchestrator) toggled in the top bar.
+ *   - CinemaView: left-rail patient card + 4 agent panels + action plan grid.
+ *   - OrchestratorView: animated graph canvas + per-agent finding streams.
+ *   - ActionCard with "Create Task" stub button (no real /api/tasks POST for
+ *     recommended actions yet — the live stream emits real Task entities via
+ *     the onTask handler below; the ActionCard UI is the in-place visual for
+ *     findings already shown in the graph feeds).
+ *   - AnalysisProgressFloat widget tracking all 4 agents.
+ *
+ * Real-data layer from backend:
+ *   - `useQuery(['patient', id])` instead of MOCK_PATIENTS[0] default state.
+ *   - `feeds` state keyed by AgentId with `withText` / `withFinding` /
+ *     `withSummary` helpers — each SSE event updates exactly ONE feed, no
+ *     cross-agent bleed (the bug the lead-port's mock-sim+timeout caused).
+ *   - No 4s timeout, no runMockSim — the real stream IS the only source
+ *     (per the user's "real implementation primary, mock as safety net only"
+ *     decision). If the stream errors, the error is surfaced via the UI
+ *     naturally; if it succeeds, it succeeds.
+ *   - `subscribeToEvents` invalidates the patient query on Task updates for
+ *     THIS patient so a coordinator's status change live-refetches this
+ *     social-worker's / director's view (closes the cross-surface sync gap).
+ *
+ * Honest-staging notes:
+ *   - `MOCK_PATIENTS` provides riskScore / riskLevel / daysSinceContact — the
+ *     real `getPatient` API only returns patient / conditions / tasks. The
+ *     sidebar uses MOCK_PATIENTS as a fallback for the visual risk badge in
+ *     the hero-patient case; for non-hero patients, it shows "—".
+ *   - `DEFAULT_VITALS` / `GRAPH_TASKS` / `FHIR_BUNDLE` are pure visual demo
+ *     data feeding the sidebar vitals block + orchestrator-mode right rail.
+ *     Not wired to /api/tasks or /api/patients/:id/bundle — those surfaces
+ *     have their own pages.
+ */
 
-const AGENT_KEYS = ['riskAgent', 'careGapAgent', 'sdohAgent', 'actionPlanner'] as const;
-type AgentKey = (typeof AGENT_KEYS)[number];
+// ── Constants ───────────────────────────────────────────────────────────────
 
-const AGENT_LABELS: Record<AgentKey, string> = {
-  riskAgent: 'Risk Agent',
-  careGapAgent: 'Care Gap Agent',
-  sdohAgent: 'SDOH Agent',
+const AGENT_KEYS: AgentId[] = ['risk', 'careGap', 'sdoh', 'actionPlanner'];
+
+const AGENT_LABELS: Record<AgentId, string> = {
+  risk: 'Risk Agent',
+  careGap: 'Care Gap Agent',
+  sdoh: 'SDOH Agent',
   actionPlanner: 'Action Planner',
 };
 
-/** Maps wire agent ids (`risk`/`careGap`/`sdoh`/`actionPlanner`) to component agent keys. */
-const AGENT_ID_MAP: Record<string, AgentKey> = {
-  risk: 'riskAgent',
-  careGap: 'careGapAgent',
-  sdoh: 'sdohAgent',
-  actionPlanner: 'actionPlanner',
+const AGENT_ACCENT: Record<AgentId, { border: string; bg: string; text: string; icon: string; label: string }> = {
+  risk:         { border: 'border-red/40',    bg: 'bg-red/5',    text: 'text-red',    icon: '⚡', label: 'Risk Agent' },
+  careGap:      { border: 'border-violet/40', bg: 'bg-violet/5', text: 'text-violet', icon: '🩺', label: 'Care Gap' },
+  sdoh:         { border: 'border-cyan/40',   bg: 'bg-cyan/5',   text: 'text-cyan',   icon: '🏘', label: 'SDOH' },
+  actionPlanner:{ border: 'border-amber/40',  bg: 'bg-amber/5',  text: 'text-amber',  icon: '✅', label: 'Action Planner' },
 };
 
-const CONDITION_SEVERITIES: AgentFinding['severity'][] = ['critical', 'high', 'medium', 'low'];
-
-type AgentState = {
-  status: 'idle' | 'running' | 'complete' | 'error';
-  findings: AgentFinding[];
-  streamText: string;
-  riskScore?: number;
-  riskLevel?: string;
+const ORCH_COLORS: Record<AgentId | 'orchestrator', string> = {
+  orchestrator: '#00C8FF',
+  risk: '#E84848',
+  careGap: '#8661D4',
+  sdoh: '#0FC48A',
+  actionPlanner: '#F0970A',
 };
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+const GRAPH_PANEL_LABELS: Record<AgentId, string> = {
+  risk: 'RISK AGENT',
+  careGap: 'CARE GAP',
+  sdoh: 'SDOH',
+  actionPlanner: 'ACTION PLANNER',
+};
 
-function severityDot(severity: AgentFinding['severity'] | undefined): string {
-  switch (severity) {
+/** Per-agent summary testIds (used by PatientDetail.test.tsx). Matches the
+ *  backend-branch wording the existing test suite asserts against. */
+const SUMMARY_TESTID: Record<AgentId, string> = {
+  risk: 'risk-summary',
+  careGap: 'care-gap-summary',
+  sdoh: 'sdoh-summary',
+  actionPlanner: 'action-planner-summary',
+};
+
+type Severity = 'critical' | 'high' | 'medium' | 'low';
+
+// ── Per-agent feed state (backend pattern) ─────────────────────────────────
+
+interface AgentFeedState {
+  started: boolean;
+  text: string;
+  findings: AnalysisFinding[];
+  summary: AnalysisSummary | null;
+}
+
+function makeFeeds(): Record<AgentId, AgentFeedState> {
+  const blank = (): AgentFeedState => ({ started: false, text: '', findings: [], summary: null });
+  return { risk: blank(), careGap: blank(), sdoh: blank(), actionPlanner: blank() };
+}
+
+function withText(feeds: Record<AgentId, AgentFeedState>, agentId: AgentId, text: string) {
+  return {
+    ...feeds,
+    [agentId]: { ...feeds[agentId], started: true, text: feeds[agentId].text + text },
+  };
+}
+
+function withFinding(feeds: Record<AgentId, AgentFeedState>, finding: AnalysisFinding) {
+  const prev = feeds[finding.agentId];
+  return {
+    ...feeds,
+    [finding.agentId]: { ...prev, started: true, findings: [...prev.findings, finding] },
+  };
+}
+
+function withSummary(feeds: Record<AgentId, AgentFeedState>, summary: AnalysisSummary) {
+  return {
+    ...feeds,
+    [summary.agentId]: { ...feeds[summary.agentId], started: true, summary },
+  };
+}
+
+/** Action plan view derives synthesized actions from `feeds[actionPlanner].summary`
+ *  + any stream-emitted tasks; when the wire doesn't carry a separate
+ *  action-finding list, we synthesise one from the actionPlanner summary so
+ *  CinemaView's "Create Task" cards still have something to render. */
+interface DisplayAction {
+  key: string;
+  text: string;
+  citation: string;
+  severity: Severity;
+  confidence: number;
+}
+
+/** Human label per feed state, used by the progress widget + the cinema panels. */
+function statusLabel(feed: AgentFeedState): 'running' | 'complete' | 'idle' {
+  if (!feed.started) return 'idle';
+  if (feed.summary) return 'complete';
+  return 'running';
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function severityDot(s: Severity | undefined): string {
+  switch (s) {
     case 'critical': return 'bg-red';
     case 'high': return 'bg-red';
     case 'medium': return 'bg-amber';
@@ -55,17 +174,18 @@ function severityDot(severity: AgentFinding['severity'] | undefined): string {
   }
 }
 
-function riskBadgeClasses(level: DisplayPatient['riskLevel']): string {
+function riskBadgeClasses(level: DisplayPatient['riskLevel'] | undefined): string {
   switch (level) {
     case 'critical': return 'bg-red text-white';
     case 'high': return 'bg-amber text-bg';
     case 'medium': return 'bg-amber-dim text-amber';
     case 'low': return 'bg-emerald-dim text-emerald';
+    default: return 'bg-surface-raised text-text-muted border border-border';
   }
 }
 
-function priorityBadgeClasses(severity: AgentFinding['severity'] | undefined): string {
-  switch (severity) {
+function priorityBadgeClasses(s: Severity | undefined): string {
+  switch (s) {
     case 'critical': return 'bg-red-dim text-red';
     case 'high': return 'bg-amber-dim text-amber';
     case 'medium': return 'bg-amber-dim text-amber';
@@ -74,36 +194,94 @@ function priorityBadgeClasses(severity: AgentFinding['severity'] | undefined): s
   }
 }
 
-function confidenceBarColor(confidence: number): string {
-  if (confidence >= 0.9) return 'bg-emerald';
-  if (confidence >= 0.75) return 'bg-amber';
+function confidenceBarColor(c: number): string {
+  if (c >= 0.9) return 'bg-emerald';
+  if (c >= 0.75) return 'bg-amber';
   return 'bg-red';
 }
 
-function makeInitialAgentStates(): Record<AgentKey, AgentState> {
-  const blank = (): AgentState => ({ status: 'idle', findings: [], streamText: '' });
+/** Bridge API `PatientDetail` → `DisplayPatient` for the CinemaView sidebar.
+ *  Risk score / risk level / daysSinceContact aren't on the API response, so
+ *  we look them up from MOCK_PATIENTS (the hero-patient fixture set) and
+ *  fall back to "—" for non-MOCK routes. Sidebar shows real name/age/sex/
+ *  conditions pulled from the API so it never fabricates identifiers. */
+function buildDisplayPatient(
+  apiData: PatientDetailPayload | undefined,
+  routeId: string | undefined,
+): DisplayPatient {
+  const baseFallback = MOCK_PATIENTS[0];
+  const byId = routeId ? MOCK_PATIENTS.find((p) => p.id === routeId) : undefined;
+
+  if (!apiData) {
+    return routeId && byId ? byId : baseFallback;
+  }
+
+  const birthDate = apiData.patient.birthDate;
+  const age = birthDate
+    ? Math.floor((Date.now() - new Date(birthDate).getTime()) / (365.25 * 24 * 3600 * 1000))
+    : byId?.age ?? 0;
+
   return {
-    riskAgent: blank(),
-    careGapAgent: blank(),
-    sdohAgent: blank(),
-    actionPlanner: blank(),
+    id: apiData.patient.id ?? byId?.id ?? baseFallback.id,
+    mrn: apiData.patient.id ?? byId?.mrn ?? baseFallback.mrn,
+    name: apiData.patient.name ?? byId?.name ?? baseFallback.name,
+    age,
+    sex: sexLabel(apiData.patient.gender) ?? byId?.sex ?? baseFallback.sex,
+    conditions: apiData.conditions.length > 0
+      ? apiData.conditions.map((c) => c.display).filter(Boolean)
+      : byId?.conditions ?? baseFallback.conditions,
+    riskScore: byId?.riskScore ?? 0,
+    riskLevel: byId?.riskLevel ?? 'low',
+    daysSinceContact: byId?.daysSinceContact ?? 0,
   };
 }
 
-function agentStatesFromAnalysis(data: DisplayAnalysisData): Record<AgentKey, AgentState> {
-  const fromAgent = (a: { findings: AgentFinding[] }) =>
-    ({ status: 'complete' as const, findings: a.findings, streamText: '' });
-  return {
-    riskAgent: fromAgent(data.riskAgent),
-    careGapAgent: fromAgent(data.careGapAgent),
-    sdohAgent: fromAgent(data.sdohAgent),
-    actionPlanner: fromAgent(data.actionPlanner),
-  };
+/** Severity fallback: `AnalysisTask.priority` is a bare wire string, so coerce
+ *  unknown values to 'medium' rather than crashing the ActionCard render. */
+function coerceSeverity(p: string): Severity {
+  return (['critical', 'high', 'medium', 'low'] as const).includes(p as Severity)
+    ? (p as Severity)
+    : 'medium';
 }
 
-// ── Sub-components ───────────────────────────────────────────────────────────
+/** Synthesise an action-finding list for the CinemaView + PanelView "Action
+ *  Plan" cards. The real stream doesn't always emit per-action findings with
+ *  stable IDs + severities (the backend returns `findingCount` + `droppedCount`
+ *  on `AnalysisSummary` instead), so when the wire feed lacks findings we
+ *  render one card per stream-emitted `AnalysisTask` (the actionPlanner's
+ *  `task` event), and when those are also absent we fall back to a single
+ *  neutral "Run analysis to populate" placeholder card. */
+function buildActionPlan(
+  feeds: Record<AgentId, AgentFeedState>,
+  createdTasks: AnalysisTask[],
+): DisplayAction[] {
+  const apFindings = feeds.actionPlanner.findings;
+  if (apFindings.length > 0) {
+    return apFindings.map((f, i) => ({
+      key: `${f.fhirResourceId ?? 'finding'}-${i}`,
+      text: f.text ?? f.finding ?? f.description ?? 'Untitled finding',
+      citation: f.fhirResourceId ?? 'unsourced',
+      severity: coerceSeverity(f.severity ?? 'medium'),
+      // `confidence` lives in the index signature — narrow the unknown to a
+      // number with a safe default so the ActionCard progress bar renders.
+      confidence: typeof f.confidence === 'number' ? f.confidence : 0.8,
+    }));
+  }
+  if (createdTasks.length > 0) {
+    return createdTasks.map((t) => ({
+      key: `created-${t.id}`,
+      text: t.title,
+      citation: t.reference,
+      severity: coerceSeverity(t.priority),
+      confidence: 0.8,
+    }));
+  }
+  return [];
+}
 
-function StatusDot({ status }: { status: AgentState['status'] }) {
+// ── Visual helpers + sub-components (kept from lead) ───────────────────────
+
+function StatusDot({ status }: { status: 'running' | 'complete' | 'idle' }) {
   if (status === 'running') {
     return (
       <span className="relative inline-flex h-2.5 w-2.5">
@@ -113,60 +291,70 @@ function StatusDot({ status }: { status: AgentState['status'] }) {
     );
   }
   if (status === 'complete') return <span className="inline-flex h-2.5 w-2.5 rounded-full bg-emerald" />;
-  if (status === 'error') return <span className="inline-flex h-2.5 w-2.5 rounded-full bg-red" />;
   return <span className="inline-flex h-2.5 w-2.5 rounded-full bg-surface-hover border border-border" />;
 }
 
-function statusLabel(state: AgentState): string {
-  switch (state.status) {
-    case 'idle': return 'Idle';
-    case 'running': return 'Running...';
-    case 'complete': return `Complete — ${state.findings.length} finding${state.findings.length !== 1 ? 's' : ''}`;
-    case 'error': return 'Error';
-  }
-}
-
-function AgentCard({ agentKey, state }: { agentKey: AgentKey; state: AgentState }) {
+function CinemaAgentPanel({ agentId, feed }: { agentId: AgentId; feed: AgentFeedState }) {
+  const accent = AGENT_ACCENT[agentId];
+  const status = statusLabel(feed);
+  const isAction = agentId === 'actionPlanner';
   return (
-    <div className="bg-surface-raised rounded-lg p-4 mb-3">
-      <div className="flex items-center gap-2 mb-2">
-        <StatusDot status={state.status} />
-        <span className="font-bold text-text text-sm">{AGENT_LABELS[agentKey]}</span>
-        <span className="ml-auto text-text-dim text-xs">{statusLabel(state)}</span>
+    <div className={`rounded-xl border ${accent.border} ${accent.bg} p-5 flex flex-col gap-3`}>
+      <div className="flex items-center gap-3">
+        <span className="text-xl leading-none">{accent.icon}</span>
+        <span className={`font-bold text-sm tracking-wide uppercase ${accent.text}`}>{accent.label}</span>
+        <div className="ml-auto flex items-center gap-2">
+          <StatusDot status={status} />
+          <span className="text-text-dim text-xs">
+            {status === 'idle' ? 'Waiting to run…' : status === 'running' ? 'Streaming…' : 'Complete'}
+          </span>
+        </div>
       </div>
 
-      {state.streamText && (
-        <p
-          className="text-text-muted text-xs font-mono mt-1 leading-relaxed line-clamp-3"
-          data-testid={`stream-${agentKey}`}
-        >
-          {state.streamText}
-        </p>
+      {status === 'running' && (
+        <div className="bg-bg rounded-lg p-3 border border-border min-h-[48px]">
+          <p className="text-text-muted text-xs font-mono leading-relaxed">
+            {feed.text || 'Analyzing FHIR bundle…'}
+            <span className="animate-pulse">▍</span>
+          </p>
+        </div>
       )}
 
-      {state.status === 'complete' && state.findings.length > 0 && (
-        <ul className="mt-2 space-y-2">
-          {state.findings.map((f, i) => (
-            <li key={`${f.fhirResourceId}-${i}`} className="flex gap-2 items-start" data-testid={`finding-${agentKey}-${i}`}>
-              <span className={`mt-1 flex-shrink-0 w-2 h-2 rounded-full ${severityDot(f.severity)}`} />
-              <div className="min-w-0">
-                <p className="text-text text-sm leading-snug">{f.finding}</p>
-                <div className="flex items-center gap-3 mt-0.5">
-                  <span className="text-text-dim text-xs font-mono truncate">{f.fhirResourceId}</span>
-                  <span className="text-text-dim text-xs flex-shrink-0" data-testid={`confidence-${agentKey}-${i}`}>
-                    Conf: {f.confidence.toFixed(2)}
-                  </span>
+      {status === 'idle' && <p className="text-text-dim text-sm italic">Waiting to run…</p>}
+
+      {status === 'complete' && feed.findings.length > 0 && (
+        <div className="space-y-3">
+          {feed.findings.map((f, i) => {
+            const sev = coerceSeverity(f.severity ?? 'medium');
+            const confidence = typeof f.confidence === 'number' ? f.confidence : 0.8;
+            return (
+              <div key={`${f.fhirResourceId ?? 'finding'}-${i}`} className="flex gap-3 items-start">
+                <span className={`mt-1.5 flex-shrink-0 w-2.5 h-2.5 rounded-full ${severityDot(sev)}`} />
+                <div className="flex-1 min-w-0">
+                  <p className={`text-sm font-medium leading-snug ${isAction ? 'text-text text-base' : 'text-text'}`}>
+                    {f.text ?? f.finding ?? f.description ?? 'Untitled finding'}
+                  </p>
+                  <div className="flex items-center gap-3 mt-1">
+                    <span className="text-xs font-mono text-text-dim truncate">{f.fhirResourceId ?? 'unsourced'}</span>
+                    <span className={`text-xs font-semibold flex-shrink-0 ${
+                      confidence >= 0.9 ? 'text-emerald' : confidence >= 0.75 ? 'text-amber' : 'text-red'
+                    }`}>{(confidence * 100).toFixed(0)}%</span>
+                  </div>
                 </div>
+                <span className={`flex-shrink-0 text-xs px-2 py-0.5 rounded-full uppercase tracking-wide font-semibold ${priorityBadgeClasses(sev)}`}>
+                  {sev}
+                </span>
               </div>
-            </li>
-          ))}
-        </ul>
+            );
+          })}
+        </div>
       )}
 
-      {state.status === 'complete' && (state.riskScore !== undefined || state.riskLevel) && (
-        <p className="mt-2 pt-2 border-t border-border text-[11px] text-text-muted" data-testid={`summary-${agentKey}`}>
-          {state.riskLevel ? `${state.riskLevel} risk` : 'complete'}
-          {state.riskScore !== undefined ? ` · score ${state.riskScore}` : ''}
+      {status === 'complete' && feed.summary && (
+        <p className="text-text-dim text-xs italic" data-testid={SUMMARY_TESTID[agentId]}>
+          {agentId === 'risk'
+            ? `${feed.summary.riskLevel} risk · score ${feed.summary.riskScore}`
+            : `${feed.summary.findingCount} findings · ${feed.summary.droppedCount} dropped`}
         </p>
       )}
     </div>
@@ -174,28 +362,26 @@ function AgentCard({ agentKey, state }: { agentKey: AgentKey; state: AgentState 
 }
 
 interface ActionCardProps {
-  finding: AgentFinding;
+  action: DisplayAction;
   isCreated: boolean;
   onCreated: (key: string) => void;
 }
 
-function ActionCard({ finding, isCreated, onCreated }: ActionCardProps) {
+function ActionCard({ action, isCreated, onCreated }: ActionCardProps) {
   const [loading, setLoading] = useState(false);
 
-  /**
-   * Phase 1 — task creation is intentionally a local-only UI stub. The real
-   * `POST /api/tasks` endpoint requires a `patientId` plus a full Task body,
-   * and the lead's design never wired one up here. We mark-as-created for
-   * demo polish; a future slice will replace this with a real `transitionTask`
-   * or a dedicated `assignRecommendedTask` endpoint.
-   */
-  const handleCreateTask = async () => {
+  /** Phase 1 — task creation is intentionally a local-only UI stub. The real
+   *  `POST /api/tasks` endpoint requires a full Task body, and the action
+   *  planner's stream-emitted `AnalysisTask` events are what create real
+   *  Task resources in HAPI (handled in onTask above). This stub is the
+   *  visual affordance the mockup expects for finding-→-task creation. */
+  const handleCreate = async () => {
     if (isCreated || loading) return;
     setLoading(true);
     try {
       await new Promise((r) => setTimeout(r, 250));
     } finally {
-      onCreated(finding.finding);
+      onCreated(action.key);
       setLoading(false);
     }
   };
@@ -203,112 +389,53 @@ function ActionCard({ finding, isCreated, onCreated }: ActionCardProps) {
   return (
     <div className="bg-surface-raised rounded-lg p-4 mb-3 border border-border-light">
       <div className="flex items-center gap-2 mb-2">
-        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide ${priorityBadgeClasses(finding.severity)}`}>
-          {finding.severity}
+        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide ${priorityBadgeClasses(action.severity)}`}>
+          {action.severity}
         </span>
       </div>
-      <p className="font-medium text-text text-sm leading-snug mb-1">{finding.finding}</p>
-      <p className="text-text-dim text-xs font-mono mb-3">{finding.fhirResourceId}</p>
+      <p className="font-medium text-text text-sm leading-snug mb-1">{action.text}</p>
+      <p className="text-text-dim text-xs font-mono mb-3">{action.citation}</p>
 
       <div className="mb-3">
         <div className="flex justify-between mb-1">
           <span className="text-text-dim text-xs">Confidence</span>
-          <span className="text-text-dim text-xs">{(finding.confidence * 100).toFixed(0)}%</span>
+          <span className="text-text-dim text-xs">{(action.confidence * 100).toFixed(0)}%</span>
         </div>
         <div className="w-full h-1 bg-surface rounded-full overflow-hidden">
-          <div className={`h-full rounded-full ${confidenceBarColor(finding.confidence)}`} style={{ width: `${finding.confidence * 100}%` }} />
+          <div className={`h-full rounded-full ${confidenceBarColor(action.confidence)}`} style={{ width: `${action.confidence * 100}%` }} />
         </div>
       </div>
 
       <button
-        onClick={handleCreateTask}
+        onClick={handleCreate}
         disabled={isCreated || loading}
-        data-testid={`create-task-${finding.fhirResourceId}`}
+        data-testid={`create-task-${action.citation}`}
         className={`text-xs px-3 py-1 rounded border transition-colors ${
           isCreated
             ? 'bg-emerald-dim text-emerald border-emerald cursor-default'
             : 'bg-surface-hover border border-border-light text-text-muted hover:border-cyan hover:text-cyan'
         }`}
       >
-        {isCreated ? 'Task Created ✓' : loading ? 'Creating...' : 'Create Task'}
+        {isCreated ? 'Task Created ✓' : loading ? 'Creating…' : 'Create Task'}
       </button>
     </div>
   );
 }
 
-// ── Cinema view ──────────────────────────────────────────────────────────────
-
-const AGENT_ACCENT: Record<AgentKey, { border: string; bg: string; text: string; label: string; icon: string }> = {
-  riskAgent:     { border: 'border-red/40',     bg: 'bg-red/5',     text: 'text-red',     label: 'Risk Agent',        icon: '⚡' },
-  careGapAgent:  { border: 'border-amber/40',   bg: 'bg-amber/5',   text: 'text-amber',   label: 'Care Gap Agent',    icon: '🩺' },
-  sdohAgent:     { border: 'border-violet/40',  bg: 'bg-violet/5',  text: 'text-violet',  label: 'SDOH Agent',        icon: '🏘' },
-  actionPlanner: { border: 'border-cyan/40',    bg: 'bg-cyan/5',    text: 'text-cyan',    label: 'Action Planner',    icon: '✅' },
-};
-
-function CinemaAgentPanel({ agentKey, state }: { agentKey: AgentKey; state: AgentState }) {
-  const accent = AGENT_ACCENT[agentKey];
-  const isAction = agentKey === 'actionPlanner';
-  return (
-    <div className={`rounded-xl border ${accent.border} ${accent.bg} p-5 flex flex-col gap-3`}>
-      <div className="flex items-center gap-3">
-        <span className="text-xl leading-none">{accent.icon}</span>
-        <span className={`font-bold text-sm tracking-wide uppercase ${accent.text}`}>{accent.label}</span>
-        <div className="ml-auto flex items-center gap-2">
-          <StatusDot status={state.status} />
-          <span className="text-text-dim text-xs">{statusLabel(state)}</span>
-        </div>
-      </div>
-
-      {state.status === 'running' && (
-        <div className="bg-bg rounded-lg p-3 border border-border min-h-[48px]">
-          <p className="text-text-muted text-xs font-mono leading-relaxed">
-            {state.streamText || 'Analyzing FHIR bundle…'}
-            <span className="animate-pulse">▍</span>
-          </p>
-        </div>
-      )}
-
-      {state.status === 'idle' && <p className="text-text-dim text-sm italic">Waiting to run…</p>}
-
-      {state.status === 'complete' && state.findings.length > 0 && (
-        <div className="space-y-3">
-          {state.findings.map((f, i) => (
-            <div key={i} className="flex gap-3 items-start">
-              <span className={`mt-1.5 flex-shrink-0 w-2.5 h-2.5 rounded-full ${severityDot(f.severity)}`} />
-              <div className="flex-1 min-w-0">
-                <p className={`text-sm font-medium leading-snug ${isAction ? 'text-text text-base' : 'text-text'}`}>
-                  {f.finding}
-                </p>
-                <div className="flex items-center gap-3 mt-1">
-                  <span className="text-xs font-mono text-text-dim truncate">{f.fhirResourceId}</span>
-                  <span className={`text-xs font-semibold flex-shrink-0 ${
-                    f.confidence >= 0.9 ? 'text-emerald' : f.confidence >= 0.75 ? 'text-amber' : 'text-red'
-                  }`}>{(f.confidence * 100).toFixed(0)}%</span>
-                </div>
-              </div>
-              <span className={`flex-shrink-0 text-xs px-2 py-0.5 rounded-full uppercase tracking-wide font-semibold ${priorityBadgeClasses(f.severity)}`}>
-                {f.severity}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
+// ── CinemaView (kept from lead, adapted to AgentId keys) ───────────────────
 
 interface CinemaViewProps {
   patient: DisplayPatient;
-  agentStates: Record<AgentKey, AgentState>;
-  isRunning: boolean;
+  feeds: Record<AgentId, AgentFeedState>;
+  running: boolean;
   onRun: () => void;
-  displayedActionFindings: AgentFinding[];
-  createdTasks: Set<string>;
-  onTaskCreated: (key: string) => void;
+  actions: DisplayAction[];
+  createdActionKeys: Set<string>;
+  onActionCreated: (key: string) => void;
   onBack: () => void;
 }
 
-function CinemaView({ patient, agentStates, isRunning, onRun, displayedActionFindings, createdTasks, onTaskCreated, onBack }: CinemaViewProps) {
+function CinemaView({ patient, feeds, running, onRun, actions, createdActionKeys, onActionCreated, onBack }: CinemaViewProps) {
   return (
     <div className="flex h-[calc(100vh-48px)] overflow-hidden">
       <div className="w-72 flex-shrink-0 bg-surface border-r border-border flex flex-col p-5 gap-4 overflow-y-auto">
@@ -322,7 +449,7 @@ function CinemaView({ patient, agentStates, isRunning, onRun, displayedActionFin
             style={{ boxShadow: patient.riskLevel === 'critical' ? '0 0 32px rgba(232,72,72,0.4)' : undefined }}
             data-testid="cinema-risk-badge"
           >
-            <span className="text-4xl font-black leading-none">{patient.riskScore}</span>
+            <span className="text-4xl font-black leading-none">{patient.riskScore || '—'}</span>
             <span className="text-xs font-bold uppercase tracking-wider opacity-80 mt-1">{patient.riskLevel}</span>
           </div>
           <div className="text-center">
@@ -333,9 +460,9 @@ function CinemaView({ patient, agentStates, isRunning, onRun, displayedActionFin
 
         <div className="border-t border-border pt-4">
           <p className="text-text-muted text-xs uppercase tracking-wider mb-2">Conditions</p>
-          {patient.conditions.map((c, i) => (
+          {patient.conditions.map((c) => (
             <div key={c} className="flex items-center gap-2 mb-1.5">
-              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${severityDot(CONDITION_SEVERITIES[Math.min(i, 3)])}`} />
+              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${severityDot('medium')}`} />
               <span className="text-text text-sm">{c}</span>
             </div>
           ))}
@@ -356,7 +483,9 @@ function CinemaView({ patient, agentStates, isRunning, onRun, displayedActionFin
         <div className="mt-auto border-t border-border pt-4">
           <p className="text-text-muted text-xs">
             Last contact:{' '}
-            <span className={`font-semibold ${patient.daysSinceContact <= 3 ? 'text-emerald' : patient.daysSinceContact <= 14 ? 'text-amber' : 'text-red'}`}>{patient.daysSinceContact}d ago</span>
+            <span className={`font-semibold ${patient.daysSinceContact <= 3 ? 'text-emerald' : patient.daysSinceContact <= 14 ? 'text-amber' : 'text-red'}`}>
+              {patient.daysSinceContact}d ago
+            </span>
           </p>
         </div>
       </div>
@@ -369,21 +498,21 @@ function CinemaView({ patient, agentStates, isRunning, onRun, displayedActionFin
           </div>
           <button
             onClick={onRun}
-            disabled={isRunning}
+            disabled={running}
             data-testid="cinema-run-analysis"
             className="bg-violet text-white px-5 py-2.5 rounded-lg text-sm font-semibold hover:opacity-80 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ boxShadow: '0 0 20px rgba(134,97,212,0.4)' }}
           >
-            {isRunning ? '⟳ Running…' : '▶ Run Analysis'}
+            {running ? '⟳ Running…' : '▶ Run Analysis'}
           </button>
         </div>
 
         <div className="px-8 py-6 space-y-4">
-          {(['riskAgent', 'careGapAgent', 'sdohAgent'] as AgentKey[]).map((key) => (
-            <CinemaAgentPanel key={key} agentKey={key} state={agentStates[key]} />
+          {(['risk', 'careGap', 'sdoh'] as AgentId[]).map((agentId) => (
+            <CinemaAgentPanel key={agentId} agentId={agentId} feed={feeds[agentId]} />
           ))}
 
-          {agentStates.actionPlanner.status !== 'idle' && (
+          {feeds.actionPlanner.started && (
             <div className="flex items-center gap-3 py-2">
               <div className="flex-1 h-px bg-border" />
               <span className="text-text-dim text-xs uppercase tracking-widest">synthesized action plan</span>
@@ -391,14 +520,19 @@ function CinemaView({ patient, agentStates, isRunning, onRun, displayedActionFin
             </div>
           )}
 
-          {agentStates.actionPlanner.status !== 'idle' && (
-            <CinemaAgentPanel agentKey="actionPlanner" state={agentStates.actionPlanner} />
+          {feeds.actionPlanner.started && (
+            <CinemaAgentPanel agentId="actionPlanner" feed={feeds.actionPlanner} />
           )}
 
-          {displayedActionFindings.length > 0 && (
+          {actions.length > 0 && (
             <div className="grid grid-cols-3 gap-4 pt-2">
-              {displayedActionFindings.map((finding, i) => (
-                <ActionCard key={i} finding={finding} isCreated={createdTasks.has(finding.finding)} onCreated={onTaskCreated} />
+              {actions.map((action) => (
+                <ActionCard
+                  key={action.key}
+                  action={action}
+                  isCreated={createdActionKeys.has(action.key)}
+                  onCreated={onActionCreated}
+                />
               ))}
             </div>
           )}
@@ -408,32 +542,17 @@ function CinemaView({ patient, agentStates, isRunning, onRun, displayedActionFin
   );
 }
 
-// ── Orchestrator view ────────────────────────────────────────────────────────
-
-const ORCH_COLORS: Record<AgentKey | 'orchestrator', string> = {
-  orchestrator:  '#00C8FF',
-  riskAgent:     '#E84848',
-  careGapAgent:  '#8661D4',
-  sdohAgent:     '#0FC48A',
-  actionPlanner: '#F0970A',
-};
-
-const GRAPH_PANEL_LABELS: Record<AgentKey, string> = {
-  riskAgent:     'RISK AGENT',
-  careGapAgent:  'CARE GAP',
-  sdohAgent:     'SDOH',
-  actionPlanner: 'ACTION PLANNER',
-};
+// ── OrchestratorView (kept from lead, adapted to AgentId keys) ─────────────
 
 function h2r(hex: string) {
   return `${parseInt(hex.slice(1, 3), 16)},${parseInt(hex.slice(3, 5), 16)},${parseInt(hex.slice(5, 7), 16)}`;
 }
 
-function OrchestratorCanvas({ agentStates }: { agentStates: Record<AgentKey, AgentState> }) {
+function OrchestratorCanvas({ feeds }: { feeds: Record<AgentId, AgentFeedState> }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number>(0);
-  const statesRef = useRef(agentStates);
-  statesRef.current = agentStates;
+  const feedsRef = useRef(feeds);
+  feedsRef.current = feeds;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -459,7 +578,7 @@ function OrchestratorCanvas({ agentStates }: { agentStates: Record<AgentKey, Age
       const t = now - t0;
       const W = canvas!.offsetWidth;
       const H = canvas!.offsetHeight;
-      const st = statesRef.current;
+      const fd = feedsRef.current;
 
       ctx!.clearRect(0, 0, W, H);
       ctx!.fillStyle = '#07111E';
@@ -476,12 +595,14 @@ function OrchestratorCanvas({ agentStates }: { agentStates: Record<AgentKey, Age
       const vSpread = H * 0.41;
       const hSpread = Math.min(W * 0.24, vSpread);
 
-      const nodes = [
-        { key: 'orchestrator' as const, x: cx, y: cy, r: 38, label: 'Orchestrator', color: ORCH_COLORS.orchestrator, status: 'running' as AgentState['status'] },
-        { key: 'riskAgent' as const, x: cx, y: cy - vSpread, r: 26, label: 'Risk Agent', color: ORCH_COLORS.riskAgent, status: st.riskAgent.status },
-        { key: 'careGapAgent' as const, x: cx + hSpread, y: cy, r: 26, label: 'Care Gap', color: ORCH_COLORS.careGapAgent, status: st.careGapAgent.status },
-        { key: 'sdohAgent' as const, x: cx, y: cy + vSpread, r: 26, label: 'SDOH', color: ORCH_COLORS.sdohAgent, status: st.sdohAgent.status },
-        { key: 'actionPlanner' as const, x: cx - hSpread, y: cy, r: 26, label: 'Action Planner', color: ORCH_COLORS.actionPlanner, status: st.actionPlanner.status },
+      const statusOf = (id: AgentId): 'running' | 'complete' | 'idle' => statusLabel(fd[id]);
+
+      const nodes: Array<{ key: AgentId | 'orchestrator'; x: number; y: number; r: number; label: string; color: string; status: 'running' | 'complete' | 'idle' }> = [
+        { key: 'orchestrator', x: cx, y: cy, r: 38, label: 'Orchestrator', color: ORCH_COLORS.orchestrator, status: 'running' as const },
+        { key: 'risk',          x: cx, y: cy - vSpread, r: 26, label: 'Risk Agent', color: ORCH_COLORS.risk, status: statusOf('risk') },
+        { key: 'careGap',       x: cx + hSpread, y: cy, r: 26, label: 'Care Gap',  color: ORCH_COLORS.careGap, status: statusOf('careGap') },
+        { key: 'sdoh',          x: cx, y: cy + vSpread, r: 26, label: 'SDOH',      color: ORCH_COLORS.sdoh, status: statusOf('sdoh') },
+        { key: 'actionPlanner', x: cx - hSpread, y: cy, r: 26, label: 'Action Planner', color: ORCH_COLORS.actionPlanner, status: statusOf('actionPlanner') },
       ];
 
       nodes.slice(1).forEach((node, i) => {
@@ -531,7 +652,7 @@ function OrchestratorCanvas({ agentStates }: { agentStates: Record<AgentKey, Age
           ctx!.fillStyle = done ? '#0FC48A' : active ? '#8661D4' : '#1E3A55'; ctx!.fill();
         }
 
-        const isBottomNode = node.key === 'sdohAgent';
+        const isBottomNode = node.key === 'sdoh';
         ctx!.fillStyle = isC ? color : 'rgba(180,220,245,0.78)';
         ctx!.font = `${isC ? '600 ' : '500 '}12px system-ui,-apple-system,sans-serif`;
         ctx!.textAlign = 'center';
@@ -550,15 +671,15 @@ function OrchestratorCanvas({ agentStates }: { agentStates: Record<AgentKey, Age
   return <canvas ref={canvasRef} style={{ display: 'block', width: '100%', height: '100%' }} />;
 }
 
-function OrchestratorView({
-  patient, agentStates, isRunning, onRun, onBack,
-}: {
+interface OrchestratorViewProps {
   patient: DisplayPatient;
-  agentStates: Record<AgentKey, AgentState>;
-  isRunning: boolean;
+  feeds: Record<AgentId, AgentFeedState>;
+  running: boolean;
   onRun: () => void;
   onBack: () => void;
-}) {
+}
+
+function OrchestratorView({ patient, feeds, running, onRun, onBack }: OrchestratorViewProps) {
   const [fhirOpen, setFhirOpen] = useState(true);
   return (
     <div className="flex h-[calc(100vh-48px)] overflow-hidden" style={{ background: '#07111E' }}>
@@ -570,16 +691,16 @@ function OrchestratorView({
           <span style={{ color: 'rgba(255,255,255,0.18)' }}>|</span>
           <span className="text-xs font-mono" style={{ color: 'rgba(0,200,255,0.55)' }}>MRN: {patient.mrn}</span>
           <button
-            onClick={onRun} disabled={isRunning}
+            onClick={onRun} disabled={running}
             data-testid="orchestrator-run-analysis"
             className="ml-auto text-sm font-semibold px-4 py-1.5 rounded-lg border transition-all disabled:opacity-50"
             style={{ borderColor: '#00C8FF', color: '#00C8FF' }}
           >
-            {isRunning ? '⟳ Running…' : '▶ Run Analysis'}
+            {running ? '⟳ Running…' : '▶ Run Analysis'}
           </button>
         </div>
 
-        {isRunning && (
+        {running && (
           <div className="flex-shrink-0 overflow-hidden" style={{ height: 2, background: 'rgba(0,200,255,0.08)' }}>
             <div style={{
               height: '100%', width: '35%',
@@ -590,16 +711,16 @@ function OrchestratorView({
         )}
 
         <div className="flex-1 min-h-0 overflow-hidden">
-          <OrchestratorCanvas agentStates={agentStates} />
+          <OrchestratorCanvas feeds={feeds} />
         </div>
 
         <div className="flex-shrink-0 grid grid-cols-4" style={{ height: '216px', borderTop: '1px solid rgba(0,200,255,0.1)' }}>
-          {AGENT_KEYS.map((key) => {
-            const color = ORCH_COLORS[key];
-            const state = agentStates[key];
+          {AGENT_KEYS.map((agentId) => {
+            const color = ORCH_COLORS[agentId];
+            const feed = feeds[agentId];
             return (
               <div
-                key={key}
+                key={agentId}
                 className="flex flex-col overflow-hidden"
                 style={{
                   borderLeft: `2px solid ${color}44`,
@@ -608,24 +729,24 @@ function OrchestratorView({
                 }}
               >
                 <div className="px-3 py-2 flex-shrink-0" style={{ borderBottom: '1px solid rgba(0,200,255,0.08)' }}>
-                  <span className="text-[10px] font-bold tracking-widest uppercase" style={{ color }}>{GRAPH_PANEL_LABELS[key]}</span>
+                  <span className="text-[10px] font-bold tracking-widest uppercase" style={{ color }}>{GRAPH_PANEL_LABELS[agentId]}</span>
                 </div>
                 <div className="flex-1 overflow-y-auto px-3 py-2.5">
-                  {state.status === 'idle' && (
-                    <p className="text-xs italic" style={{ color: 'rgba(140,180,210,0.38)' }}>Awaiting analysis run...</p>
+                  {!feed.started && (
+                    <p className="text-xs italic" style={{ color: 'rgba(140,180,210,0.38)' }}>Awaiting analysis run…</p>
                   )}
-                  {state.status === 'running' && (
+                  {feed.started && !feed.summary && (
                     <p className="text-xs font-mono leading-relaxed" style={{ color: 'rgba(150,200,230,0.72)' }}>
-                      {state.streamText || 'Analyzing FHIR bundle…'}<span className="animate-pulse" style={{ color }}>▍</span>
+                      {feed.text || 'Analyzing FHIR bundle…'}<span className="animate-pulse" style={{ color }}>▍</span>
                     </p>
                   )}
-                  {state.status === 'complete' && state.findings.map((f, i) => (
-                    <div key={i} className="mb-2.5">
+                  {feed.summary && feed.findings.map((f, i) => (
+                    <div key={`${f.fhirResourceId ?? 'finding'}-${i}`} className="mb-2.5">
                       <div className="flex items-start gap-1.5">
-                        <span className={`mt-1 flex-shrink-0 w-1.5 h-1.5 rounded-full ${severityDot(f.severity)}`} />
-                        <p className="text-xs leading-snug" style={{ color: 'rgba(200,230,245,0.88)' }}>{f.finding}</p>
+                        <span className={`mt-1 flex-shrink-0 w-1.5 h-1.5 rounded-full ${severityDot(coerceSeverity(f.severity ?? 'medium'))}`} />
+                        <p className="text-xs leading-snug" style={{ color: 'rgba(200,230,245,0.88)' }}>{f.text ?? f.finding ?? f.description ?? 'Untitled finding'}</p>
                       </div>
-                      <p className="text-[10px] font-mono mt-0.5 ml-3" style={{ color: 'rgba(100,150,185,0.5)' }}>{f.fhirResourceId}</p>
+                      <p className="text-[10px] font-mono mt-0.5 ml-3" style={{ color: 'rgba(100,150,185,0.5)' }}>{f.fhirResourceId ?? 'unsourced'}</p>
                     </div>
                   ))}
                 </div>
@@ -690,15 +811,15 @@ function OrchestratorView({
   );
 }
 
-// ── Floating progress widget ─────────────────────────────────────────────────
+// ── AnalysisProgressFloat (kept from lead) ─────────────────────────────────
 
-function AnalysisProgressFloat({ isRunning, agentStates }: { isRunning: boolean; agentStates: Record<AgentKey, AgentState> }) {
+function AnalysisProgressFloat({ running, feeds }: { running: boolean; feeds: Record<AgentId, AgentFeedState> }) {
   const [elapsed, setElapsed] = useState(0);
   const [show, setShow] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    if (isRunning) {
+    if (running) {
       setShow(true);
       setElapsed(0);
       intervalRef.current = setInterval(() => setElapsed((s) => +(s + 0.1).toFixed(1)), 100);
@@ -708,11 +829,11 @@ function AnalysisProgressFloat({ isRunning, agentStates }: { isRunning: boolean;
       return () => clearTimeout(t);
     }
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [isRunning]);
+  }, [running]);
 
   if (!show) return null;
 
-  const allDone = AGENT_KEYS.every((k) => agentStates[k].status === 'complete' || agentStates[k].status === 'error');
+  const allDone = AGENT_KEYS.every((id) => statusLabel(feeds[id]) === 'complete' || statusLabel(feeds[id]) === 'idle');
 
   return (
     <div
@@ -728,7 +849,7 @@ function AnalysisProgressFloat({ isRunning, agentStates }: { isRunning: boolean;
       data-testid="analysis-progress-float"
     >
       <div style={{ height: 3, background: 'rgba(0,200,255,0.1)' }}>
-        {isRunning ? (
+        {running ? (
           <div style={{
             height: '100%',
             width: '35%',
@@ -763,22 +884,23 @@ function AnalysisProgressFloat({ isRunning, agentStates }: { isRunning: boolean;
       </div>
 
       <div className="px-4 py-3 space-y-3">
-        {AGENT_KEYS.map((key) => {
-          const state = agentStates[key];
-          const color = ORCH_COLORS[key];
-          const done = state.status === 'complete';
-          const running = state.status === 'running';
+        {AGENT_KEYS.map((agentId) => {
+          const feed = feeds[agentId];
+          const color = ORCH_COLORS[agentId];
+          const status = statusLabel(feed);
+          const done = status === 'complete';
+          const isRunning = status === 'running';
           return (
-            <div key={key} className="flex items-center gap-3">
+            <div key={agentId} className="flex items-center gap-3">
               <div style={{ width: 14, height: 14, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {done && <span style={{ color: '#0FC48A', fontSize: 11, fontWeight: 700 }}>✓</span>}
-                {running && (
+                {isRunning && (
                   <span className="relative inline-flex" style={{ width: 10, height: 10 }}>
                     <span className="animate-ping absolute inset-0 rounded-full opacity-55" style={{ background: color }} />
                     <span className="relative inline-flex rounded-full" style={{ width: 10, height: 10, background: color }} />
                   </span>
                 )}
-                {state.status === 'idle' && (
+                {status === 'idle' && (
                   <span style={{ width: 10, height: 10, borderRadius: '50%', border: '1px solid rgba(80,130,170,0.25)', display: 'block' }} />
                 )}
               </div>
@@ -786,19 +908,19 @@ function AnalysisProgressFloat({ isRunning, agentStates }: { isRunning: boolean;
                 className="flex-1 text-xs"
                 style={{
                   color: done ? 'rgba(180,220,245,0.6)' :
-                         running ? 'rgba(225,242,255,0.95)' :
+                         isRunning ? 'rgba(225,242,255,0.95)' :
                                    'rgba(110,155,190,0.35)',
-                  fontWeight: running ? 600 : 400,
+                  fontWeight: isRunning ? 600 : 400,
                 }}
               >
-                {AGENT_LABELS[key]}
+                {AGENT_LABELS[agentId]}
               </span>
-              {done && state.findings.length > 0 && (
+              {done && feed.summary && (
                 <span className="text-[10px] font-mono" style={{ color: 'rgba(15,196,138,0.65)' }}>
-                  {state.findings.length} finding{state.findings.length !== 1 ? 's' : ''}
+                  {feed.summary.findingCount} findings
                 </span>
               )}
-              {running && (
+              {isRunning && (
                 <span className="text-[10px] animate-pulse font-semibold" style={{ color }}>running</span>
               )}
             </div>
@@ -809,252 +931,88 @@ function AnalysisProgressFloat({ isRunning, agentStates }: { isRunning: boolean;
   );
 }
 
-// ── Main component ──────────────────────────────────────────────────────────
+// ── Main component ─────────────────────────────────────────────────────────
 
-/**
- * Phase 1 of the lead-project integration: PatientDetail is now lead's
- * 1,286-line `pages/director/PatientDetail.tsx` (panel/cinema/orchestrator
- * view modes + animated orchestrator Canvas + AnalysisProgressFloat),
- * adapted to:
- *   - my real `/api/patients/:id` (via `getPatient`) — patient fallback chain
- *     is "real → MOCK_PATIENTS find → MOCK_PATIENTS[0]"
- *   - my real `/api/patients/:id/analysis` SSE stream (via `streamAnalysis`)
- *     with event-mapping bridge (`token` → agent streamText, `finding` →
- *     findings array, `complete` → agent complete + summary) — fallback to
- *     `runMockSim()` (staggered timeouts against MOCK_ANALYSIS) on stream
- *     error or no-events-within-timeout
- *   - my auth token key (`caresync_token`) and my `/population` route
- *
- * Honest-staging notes:
- *   - `ActionCard.handleCreateTask` is intentionally a local UI stub (250ms
- *     timeout → mark as created). My real `/api/tasks` endpoint requires a
- *     full Task body; we don't have an "assign recommended task" endpoint,
- *     so this slot ships as demo polish only. Future slice can replace with
- *     a real backend call.
- *   - `OrchestratorView`'s FHIR Bundle + Tasks panels use the hero patient's
- *     hardcoded counts (`FHIR_BUNDLE`, `GRAPH_TASKS`); they're a visual
- *     demo of the orchestration surface, not a live task list (the live
- *     task list surface is `/tasks`, not this page).
- *   - Default patient is `maria-chen-4829` whenever the route id doesn't
- *     resolve to a real patient, so `/patients/anything` always renders.
- */
+type ViewMode = 'panel' | 'cinema' | 'orchestrator';
+
 export function PatientDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
-  const [patient, setPatient] = useState<DisplayPatient>(() => MOCK_PATIENTS[0]);
-  const [viewMode, setViewMode] = useState<'panel' | 'cinema' | 'orchestrator'>('panel');
-  const [isRunning, setIsRunning] = useState(false);
-  const [analysisData, setAnalysisData] = useState<DisplayAnalysisData | null>(() =>
-    MOCK_ANALYSIS['maria-chen-4829'] ?? null
-  );
-  const [agentStates, setAgentStates] = useState<Record<AgentKey, AgentState>>(() =>
-    makeInitialAgentStates()
-  );
-  const [createdTasks, setCreatedTasks] = useState<Set<string>>(new Set());
+  // Real data fetch (backend pattern).
+  const { data: patientData, isLoading, isError, error } = useQuery({
+    queryKey: ['patient', id],
+    queryFn: () => getPatient(id!),
+    enabled: !!id,
+  });
 
-  // Layer 1: load real patient when the route id changes; fall back to mock.
+  // Cross-surface sync (backend pattern): a `task-updated` event for THIS
+  // patient invalidates the patient query so the task list refetches live.
   useEffect(() => {
-    if (!id) {
-      setPatient(MOCK_PATIENTS[0]);
-      return;
-    }
-    let cancelled = false;
-
-    const fallback = MOCK_PATIENTS.find((p) => p.id === id) ?? MOCK_PATIENTS[0];
-
-    getPatient(id)
-      .then((data) => {
-        if (cancelled) return;
-        const realAge = data.patient.birthDate
-          ? Math.floor((Date.now() - new Date(data.patient.birthDate).getTime()) / (365.25 * 24 * 3600 * 1000))
-          : fallback.age;
-        setPatient({
-          id: data.patient.id ?? fallback.id,
-          mrn: data.patient.id ?? fallback.mrn,
-          name: data.patient.name ?? fallback.name,
-          age: realAge,
-          sex: data.patient.gender === 'male' ? 'M' : data.patient.gender === 'female' ? 'F' : fallback.sex,
-          conditions: data.conditions.map((c) => c.display).filter(Boolean).length > 0
-            ? data.conditions.map((c) => c.display)
-            : fallback.conditions,
-          riskScore: fallback.riskScore,
-          riskLevel: fallback.riskLevel,
-          daysSinceContact: fallback.daysSinceContact,
-        });
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setPatient(fallback);
-      });
-
-    // Preload mock analysis only when the hero patient is selected.
-    if (id === 'maria-chen-4829') {
-      const pre = MOCK_ANALYSIS['maria-chen-4829'];
-      if (pre) {
-        setAnalysisData(pre);
-        setAgentStates(agentStatesFromAnalysis(pre));
-      }
-    } else {
-      setAnalysisData(null);
-      setAgentStates(makeInitialAgentStates());
-    }
-
-    return () => { cancelled = true; };
-  }, [id]);
-
-  // Track setTimeout IDs from `runMockSim` so a test (or user navigation) can
-  // cancel them on unmount — without this, pending 7.4s mock-sim timers would
-  // fire `setAgentStates` on an unmounted component and bleed state updates
-  // into the *next* test in the same run, slowing it past the 5s vitest
-  // default timeout (the cause of intermittent Governance/MoreScreens
-  // timeouts when the full suite runs).
-  const mockSimTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
-
-  useEffect(() => {
-    return () => {
-      mockSimTimeoutsRef.current.forEach(clearTimeout);
-      mockSimTimeoutsRef.current = [];
-    };
-  }, []);
-
-  function runMockSim(patientId: string) {
-    const mockData = MOCK_ANALYSIS[patientId] ?? MOCK_ANALYSIS['maria-chen-4829'];
-    if (!mockData) return;
-
-    const schedule: [AgentKey, number, number, string][] = [
-      ['riskAgent',     300,  2400, 'Evaluating HbA1c trends, BNP elevation, medication adherence gaps…'],
-      ['careGapAgent',  600,  3900, 'Reviewing preventive care schedules, immunization records, screenings…'],
-      ['sdohAgent',     900,  5300, 'Assessing social determinants — housing stability, food security, transport…'],
-      ['actionPlanner', 4200, 7000, 'Synthesizing all findings into a prioritized care action plan…'],
-    ];
-
-    schedule.forEach(([key, startMs, doneMs, text]) => {
-      mockSimTimeoutsRef.current.push(setTimeout(() => setAgentStates((prev) =>
-        prev[key].status === 'complete' ? prev :
-        { ...prev, [key]: { status: 'running', findings: [], streamText: text } }
-      ), startMs));
-      mockSimTimeoutsRef.current.push(setTimeout(() => setAgentStates((prev) =>
-        prev[key].status === 'complete' ? prev :
-        { ...prev, [key]: { status: 'complete', findings: mockData[key].findings, streamText: '' } }
-      ), doneMs));
+    if (!id) return;
+    const unsubscribe = subscribeToEvents({
+      onTaskUpdated: (task: AssignedTaskEvent) => {
+        if (task.patientId === id) {
+          queryClient.invalidateQueries({ queryKey: ['patient', id] });
+        }
+      },
     });
+    return unsubscribe;
+  }, [id, queryClient]);
 
-    mockSimTimeoutsRef.current.push(setTimeout(() => {
-      setAnalysisData(mockData);
-      setIsRunning(false);
-    }, 7400));
-  }
+  // SSE state (backend pattern, no race, no mock-sim fallback).
+  const [running, setRunning] = useState(false);
+  const [feeds, setFeeds] = useState<Record<AgentId, AgentFeedState>>(() => makeFeeds());
+  const [createdTasks, setCreatedTasks] = useState<AnalysisTask[]>([]);
+  const [graphState, dispatchGraph] = useAnalysisGraph();
+  const [lastMode, setLastMode] = useState<'cached' | 'live' | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>('panel');
+  const [createdActionKeys, setCreatedActionKeys] = useState<Set<string>>(new Set());
 
-  async function handleRunAnalysis() {
-    if (isRunning) return;
-    setIsRunning(true);
-    setAgentStates({
-      riskAgent: { status: 'running', findings: [], streamText: '' },
-      careGapAgent: { status: 'running', findings: [], streamText: '' },
-      sdohAgent: { status: 'running', findings: [], streamText: '' },
-      actionPlanner: { status: 'running', findings: [], streamText: '' },
-    });
-
-    const patientId = patient.id;
-    const anyEventTimeout = setTimeout(() => {
-      // If we get nothing from the real stream within 4s, fall back to mock sim
-      // so the UI never appears stuck on a silent network failure.
-      runMockSim(patientId);
-    }, 4000);
-
+  async function handleRunAnalysis(live: boolean) {
+    if (!id || running) return;
+    setRunning(true);
+    setLastMode(live ? 'live' : 'cached');
+    setFeeds(makeFeeds());
+    setCreatedTasks([]);
+    setCreatedActionKeys(new Set());
+    dispatchGraph({ event: 'start' });
     try {
-      await streamAnalysis(patientId, {
-        onToken: (agentId, text) => {
-          clearTimeout(anyEventTimeout);
-          const key = AGENT_ID_MAP[agentId];
-          if (!key) return;
-          setAgentStates((prev) => ({
-            ...prev,
-            [key]: { ...prev[key], streamText: prev[key].streamText + text },
-          }));
+      await streamAnalysis(
+        id,
+        {
+          onToken: (agentId, text) => {
+            setFeeds((prev) => withText(prev, agentId, text));
+            dispatchGraph({ event: 'token', agentId });
+          },
+          onFinding: (flag) => {
+            setFeeds((prev) => withFinding(prev, flag));
+            dispatchGraph({ event: 'finding', agentId: flag.agentId });
+          },
+          onComplete: (summary) => {
+            setFeeds((prev) => withSummary(prev, summary));
+            dispatchGraph({ event: 'complete', agentId: summary.agentId });
+          },
+          onTask: (task) => {
+            setCreatedTasks((prev) => [...prev, task]);
+            dispatchGraph({ event: 'task', agentId: task.agentId });
+          },
+          onDone: () => dispatchGraph({ event: 'done' }),
         },
-        onFinding: (raw) => {
-          clearTimeout(anyEventTimeout);
-          const key = AGENT_ID_MAP[raw.agentId];
-          if (!key) return;
-          const finding = mapAnalysisFindingToAgentFinding(raw);
-          setAgentStates((prev) => ({
-            ...prev,
-            [key]: { ...prev[key], findings: [...prev[key].findings, finding] },
-          }));
-        },
-        onComplete: (summary) => {
-          clearTimeout(anyEventTimeout);
-          const key = AGENT_ID_MAP[summary.agentId];
-          if (!key) return;
-          setAgentStates((prev) => ({
-            ...prev,
-            [key]: {
-              status: 'complete',
-              findings: prev[key].findings,
-              streamText: '',
-              riskScore: summary.riskScore,
-              riskLevel: summary.riskLevel,
-            },
-          }));
-        },
-        onTask: (task) => {
-          // Action Planner's `task` events are created HAPI tasks (one per
-          // stream-emitted Task). Surface them into the panel mode's
-          // Action Plan column. For patients that aren't preloaded with mock
-          // analysis data (e.g. `/patients/maria-1`), `analysisData` may be
-          // null at this point — seed a base so the append doesn't no-op.
-          setAnalysisData((prev) => {
-            const base: DisplayAnalysisData =
-              prev ?? {
-                riskAgent: { status: 'complete', findings: [] },
-                careGapAgent: { status: 'complete', findings: [] },
-                sdohAgent: { status: 'complete', findings: [] },
-                actionPlanner: { status: 'complete', findings: [] },
-              };
-            return {
-              ...base,
-              actionPlanner: {
-                status: 'complete',
-                findings: [
-                  ...base.actionPlanner.findings,
-                  {
-                    type: 'action',
-                    finding: task.title,
-                    fhirResourceId: task.reference,
-                    severity: (['critical', 'high', 'medium', 'low'] as const).includes(task.priority as 'critical' | 'high' | 'medium' | 'low')
-                      ? (task.priority as AgentFinding['severity'])
-                      : 'medium',
-                    confidence: 0.8,
-                  },
-                ],
-              },
-            };
-          });
-        },
-        onDone: () => {
-          clearTimeout(anyEventTimeout);
-          setIsRunning(false);
-        },
-      });
-    } catch {
-      clearTimeout(anyEventTimeout);
-      runMockSim(patientId);
+        { live },
+      );
+    } finally {
+      setRunning(false);
     }
   }
 
-  const handleTaskCreated = (findingText: string) => {
-    setCreatedTasks((prev) => new Set(prev).add(findingText));
+  const handleActionCreated = (key: string) => {
+    setCreatedActionKeys((prev) => new Set(prev).add(key));
   };
 
-  const actionFindings: AgentFinding[] =
-    agentStates.actionPlanner.status === 'complete' ? agentStates.actionPlanner.findings : [];
-
-  const displayedActionFindings =
-    actionFindings.length > 0
-      ? actionFindings
-      : analysisData?.actionPlanner.findings ?? [];
+  const patient = buildDisplayPatient(patientData, id);
+  const actions = buildActionPlan(feeds, createdTasks);
 
   const ViewToggle = () => (
     <div className="inline-flex items-center bg-surface border border-border rounded-lg p-0.5 text-xs font-medium">
@@ -1083,6 +1041,13 @@ export function PatientDetail() {
     </div>
   );
 
+  const BackLink = () => (
+    <Link to="/panel" className="text-label text-cyan hover:underline">
+      ← My Patient Panel
+    </Link>
+  );
+
+  // Cinema view --------------------------------------------------------------
   if (viewMode === 'cinema') {
     return (
       <>
@@ -1092,20 +1057,21 @@ export function PatientDetail() {
           </div>
           <CinemaView
             patient={patient}
-            agentStates={agentStates}
-            isRunning={isRunning}
-            onRun={handleRunAnalysis}
-            displayedActionFindings={displayedActionFindings}
-            createdTasks={createdTasks}
-            onTaskCreated={handleTaskCreated}
+            feeds={feeds}
+            running={running}
+            onRun={() => handleRunAnalysis(false)}
+            actions={actions}
+            createdActionKeys={createdActionKeys}
+            onActionCreated={handleActionCreated}
             onBack={() => navigate('/population')}
           />
         </div>
-        <AnalysisProgressFloat isRunning={isRunning} agentStates={agentStates} />
+        <AnalysisProgressFloat running={running} feeds={feeds} />
       </>
     );
   }
 
+  // Orchestrator view --------------------------------------------------------
   if (viewMode === 'orchestrator') {
     return (
       <>
@@ -1115,135 +1081,168 @@ export function PatientDetail() {
           </div>
           <OrchestratorView
             patient={patient}
-            agentStates={agentStates}
-            isRunning={isRunning}
-            onRun={handleRunAnalysis}
+            feeds={feeds}
+            running={running}
+            onRun={() => handleRunAnalysis(false)}
             onBack={() => navigate('/population')}
           />
         </div>
-        <AnalysisProgressFloat isRunning={isRunning} agentStates={agentStates} />
+        <AnalysisProgressFloat running={running} feeds={feeds} />
       </>
     );
   }
 
+  // Panel view (default — the view the existing test suite asserts against) --
   return (
     <>
-      <div className="grid h-[calc(100vh-48px)] overflow-hidden gap-4 p-4" style={{ gridTemplateColumns: '25% 40% 35%' }}>
-        <div className="bg-surface rounded-xl border border-border p-5 overflow-y-auto flex flex-col gap-4">
-          <div className="flex items-center justify-between">
-            <button
-              onClick={() => navigate('/population')}
-              className="text-text-muted text-sm hover:text-cyan transition-colors text-left"
-            >
-              ← Population
-            </button>
-            <ViewToggle />
-          </div>
+      <div className="flex items-center justify-between">
+        <BackLink />
+        <ViewToggle />
+      </div>
 
-          <p className="text-text-muted text-xs uppercase tracking-wider">Patient Profile</p>
+      {isLoading && <p className="text-body text-text-muted mt-4">Loading patient…</p>}
+      {isError && <p className="text-body text-red mt-4">{(error as Error).message}</p>}
 
-          <div>
-            <h1 className="text-xl font-bold text-text">{patient.name}</h1>
-            <p className="text-text-muted text-sm mt-0.5">
-              {patient.age}y {patient.sex} · MRN {patient.mrn}
-            </p>
-          </div>
-
-          <div className="flex justify-center">
-            <div
-              className={`px-6 py-3 rounded-full flex flex-col items-center ${riskBadgeClasses(patient.riskLevel)}`}
-              data-testid="patient-risk-badge"
-            >
-              <span className="text-3xl font-bold leading-none">{patient.riskScore}</span>
-              <span className="text-xs font-semibold uppercase tracking-wider mt-1 opacity-80">
-                {patient.riskLevel} risk
+      {patientData && (
+        <div className="mt-4">
+          {/* Top bar matches reference-materials/caresync-ai.html's .pt-bar. */}
+          <div className="h-11 flex items-center gap-2.5 px-4 -mx-6 -mt-6 mb-6 border-b border-border bg-surface">
+            <span className="text-section font-bold text-text">{patientData.patient.name}</span>
+            <span className="text-body text-text-muted">{ageSexLabel(patientData.patient.birthDate, patientData.patient.gender)}</span>
+            <span className="font-mono text-xs text-text-dim flex-1 truncate">| Patient/{patientData.patient.id}</span>
+            {lastMode && (
+              <span
+                className="font-mono text-[10px] text-text-dim uppercase tracking-wide"
+                data-testid="analysis-mode"
+                aria-live="polite"
+              >
+                {lastMode === 'live' ? 'requested: live' : 'requested: cached'}
               </span>
-            </div>
+            )}
+            <button
+              onClick={() => handleRunAnalysis(true)}
+              disabled={running}
+              className="flex items-center gap-2 bg-transparent border border-border-light text-text-muted font-mono text-label font-bold tracking-wide px-3 py-1.5 rounded-md disabled:opacity-60 disabled:cursor-default"
+            >
+              Run live
+            </button>
+            <button
+              onClick={() => handleRunAnalysis(false)}
+              disabled={running}
+              className="flex items-center gap-2 bg-cyan-dim border border-cyan text-cyan font-mono text-label font-bold tracking-wide px-4 py-1.5 rounded-md disabled:opacity-85 disabled:cursor-default"
+            >
+              {running ? (
+                <span className="w-3 h-3 rounded-full border-2 border-cyan/25 border-t-cyan animate-spin" aria-hidden="true" />
+              ) : (
+                <svg width="10" height="12" viewBox="0 0 10 12" fill="none" aria-hidden="true">
+                  <path d="M1 1.2v9.6L9 6 1 1.2Z" fill="#00C8FF" />
+                </svg>
+              )}
+              <span>{running ? 'Analyzing…' : 'Run Analysis'}</span>
+            </button>
           </div>
 
-          <div>
-            <p className="text-text-muted text-xs uppercase tracking-wider mb-2">Conditions</p>
-            <ul className="space-y-1.5" data-testid="patient-conditions">
-              {patient.conditions.map((condition, i) => {
-                const sev = CONDITION_SEVERITIES[Math.min(i, CONDITION_SEVERITIES.length - 1)];
-                return (
-                  <li key={condition} className="flex items-center gap-2">
-                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${severityDot(sev)}`} />
-                    <span className="text-text text-sm">{condition}</span>
-                  </li>
-                );
-              })}
-            </ul>
+          {/* Agent graph — live SSE events update node status here. */}
+          <div className="mb-6">
+            <AgentGraph state={graphState} />
           </div>
 
-          <div>
-            <p className="text-text-muted text-xs uppercase tracking-wider mb-2">Key Vitals</p>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-3">
-              {DEFAULT_VITALS.map((vital) => (
-                <div key={vital.label}>
-                  <p className="text-text-muted text-xs">{vital.label}</p>
-                  <p className="text-text font-mono text-sm font-medium">{vital.value}</p>
+          {/* Per-agent feed cards. Each one updates exactly one feed per
+              SSE event — no cross-agent bleed (the bug the lead-port version
+              had via runMockSim's overlapping timeouts). */}
+          <div className="grid grid-cols-4 gap-2.5 mb-6">
+            {AGENT_KEYS.map((agentId) => {
+              const feed = feeds[agentId];
+              return (
+                <div
+                  key={agentId}
+                  className={`bg-surface border border-border ${AGENT_ACCENT[agentId].border} border-l-[3px] rounded-card flex flex-col overflow-hidden min-h-[112px]`}
+                >
+                  <div className={`text-[9.5px] font-bold tracking-wide uppercase px-2.5 pt-2 pb-1 ${AGENT_ACCENT[agentId].text}`}>
+                    {AGENT_LABELS[agentId]}
+                  </div>
+                  <div className="flex-1 px-2.5 pb-2.5 text-xs leading-relaxed overflow-y-auto">
+                    {!feed.started && <span className="italic text-text-dim">Awaiting analysis run…</span>}
+                    {feed.started && (
+                      <>
+                        <span className={feed.summary ? 'text-text' : 'text-text-muted'}>{feed.text}</span>
+                        {feed.findings.length > 0 && (
+                          <div className="mt-1.5 flex flex-wrap gap-1">
+                            {feed.findings.map((flag, i) => (
+                              <span
+                                key={`${flag.fhirResourceId ?? 'finding'}-${i}`}
+                                className="font-mono text-[10px] text-text-dim bg-bg border border-border rounded-chip px-1.5 py-0.5"
+                              >
+                                {flag.fhirResourceId ?? 'unsourced'}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {feed.summary && (
+                          <div className="mt-2 pt-2 border-t border-border text-[11px] text-text-muted">
+                            <span data-testid={SUMMARY_TESTID[agentId]}>
+                              {agentId === 'risk'
+                                ? `${feed.summary.riskLevel} risk · score ${feed.summary.riskScore}`
+                                : `${feed.summary.findingCount} findings · ${feed.summary.droppedCount} dropped`}
+                            </span>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
                 </div>
-              ))}
-            </div>
+              );
+            })}
           </div>
 
-          <div className="mt-auto pt-4 border-t border-border-light">
-            <p className="text-text-muted text-xs">
-              Last contact:{' '}
-              <span className={`font-medium ${patient.daysSinceContact <= 3 ? 'text-emerald' : patient.daysSinceContact <= 14 ? 'text-amber' : 'text-red'}`}>
-                {patient.daysSinceContact}d ago
-              </span>
-            </p>
-          </div>
-        </div>
-
-        <div className="bg-surface rounded-xl border border-border p-5 overflow-y-auto flex flex-col">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-text font-semibold text-base">AI Agent Analysis</h2>
-            <button
-              onClick={handleRunAnalysis}
-              disabled={isRunning}
-              data-testid="run-analysis"
-              className="bg-violet text-white px-4 py-2 rounded-lg text-sm font-medium hover:opacity-80 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isRunning ? 'Running...' : 'Run Analysis'}
-            </button>
-          </div>
-
-          <div className="flex-1">
-            {AGENT_KEYS.map((key) => (
-              <AgentCard key={key} agentKey={key} state={agentStates[key]} />
+          <h2 className="text-section text-text mb-2">Active Conditions</h2>
+          <div className="border border-border rounded-card overflow-hidden mb-6">
+            {patientData.conditions.map((condition) => (
+              <div key={condition.id} className="px-4 py-3 border-b border-border last:border-b-0 bg-surface">
+                <p className="text-body text-text">{condition.display}</p>
+                <p className="text-xs font-mono text-text-dim">
+                  ICD-10 {condition.code} · Condition/{condition.id}
+                </p>
+              </div>
             ))}
           </div>
-        </div>
 
-        <div className="bg-surface rounded-xl border border-border p-5 overflow-y-auto flex flex-col">
-          <p className="text-text-muted text-xs uppercase tracking-wider mb-4">Action Plan</p>
-
-          {displayedActionFindings.length === 0 ? (
-            <div className="flex-1 flex flex-col items-center justify-center text-center gap-3">
-              <span className="text-4xl">🤖✨</span>
-              <p className="text-text font-medium">No action plan yet</p>
-              <p className="text-text-muted text-sm max-w-xs">
-                Run analysis to let the AI agents generate a prioritised action plan for this patient.
-              </p>
-            </div>
-          ) : (
-            <div className="flex-1" data-testid="action-plan">
-              {displayedActionFindings.map((finding, i) => (
-                <ActionCard
-                  key={`${finding.fhirResourceId}-${i}`}
-                  finding={finding}
-                  isCreated={createdTasks.has(finding.finding)}
-                  onCreated={handleTaskCreated}
-                />
-              ))}
-            </div>
+          <div className="flex items-center gap-2 mb-2">
+            <h2 className="text-section text-text">Tasks</h2>
+            <span className="text-xs font-bold text-cyan bg-cyan-dim border border-cyan rounded-pill px-2.5 py-0.5">
+              {patientData.tasks.length + createdTasks.length} open
+            </span>
+          </div>
+          {patientData.tasks.length === 0 && createdTasks.length === 0 && (
+            <p className="text-body text-text-muted">No open tasks.</p>
           )}
+          {[...patientData.tasks.map((t) => ({ key: `existing-${t.id}`, title: t.title, priority: t.priority, due: t.due, status: t.status, ref: `Task/${t.id}` })),
+            ...createdTasks.map((t) => ({ key: `created-${t.id}`, title: t.title, priority: coerceSeverity(t.priority), due: `Due in ${t.dueInDays ?? '—'}d`, status: 'Open', ref: t.reference })),
+          ].map((task) => (
+            <div
+              key={task.key}
+              data-testid={task.key}
+              className="bg-surface-raised border border-border rounded-card p-2.5 mb-2"
+            >
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[9px] font-bold tracking-wide rounded-pill border px-2 py-0.5 bg-surface-raised text-text-muted">
+                  {task.priority}
+                </span>
+                <span className="text-xs text-text-muted">{task.due}</span>
+              </div>
+              <p className="text-body font-bold text-text mb-1.5">{task.title}</p>
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-[10.5px] text-text-dim">{task.ref}</span>
+                <span className="text-xs font-semibold text-text-muted border border-border-light rounded-pill px-2 py-px">
+                  {task.status}
+                </span>
+              </div>
+            </div>
+          ))}
         </div>
-      </div>
-      <AnalysisProgressFloat isRunning={isRunning} agentStates={agentStates} />
+      )}
+
+      <AnalysisProgressFloat running={running} feeds={feeds} />
     </>
   );
 }

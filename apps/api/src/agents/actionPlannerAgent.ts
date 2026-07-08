@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { ActionPlannerOutput, AgentEvent, CareGapOutput, RiskOutput, SdohOutput } from './agent';
+import { MOCK_ACTION_PLANNER_OUTPUT } from './mock-outputs';
 
 // Re-exported for parity with the other agents — the shared Agent contract owns
 // these types (see ./agent.ts).
@@ -121,10 +122,34 @@ function buildPrompt(inputs: { risk: RiskOutput; careGap: CareGapOutput; sdoh: S
  * inject a fake and avoid any live network/API call (and avoid ever
  * constructing the real client at all).
  */
+async function* streamMockActionPlanner(
+  inputs: { risk: RiskOutput; careGap: CareGapOutput; sdoh: SdohOutput }
+): AsyncIterable<AgentEvent> {
+  yield {
+    type: 'token',
+    agentId: 'actionPlanner',
+    text:
+      '[demo fallback — OPENAI_API_KEY is unset] Synthesizing the three upstream findings into a prioritized worklist. ' +
+      'Tasks are flagged with their care-domain (clinical/sdoh) and assignee.',
+  };
+  yield { type: 'result', agentId: 'actionPlanner', output: MOCK_ACTION_PLANNER_OUTPUT };
+  void inputs;
+}
+
 export async function* runActionPlannerAgent(
   inputs: { risk: RiskOutput; careGap: CareGapOutput; sdoh: SdohOutput },
-  client = getOpenAiClient()
+  client?: OpenAI
 ): AsyncIterable<AgentEvent> {
+  // S12 B.1 — fallback path activates only when no client was injected AND
+  // the OpenAI key is missing (see riskAgent.ts for the rationale).
+  if (!client) {
+    if (!process.env.OPENAI_API_KEY) {
+      yield* streamMockActionPlanner(inputs);
+      return;
+    }
+    client = getOpenAiClient();
+  }
+
   const stream = await client.responses.create({
     model: MODEL,
     input: buildPrompt(inputs),

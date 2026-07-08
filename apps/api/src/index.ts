@@ -11,6 +11,8 @@ import { createQualityRouter } from './routes/quality';
 import { createTeamRouter } from './routes/team';
 import { createTasksRouter } from './routes/tasks';
 import { createSdohRouter } from './routes/sdoh';
+import { createCarePlansRouter } from './routes/carePlans';
+import { createAlertsRouter } from './routes/alerts';
 import { createEventsRouter, createSubscriptionWebhookRouter } from './routes/events';
 import { createEventHub } from './routes/eventHub';
 import { createCdsHooksRouter } from './routes/cdsHooks';
@@ -37,6 +39,16 @@ app.use(express.urlencoded({ extended: true }));
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
+});
+
+// S12 A.1 — global error handler. Must be LAST in the middleware chain (after
+// all routes), so any uncaught throw that escapes a route handler hits this.
+// Mirrors the lead project's index.ts:75-78 shape; guarantees a consistent
+// JSON `{error}` envelope on otherwise-unhandled failures so clients never see
+// Express's default HTML error page.
+app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error('[unhandled]', err);
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 if (require.main === module) {
@@ -70,6 +82,10 @@ if (require.main === module) {
   app.use('/api/tasks', createTasksRouter(fhirService));
   // S11 A1 — SDOH community resource directory + audited referral (M05).
   app.use('/api/sdoh', createSdohRouter(fhirService));
+  // S12 C.2 — `POST /api/care-plans/:patientId` for the Care Plan Builder.
+  app.use('/api/care-plans', createCarePlansRouter(fhirService));
+  // S12 B.2 — clinical alerts derived from real FHIR risk profiles.
+  app.use('/api/alerts', createAlertsRouter(fhirService, db));
   // S11 A2 — Director-only Quality/HEDIS measure aggregate (W05/W07).
   app.use('/api/quality', createQualityRouter(fhirService, db));
   // S11 A3 — Director-only team performance aggregate (W04).

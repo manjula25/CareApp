@@ -1,24 +1,14 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
+import { getAlerts, type AlertEntry } from '../api/client';
+import { DemoFallbackBadge } from '../components/DemoFallbackBadge';
 
-type Severity = 'critical' | 'high' | 'medium' | 'low';
-type AlertCategory = 'clinical' | 'medication' | 'sdoh' | 'gap';
+type Severity = AlertSeverity;
+type AlertCategory = AlertEntry['category'];
 
-interface Alert {
-  id: string;
-  severity: Severity;
-  category: AlertCategory;
-  patientId: string;
-  patientName: string;
-  title: string;
-  detail: string;
-  fhirRef: string;
-  time: string;
-  acknowledged: boolean;
-}
-
-const MOCK_ALERTS: Alert[] = [
+const MOCK_ALERTS: AlertEntry[] = [
   {
     id: 'a1', severity: 'critical', category: 'clinical',
     patientId: 'maria-chen-4829', patientName: 'Maria Chen',
@@ -99,9 +89,23 @@ const CATEGORIES: { label: string; value: AlertCategory | 'all' }[] = [
   { label: '🏘 SDOH', value: 'sdoh' },
 ];
 
+/** Real alerts endpoint — derives from FHIR RiskAssessment + Encounter recency. */
+async function fetchAlerts(): Promise<AlertEntry[]> {
+  return getAlerts();
+}
+
 export default function AlertsPage() {
   const navigate = useNavigate();
-  const [alerts, setAlerts] = useState<Alert[]>(MOCK_ALERTS);
+  // Real implementation is primary. `MOCK_ALERTS` is a SAFETY NET only —
+  // kicks in when the API errors AND we have no real data, surfaced via
+  // the `DemoFallbackBadge`. Same pattern as TaskQueue.tsx.
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['alerts'],
+    queryFn: fetchAlerts,
+    retry: 1,
+  });
+  const isUsingFallback = isError;
+  const alerts: AlertEntry[] = isError ? MOCK_ALERTS : (data ?? []);
   const [categoryFilter, setCategoryFilter] = useState<AlertCategory | 'all'>('all');
   const [showAcknowledged, setShowAcknowledged] = useState(false);
 
@@ -134,14 +138,17 @@ export default function AlertsPage() {
             )}
           </p>
         </div>
-        {unackCount > 0 && (
-          <button
-            onClick={acknowledgeAll}
-            className="px-4 py-2 rounded-lg border border-border text-text-muted text-sm hover:border-border-light transition-colors"
-          >
-            Acknowledge all
-          </button>
-        )}
+        <div className="flex items-center gap-3">
+          {isUsingFallback && <DemoFallbackBadge />}
+          {unackCount > 0 && !isUsingFallback && (
+            <button
+              onClick={acknowledgeAll}
+              className="px-4 py-2 rounded-lg border border-border text-text-muted text-sm hover:border-border-light transition-colors"
+            >
+              Acknowledge all
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-2 mb-4">

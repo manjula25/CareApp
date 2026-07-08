@@ -72,3 +72,45 @@ describe('GET /api/quality/measures', () => {
     expect(res.status).toBe(401);
   });
 });
+
+// S12 A.4 — `/api/quality/deadlines` returns the upcoming HEDIS calendar with
+// a runtime-computed `daysRemaining`. Static source data + pure date math;
+// no HAPI round-trip, so the test runs without the FHIR server.
+describe('GET /api/quality/deadlines', () => {
+  let db: Database.Database;
+  let app: express.Express;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    migrate(db);
+    seedDemoUsers(db);
+    app = buildApp(db);
+  });
+
+  it('returns three deadlines with computed daysRemaining for a Director', async () => {
+    const token = await loginAs(app, 'director@caresync.demo');
+    const res = await request(app).get('/api/quality/deadlines').set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.deadlines).toHaveLength(3);
+    for (const d of res.body.deadlines) {
+      expect(d).toMatchObject({
+        measure: expect.any(String),
+        dueDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+        daysRemaining: expect.any(Number),
+      });
+      expect(d.daysRemaining).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('is denied for a Coordinator', async () => {
+    const token = await loginAs(app, 'coordinator@caresync.demo');
+    const res = await request(app).get('/api/quality/deadlines').set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(403);
+  });
+
+  it('requires auth', async () => {
+    const res = await request(app).get('/api/quality/deadlines');
+    expect(res.status).toBe(401);
+  });
+});

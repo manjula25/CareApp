@@ -120,4 +120,37 @@ describe('sdoh routes', () => {
       createdServiceRequestIds.push(res.body.id);
     });
   });
+
+  // S12 A.5 — `/api/sdoh/screening/:patientId` returns QuestionnaireResponse
+  // resources on the patient record. Maria Chen (no screening on file in the
+  // default seed) → empty array + screeningFound:false. Live HAPI-dependent;
+  // the empty-shape contract is what matters here, not exact counts.
+  describe('GET /api/sdoh/screening/:patientId', () => {
+    it('requires auth', async () => {
+      const res = await request(app).get('/api/sdoh/screening/maria-chen');
+      expect(res.status).toBe(401);
+    });
+
+    it('returns screeningFound:false and empty responses for a patient with no screening on file', async () => {
+      const token = await loginAs(app, 'socialworker@caresync.demo');
+      const res = await request(app)
+        .get('/api/sdoh/screening/maria-chen')
+        .set('Authorization', `Bearer ${token}`);
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        patientId: 'maria-chen',
+        screeningFound: false,
+      });
+      expect(res.body.responses).toEqual([]);
+    }, 20000);
+
+    it('returns the same shape for a director (sdoh domain accessible to director too)', async () => {
+      const token = await loginAs(app, 'director@caresync.demo');
+      const res = await request(app)
+        .get('/api/sdoh/screening/maria-chen')
+        .set('Authorization', `Bearer ${token}`);
+      expect(res.status).toBe(200);
+      expect(res.body.patientId).toBe('maria-chen');
+    }, 20000);
+  });
 });

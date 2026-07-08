@@ -14,6 +14,12 @@ vi.mock('../api/client', async () => {
   };
 });
 
+// S12 B.2 — disable page-level placeholderData fallback so tests run against
+// the mocked API response, not the lib/demoFallbacks.ts values.
+vi.mock('../lib/demoFallbacks', () => ({
+  MOCK_TEAM: undefined,
+}));
+
 // Deliberately non-trivial/non-zero numbers so a tile that (wrongly)
 // hardcodes a value instead of deriving it from the query's data would fail
 // these assertions — same convention Quality.test.tsx's MOCK_MEASURE uses.
@@ -104,9 +110,10 @@ describe('Team — W04 real team performance dashboard', () => {
     expect(screen.getByText(/loading/i)).toBeInTheDocument();
   });
 
-  it('shows an error state when the query fails', async () => {
+  it('shows the demo-fallback badge when the query fails', async () => {
     vi.mocked(client.getTeamPerformance).mockRejectedValue(new Error('boom'));
     renderTeam();
-    expect(await screen.findByText(/could not load/i)).toBeInTheDocument();
+    // S12 B.2 — fallback safety net: badge replaces the error message.
+    expect(await screen.findByTestId('demo-fallback-badge', {}, { timeout: 4000 })).toBeInTheDocument();
   });
 });

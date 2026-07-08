@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-"scripts": {
+  "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
@@ -13,12 +13,11 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.2",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.4.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.30.4",
-    "zustand": "^5.0.1",
-    "clsx": "^2.1.1",
-    "date-fns": "^4.1.0"
+    "react-router-dom": "^6.30.4"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

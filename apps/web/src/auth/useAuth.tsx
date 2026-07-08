@@ -1,5 +1,5 @@
-import { createContext, type ReactNode, useContext, useMemo, useState, useCallback } from 'react';
-import { login as apiLogin } from '../api/client';
+import { createContext, type ReactNode, useContext, useMemo, useState, useCallback, useEffect } from 'react';
+import { login as apiLogin, AUTH_LOGOUT_EVENT } from '../api/client';
 
 export type Role = 'director' | 'coordinator' | 'social_worker';
 
@@ -46,6 +46,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     localStorage.removeItem(TOKEN_KEY);
     setToken(null);
+  }, []);
+
+  // apiFetch fires `caresync:auth-logout` on a 401 response. Subscribe so
+  // the React state matches the cleared localStorage; otherwise App.tsx's
+  // `<Navigate to="/login">` guard never re-evaluates and the user stays
+  // stuck on the page with `user` still set to the stale decoded payload.
+  useEffect(() => {
+    function handleLogout() {
+      setToken(null);
+    }
+    window.addEventListener(AUTH_LOGOUT_EVENT, handleLogout);
+    return () => window.removeEventListener(AUTH_LOGOUT_EVENT, handleLogout);
   }, []);
 
   const user = useMemo(() => (token ? decodeUser(token) : null), [token]);

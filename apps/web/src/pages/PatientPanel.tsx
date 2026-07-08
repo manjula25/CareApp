@@ -6,7 +6,7 @@ import { ageSexLabel, riskDotColor, RISK_DOT_CLASS } from '../lib/patient';
 import { FilterIcon, ChevronRightIcon } from '../icons';
 
 export function PatientPanel() {
-  const { data, isLoading, isError } = useQuery({ queryKey: ['assigned-panel'], queryFn: getAssignedPanel });
+  const { data, isLoading, isError, error } = useQuery({ queryKey: ['assigned-panel'], queryFn: getAssignedPanel });
   const [query, setQuery] = useState('');
 
   const filtered = useMemo(() => {
@@ -33,7 +33,11 @@ export function PatientPanel() {
       />
 
       {isLoading && <p className="text-body text-text-muted">Loading panel…</p>}
-      {isError && <p className="text-body text-red">Could not load your patient panel.</p>}
+      {isError && (
+        <p className="text-body text-red" data-testid="patient-panel-error">
+          Could not load your patient panel — {(error as Error)?.message ?? 'unknown error'}
+        </p>
+      )}
 
       {data && (
         <div className="border border-border rounded-card overflow-hidden bg-surface">

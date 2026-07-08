@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { getAuditTrail, getModelPerformance, getParityMetrics, getEvalSummary } from '../api/client';
+import { DemoFallbackBadge } from '../components/DemoFallbackBadge';
+import { MOCK_AUDIT_TRAIL, MOCK_MODEL_PERFORMANCE, MOCK_PARITY } from '../lib/demoFallbacks';
 import { averageConfidence } from '../lib/confidenceChartGeometry';
 import { buildParityAxes } from '../lib/parityScore';
 import { ConfidenceChart } from '../components/ConfidenceChart';
@@ -110,25 +112,38 @@ function EvalSummaryContent({ summary }: { summary: unknown }) {
 export function Governance() {
   const [offset, setOffset] = useState(0);
 
+  // Real implementation is primary. `MOCK_*` are SAFETY NETS only — they
+  // fire when a query has errored AND we have no real data. The
+  // `DemoFallbackBadge` makes the fallback visible. The audit query uses
+  // `keepPreviousData` for pagination UX (the previous page should stay
+  // mounted while the next offset's page is in flight), which is unrelated
+  // to the demo fallback.
   const auditQuery = useQuery({
     queryKey: ['governance-audit', offset],
     queryFn: () => getAuditTrail(AUDIT_PAGE_LIMIT, offset),
-    // Keeps the previously-loaded page (and the Prev/Next controls) mounted
-    // while a new offset's page is in flight, instead of falling back to the
-    // page-level loading state on every click — pagination should feel like
-    // paging, not a full reload.
     placeholderData: keepPreviousData,
+    retry: 1,
   });
-  const modelQuery = useQuery({ queryKey: ['governance-model'], queryFn: getModelPerformance });
-  const parityQuery = useQuery({ queryKey: ['governance-parity'], queryFn: getParityMetrics });
+  const modelQuery = useQuery({
+    queryKey: ['governance-model'],
+    queryFn: getModelPerformance,
+    retry: 1,
+  });
+  const parityQuery = useQuery({
+    queryKey: ['governance-parity'],
+    queryFn: getParityMetrics,
+    retry: 1,
+  });
   const evalQuery = useQuery({ queryKey: ['governance-eval'], queryFn: getEvalSummary });
 
   const isLoading = auditQuery.isLoading || modelQuery.isLoading || parityQuery.isLoading;
   const isError = auditQuery.isError || modelQuery.isError || parityQuery.isError;
+  const isUsingFallback = isError || auditQuery.isError;
 
-  const audit = auditQuery.data;
-  const model = modelQuery.data;
-  const parity = parityQuery.data;
+  // Real data wins; mock fires only on error.
+  const audit = auditQuery.isError ? MOCK_AUDIT_TRAIL : auditQuery.data;
+  const model = modelQuery.isError ? MOCK_MODEL_PERFORMANCE : modelQuery.data;
+  const parity = parityQuery.isError ? MOCK_PARITY : parityQuery.data;
 
   const avgConfidence = model ? averageConfidence(model.confidenceDistribution) : undefined;
   const flaggedCount = model?.confidenceDistribution.find((b) => b.range === LOWEST_CONFIDENCE_BUCKET)?.count ?? 0;
@@ -136,8 +151,11 @@ export function Governance() {
   const avgParity = parityAxes.length > 0 ? parityAxes.reduce((sum, a) => sum + a.value, 0) / parityAxes.length : undefined;
 
   return (
-    <div>
-      <h1 className="text-section text-text font-bold mb-4">AI Governance Center</h1>
+    <div className="px-6 py-6">
+      <div className="flex items-center gap-3 mb-4">
+        <h1 className="text-section text-text font-bold">AI Governance Center</h1>
+        {isUsingFallback && <DemoFallbackBadge />}
+      </div>
 
       {isLoading && <p className="text-body text-text-muted">Loading governance data…</p>}
       {isError && <p className="text-body text-red">Could not load the governance dashboard.</p>}

@@ -128,3 +128,59 @@ export async function getPopulationSummary(
     teamKpis: { criticalZonePatients: criticalZoneCount, totalPatients: profiles.length },
   };
 }
+
+// --- risk-distribution bucket ----------------------------------------------
+//
+// S12 A.3 — `GET /api/population/risk-distribution` returns one bucket per
+// level (critical/high/medium/low) with the count of patients whose
+// `riskScore` falls into that range. Critical threshold (75) is the same
+// `CRITICAL_RISK_THRESHOLD` already used by PopulationSummary's
+// criticalZoneCount and the population scatter's critical zone — the rest of
+// the buckets are added here with deliberately non-overlapping cutoffs so a
+// patient always lands in exactly one bucket.
+const HIGH_RISK_THRESHOLD = 60;
+const MEDIUM_RISK_THRESHOLD = 40;
+
+export type RiskLevel = 'critical' | 'high' | 'medium' | 'low';
+
+export interface RiskDistributionBucket {
+  level: RiskLevel;
+  count: number;
+}
+
+function bucketFor(riskScore: number): RiskLevel {
+  if (riskScore >= CRITICAL_RISK_THRESHOLD) return 'critical';
+  if (riskScore >= HIGH_RISK_THRESHOLD) return 'high';
+  if (riskScore >= MEDIUM_RISK_THRESHOLD) return 'medium';
+  return 'low';
+}
+
+// Exported for the unit test in service.test.ts — the pure bucketing function
+// is the only deterministic piece of the risk-distribution pipeline (the rest
+// of it is a live HAPI read), so testing it standalone keeps the contract
+// tight without a HAPI dependency.
+export const _testing = { bucketFor };
+
+export async function getRiskDistribution(
+  actor: AuthTokenPayload,
+  fhirService: FhirReadService,
+  db: Database.Database
+): Promise<RiskDistributionBucket[]> {
+  assertDirector(actor, db, 'Population/risk-distribution');
+  const profiles = await fhirService.getPopulationRiskProfile(actor);
+
+  const counts: Record<RiskLevel, number> = { critical: 0, high: 0, medium: 0, low: 0 };
+  for (const profile of profiles) {
+    counts[bucketFor(profile.riskScore)] += 1;
+  }
+
+  // Always return all four buckets, even when a level has zero patients, so
+  // the bar chart renders a stable x-axis. Order matches critical→low so a
+  // sorted chart doesn't need re-sorting client-side.
+  return [
+    { level: 'critical', count: counts.critical },
+    { level: 'high', count: counts.high },
+    { level: 'medium', count: counts.medium },
+    { level: 'low', count: counts.low },
+  ];
+}
