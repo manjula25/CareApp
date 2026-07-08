@@ -195,6 +195,14 @@ function renderMarkdown(labels: LabelRow[], run: EvalRunResult, metrics: Metrics
       'fill in later to upgrade this baseline without any code change. Do not present these numbers as clinician-reviewed.'
   );
   lines.push('');
+  lines.push(
+    '**Status (S13):** Risk-agent prompts now include an explicit clinical rubric (≥2 of {multi-condition comorbidity, recent inpatient ' +
+      'discharge ≤30d, abnormal labs: BNP>200, HbA1c>9.0, eGFR<30}) that mirrors `fhir-data/population.ts:127-134` `riskScoreFor()` ≥ 75. ' +
+      'The Risk-specificity and PPV numbers below reflect that alignment with the synthetic ground truth, not with a real clinical ' +
+      'reference standard. See `docs/plans/caresync-ai/design-risk-calibration.md` §2 D3 / §3 for the calibration rationale. Clinician ' +
+      'validation of labels remains the long-term path to a real-clinical rubric — this calibration is the conservative interim step.'
+  );
+  lines.push('');
   lines.push('## Methodology');
   lines.push('');
   lines.push(
@@ -299,6 +307,11 @@ function renderMarkdown(labels: LabelRow[], run: EvalRunResult, metrics: Metrics
   }
   lines.push('');
   lines.push('### Risk false positives (agent over-called risk)');
+  lines.push('');
+  lines.push(
+    '**Note (S13):** The Risk agent\'s prompt rubric was authored to mirror the synthetic seed heuristic. The specificity number above reflects ' +
+      'that alignment — see `docs/plans/caresync-ai/design-risk-calibration.md` for the calibration rationale.'
+  );
   lines.push('');
   if (errors.risk.falsePositives.length === 0) {
     lines.push('None.');

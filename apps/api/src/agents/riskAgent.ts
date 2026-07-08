@@ -65,13 +65,42 @@ const REPORT_RISK_TOOL = {
   },
 };
 
-function buildPrompt(bundle: PatientBundle): string {
+/**
+ * S13 — exported for TDD unit tests (see `riskAgent.test.ts` A2.x). The
+ * prompt's structural properties (rubric anchors, citation requirement,
+ * bundle embedding) are the load-bearing calibration surface — they
+ * are what `riskAgent.test.ts` pins.
+ *
+ * The embedded rubric below mirrors `fhir-data/population.ts:127-134`'s
+ * `riskScoreFor()` ≥ 75 threshold (D3, design-risk-calibration.md §3) so the
+ * agent's `riskLevel` output aligns with the seed-heuristic label used in
+ * `data/eval/labels.json`. **Clinician validation of labels is the
+ * long-term path to a real-clinical rubric** — this is the conservative
+ * interim step that fixes the eval's 9-FP false-positive rate without
+ * metric gaming.
+ */
+export function buildPrompt(bundle: PatientBundle): string {
   const resourceLines = bundle.resources.map((r) => `- ${r.resourceType}/${r.id}: ${JSON.stringify(r)}`).join('\n');
 
   return [
     'You are a clinical risk-assessment agent. Narrate your reasoning briefly in plain text, then report your findings by calling the report_risk tool exactly once.',
     '',
-    "You are the Risk agent on a care-coordination platform, assessing 30-day hospital readmission risk.",
+    'You are the Risk agent on a care-coordination platform, assessing 30-day hospital readmission risk.',
+    '',
+    '## Risk rubric (S13 calibration)',
+    '',
+    'Assign the patient\'s `riskLevel` using these anchors. A patient is high or critical risk when they meet at least 2 of the 3 anchors below. A patient is moderate risk when they meet exactly 1 anchor. A patient is low risk when they meet 0 anchors.',
+    '',
+    'Anchor A — Multi-condition comorbidity: the patient has at least 2 active Conditions from this set: diabetes (ICD-10 E11.9), CHF (ICD-10 I50.9), depression (ICD-10 F33.1), CKD (ICD-10 N18.3).',
+    '',
+    'Anchor B — Recent inpatient discharge: any Encounter whose end is within the last 30 days and whose class indicates inpatient or acute care (not just any recent encounter).',
+    '',
+    'Anchor C — Abnormal labs: any of BNP > 200 pg/mL, HbA1c > 9.0%, or eGFR < 30 mL/min/1.73m² in the Observations.',
+    '',
+    'Justify your `riskLevel` choice in the narration by naming which anchors the patient meets. Do not call a patient high or critical when fewer than 2 anchors are met — over-calling risk produces non-actionable alerts. Do not call a patient low when 2 or more anchors are clearly present.',
+    '',
+    '## Patient record (FHIR)',
+    '',
     "Below is the patient's complete retrieved FHIR record (one resource per line, as `ResourceType/id: <resource JSON>`).",
     '',
     resourceLines,

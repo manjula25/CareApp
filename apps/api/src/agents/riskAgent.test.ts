@@ -1,4 +1,4 @@
-import { runRiskAgent, AgentEvent, RiskOutput } from './riskAgent';
+import { runRiskAgent, buildPrompt, AgentEvent, RiskOutput } from './riskAgent';
 
 describe('OpenAI client construction is lazy (boot-time safety)', () => {
   const originalKey = process.env.OPENAI_API_KEY;
@@ -138,5 +138,90 @@ describe('runRiskAgent (B1 revised — mocked OpenAI client, no live call)', () 
         // drain
       }
     }).rejects.toThrow();
+  });
+});
+
+// S13 A2 — TDD pins on `buildPrompt`'s structural properties. The agent's
+// classification comes from the LLM (non-deterministic), so TDD can't pin
+// "patient X gets riskLevel=high" — but it CAN pin that the prompt carries
+// the calibration rubric (D3), the citation requirement (GD11, regression
+// guard), and the bundle's resource grounding (regression guard). These
+// are the load-bearing properties — if any silently regress, the
+// calibration breaks without a test failure.
+//
+// Fixture bundle mirrors `riskScoreFor()`'s evidence: 2 chronic conditions,
+// a recent inpatient encounter (enc-<id> class would be inpatient in real
+// data; not modeled here at the schema level, but the Encounter resource
+// line is included so the prompt's recency anchor has grounded text to
+// find), and 3 Observations.
+describe('buildPrompt (S13 — Risk rubric calibration)', () => {
+  const rubricFixtureBundle = {
+    resources: [
+      { resourceType: 'Condition', id: 'fixture-cond-1' },
+      { resourceType: 'Condition', id: 'fixture-cond-2' },
+      { resourceType: 'Encounter', id: 'fixture-enc-1' },
+      { resourceType: 'Observation', id: 'fixture-obs-1' },
+      { resourceType: 'Observation', id: 'fixture-obs-2' },
+      { resourceType: 'Observation', id: 'fixture-obs-3' },
+    ],
+    validIds: new Set([
+      'Condition/fixture-cond-1',
+      'Condition/fixture-cond-2',
+      'Encounter/fixture-enc-1',
+      'Observation/fixture-obs-1',
+      'Observation/fixture-obs-2',
+      'Observation/fixture-obs-3',
+    ]),
+  };
+
+  // A2.1 — D3 rubric's three evidence anchors must all be present.
+  it('buildPrompt includes the rubric anchors (multi-condition comorbidity, recent inpatient discharge, abnormal labs)', () => {
+    const prompt = buildPrompt(rubricFixtureBundle);
+    expect(prompt.toLowerCase()).toContain('multi-condition comorbidity');
+    expect(prompt.toLowerCase()).toContain('recent inpatient discharge');
+    expect(prompt.toLowerCase()).toContain('abnormal labs');
+    // Lab thresholds: BNP >200, HbA1c >9.0, eGFR <30 — the calibration
+    // target that mirrors `riskScoreFor()` ≥ 75.
+    expect(prompt).toContain('BNP');
+    expect(prompt).toContain('200');
+    expect(prompt).toContain('HbA1c');
+    expect(prompt).toContain('9.0');
+    expect(prompt).toContain('eGFR');
+    expect(prompt).toContain('30');
+  });
+
+  // A2.2 — the four risk-level tiers must be named explicitly in the rubric
+  // and a count threshold must appear (so the model can't be ambiguous about
+  // which bucket a patient falls into).
+  it('buildPrompt includes the threshold text and all four risk-level tiers', () => {
+    const prompt = buildPrompt(rubricFixtureBundle);
+    expect(prompt).toContain('low');
+    expect(prompt).toContain('moderate');
+    expect(prompt).toContain('high');
+    expect(prompt).toContain('critical');
+    expect(prompt.toLowerCase()).toMatch(/at least 2|two or more|≥2/);
+    expect(prompt).toContain('30 days');
+  });
+
+  // A2.3 — GD11 regression guard. The calibration must NOT displace the
+  // citation requirement (Risk agent's core architectural innovation — see
+  // `P4 Trust/Safety` evidence in `HL7-Challenge-Evaluation.md`).
+  it('buildPrompt preserves the citation requirement (GD11 regression guard)', () => {
+    const prompt = buildPrompt(rubricFixtureBundle);
+    expect(prompt).toContain('fhirResourceId');
+    expect(prompt.toLowerCase()).toContain('fabricated citations');
+  });
+
+  // A2.4 — grounding regression guard. The rubric must NOT displace the
+  // bundle's resources; the agent still has to reason from the actual FHIR
+  // data, not from training-data priors.
+  it('buildPrompt embeds the bundle resources (grounding regression guard)', () => {
+    const prompt = buildPrompt(rubricFixtureBundle);
+    expect(prompt).toContain('Condition/fixture-cond-1');
+    expect(prompt).toContain('Condition/fixture-cond-2');
+    expect(prompt).toContain('Encounter/fixture-enc-1');
+    // And one Observation by id to confirm the prompt is iterating
+    // through the bundle rather than hardcoding a list.
+    expect(prompt).toContain('Observation/fixture-obs-2');
   });
 });
