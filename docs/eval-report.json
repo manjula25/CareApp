@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-09T06:24:34.010Z",
+  "generatedAt": "2026-07-09T06:43:50.805Z",
   "clinicianStatus": "DEV-LABELED BASELINE, NOT CLINICIAN-VALIDATED (GD8)",
   "headline": "Eval run over 26 labeled patients (0 failed): 16 dev-labeled (6 disagreement(s)), 10 held-out (5 disagreement(s)). Care Gap sensitivity 100.0%, Risk sensitivity 100.0%, SDOH agreement 93.8%.",
   "patientCount": 26,
@@ -49,17 +49,15 @@
       "notes": [
         {
           "patientId": "maria-chen",
-          "taskCount": 9,
+          "taskCount": 7,
           "taskTitles": [
-            "Complete urgent discharge medication reconciliation",
-            "Arrange rapid heart-failure post-discharge follow-up",
-            "Initiate housing stability support",
-            "Initiate food assistance referral",
-            "Set up depression symptom monitoring",
-            "Order diabetes urine albumin screening",
-            "Schedule diabetic retinal eye exam",
-            "Complete diabetic foot exam",
-            "Plan overdue age-appropriate preventive screenings"
+            "Complete urgent post-discharge medication reconciliation",
+            "Schedule 7-day heart-failure post-discharge follow-up",
+            "Perform heart-failure decompensation outreach check",
+            "Initiate housing stability support referral",
+            "Connect patient to food assistance and heart-failure/diabetes-appropriate nutrition support",
+            "Close diabetes preventive-care screening gaps",
+            "Arrange depression symptom monitoring"
           ]
         },
         {
@@ -88,101 +86,91 @@
           "patientId": "robert-kim",
           "taskCount": 3,
           "taskTitles": [
-            "Arrange osteoporosis evaluation after hip fracture",
-            "Initiate secondary fracture-prevention treatment planning",
-            "Coordinate fall-risk assessment and rehabilitation follow-up"
+            "Arrange post-fracture orthopedic follow-up and rehabilitation plan",
+            "Complete fall-risk assessment and mitigation plan",
+            "Initiate osteoporosis and secondary fracture prevention evaluation"
           ]
         },
         {
           "patientId": "angela-diaz",
-          "taskCount": 9,
+          "taskCount": 7,
           "taskTitles": [
-            "Arrange depression symptom monitoring and behavioral-health follow-up",
-            "Provide mental-health access navigation",
-            "Refer for social isolation assessment and community support connection",
-            "Complete hypertension blood pressure recheck",
-            "Close positive SDOH screen follow-up loop",
-            "Order or schedule breast cancer screening",
-            "Order or schedule colorectal cancer screening",
-            "Order or schedule cervical cancer screening",
-            "Order lipid screening for cardiovascular risk assessment"
+            "Connect patient to accessible behavioral health services",
+            "Complete depression symptom severity monitoring",
+            "Obtain blood pressure measurement and hypertension follow-up",
+            "Address social isolation and connect to support resources",
+            "Arrange colorectal cancer screening",
+            "Arrange breast cancer screening",
+            "Arrange cervical cancer screening"
           ]
         },
         {
           "patientId": "samuel-wright",
-          "taskCount": 4,
+          "taskCount": 5,
           "taskTitles": [
-            "Schedule urgent post-discharge heart-failure follow-up",
-            "Initiate daily weight monitoring plan",
-            "Obtain renal function labs after CHF discharge",
-            "Arrange LVEF assessment or retrieve recent echocardiogram"
+            "Arrange urgent heart-failure post-discharge follow-up",
+            "Start daily weight monitoring plan",
+            "Obtain post-discharge renal function labs",
+            "Document LV function assessment",
+            "Address colorectal cancer screening after HF stabilization"
           ]
         },
         {
           "patientId": "pop-0001",
-          "taskCount": 5,
+          "taskCount": 4,
           "taskTitles": [
-            "Complete post-discharge outreach and follow-up planning",
-            "Arrange overdue HbA1c testing",
-            "Arrange diabetic kidney disease screening",
-            "Schedule diabetic retinal eye exam",
-            "Schedule comprehensive diabetic foot exam"
+            "Arrange post-discharge follow-up visit",
+            "Obtain HbA1c for diabetes monitoring",
+            "Complete diabetic kidney disease screening",
+            "Order lipid panel for cardiovascular risk assessment"
           ]
         },
         {
           "patientId": "pop-0002",
-          "taskCount": 5,
+          "taskCount": 3,
           "taskTitles": [
-            "Complete post-discharge heart-failure follow-up",
+            "Arrange urgent heart-failure post-discharge follow-up",
             "Obtain renal function and electrolyte monitoring",
-            "Start or verify home weight and vital-sign monitoring",
-            "Confirm cardiac function assessment status",
-            "Address colorectal cancer screening gap"
+            "Establish heart-failure weight and vital-sign monitoring plan"
           ]
         },
         {
           "patientId": "pop-0003",
-          "taskCount": 5,
+          "taskCount": 2,
           "taskTitles": [
-            "Arrange urgent post-discharge mental health follow-up",
-            "Complete depression symptom monitoring",
-            "Outreach for cervical cancer screening",
-            "Outreach for breast cancer screening",
-            "Outreach for colorectal cancer screening"
+            "Arrange urgent post-discharge psychiatric follow-up",
+            "Obtain standardized depression symptom assessment"
           ]
         },
         {
           "patientId": "pop-0004",
-          "taskCount": 4,
+          "taskCount": 5,
           "taskTitles": [
             "Arrange urgent post-discharge follow-up",
-            "Complete heart-failure monitoring assessment",
-            "Order or obtain HbA1c testing",
-            "Order diabetes kidney surveillance labs"
+            "Assess heart failure volume status and obtain weight monitoring",
+            "Order heart failure renal function and electrolyte labs",
+            "Complete diabetes monitoring labs",
+            "Check and document blood pressure"
           ]
         },
         {
           "patientId": "pop-0005",
-          "taskCount": 9,
+          "taskCount": 5,
           "taskTitles": [
-            "Complete post-discharge outreach and transitional care follow-up",
-            "Arrange overdue HbA1c testing for diabetes monitoring",
-            "Arrange diabetes kidney health evaluation",
-            "Complete depression symptom monitoring",
-            "Schedule diabetic eye screening",
-            "Schedule diabetic foot exam",
-            "Address colorectal cancer screening gap",
-            "Address breast cancer screening gap",
-            "Address osteoporosis screening gap"
+            "Complete urgent post-hospital discharge follow-up",
+            "Order HbA1c testing for diabetes monitoring",
+            "Screen for diabetic kidney disease",
+            "Schedule diabetic retinal eye exam",
+            "Perform depression symptom severity assessment"
           ]
         },
         {
           "patientId": "pop-0006",
           "taskCount": 4,
           "taskTitles": [
-            "Schedule overdue heart-failure post-discharge follow-up",
-            "Obtain heart-failure monitoring vitals and labs",
-            "Complete standardized depression symptom monitoring",
+            "Arrange urgent heart-failure post-discharge follow-up",
+            "Initiate post-discharge heart-failure monitoring",
+            "Complete depression symptom assessment",
             "Address colorectal cancer screening gap"
           ]
         },
@@ -190,47 +178,45 @@
           "patientId": "pop-0007",
           "taskCount": 6,
           "taskTitles": [
-            "Arrange urgent post-discharge follow-up",
-            "Complete post-discharge heart failure assessment and monitoring plan",
-            "Order overdue HbA1c testing",
-            "Order diabetic kidney disease surveillance labs",
-            "Refer for diabetic retinal eye exam",
-            "Initiate measurement-based depression follow-up"
+            "Schedule urgent post-discharge follow-up",
+            "Complete heart failure post-hospital monitoring",
+            "Order HbA1c for diabetes monitoring",
+            "Complete diabetic kidney surveillance",
+            "Arrange diabetic retinal eye exam",
+            "Assess depression severity with PHQ-9"
           ]
         },
         {
           "patientId": "pop-0008",
-          "taskCount": 5,
+          "taskCount": 3,
           "taskTitles": [
-            "Complete urgent post-discharge diabetes follow-up",
-            "Arrange overdue HbA1c monitoring",
-            "Arrange diabetic kidney disease screening",
-            "Schedule diabetic retinal eye exam",
-            "Order lipid panel for diabetes cardiovascular risk monitoring"
+            "Complete overdue post-discharge follow-up",
+            "Order or schedule HbA1c monitoring",
+            "Order diabetes kidney health evaluation"
           ]
         },
         {
           "patientId": "pop-0009",
-          "taskCount": 7,
+          "taskCount": 6,
           "taskTitles": [
-            "Arrange urgent heart-failure post-discharge follow-up",
-            "Complete post-discharge renal function and electrolyte monitoring",
-            "Assess current heart-failure vital signs and volume status",
-            "Confirm or obtain ejection-fraction assessment",
-            "Address overdue breast cancer screening",
-            "Address overdue colorectal cancer screening",
-            "Address overdue cervical cancer screening"
+            "Schedule urgent heart-failure post-discharge follow-up",
+            "Arrange post-discharge renal function and electrolyte labs",
+            "Obtain/document left ventricular ejection fraction assessment",
+            "Plan breast cancer screening",
+            "Plan colorectal cancer screening",
+            "Verify need for cervical cancer screening and schedule if indicated"
           ]
         },
         {
           "patientId": "pop-0010",
-          "taskCount": 5,
+          "taskCount": 6,
           "taskTitles": [
-            "Arrange overdue post-discharge behavioral-health follow-up",
-            "Complete depression symptom severity monitoring",
-            "Initiate social-needs follow-up and care plan",
-            "Connect patient to benefits and financial assistance navigation",
-            "Refer to social-support resources"
+            "Arrange urgent post-discharge behavioral-health follow-up",
+            "Complete depression symptom monitoring with PHQ-9 or equivalent",
+            "Initiate social-support needs assessment and linkage",
+            "Address financial strain with benefits and cost-assistance counseling",
+            "Document SDOH intervention plan and follow-up tracking",
+            "Arrange colorectal cancer screening discussion"
           ]
         }
       ]
@@ -331,107 +317,106 @@
           "patientId": "pop-0011",
           "taskCount": 5,
           "taskTitles": [
-            "Arrange overdue post-discharge follow-up visit",
-            "Obtain heart-failure monitoring data",
-            "Order diabetes HbA1c testing",
-            "Complete annual diabetes kidney monitoring",
-            "Schedule diabetic retinal eye exam"
+            "Schedule overdue post-discharge follow-up",
+            "Arrange HbA1c testing for diabetes monitoring",
+            "Complete diabetes kidney health evaluation",
+            "Initiate heart-failure monitoring review",
+            "Care-management outreach for multi-condition risk"
           ]
         },
         {
           "patientId": "pop-0012",
-          "taskCount": 5,
+          "taskCount": 6,
           "taskTitles": [
-            "Schedule urgent post-discharge diabetes follow-up",
-            "Obtain HbA1c for diabetes control assessment",
-            "Complete depression symptom monitoring",
-            "Order diabetic kidney disease screening",
-            "Arrange diabetic retinal eye exam"
+            "Complete urgent post-discharge outreach and medication/recovery check",
+            "Arrange expedited diabetes follow-up and HbA1c testing",
+            "Coordinate diabetic kidney disease screening labs",
+            "Schedule diabetic retinal eye exam",
+            "Complete diabetic foot exam",
+            "Initiate depression symptom monitoring and behavioral health follow-up"
           ]
         },
         {
           "patientId": "pop-0013",
-          "taskCount": 3,
+          "taskCount": 5,
           "taskTitles": [
-            "Arrange urgent heart-failure post-discharge follow-up",
+            "Complete urgent heart-failure post-discharge follow-up",
+            "Post-discharge outreach and medication reconciliation",
             "Initiate heart-failure objective monitoring plan",
-            "Ensure depression symptom severity monitoring"
+            "Assess depression severity with standardized tool",
+            "Schedule cervical cancer screening"
           ]
         },
         {
           "patientId": "pop-0014",
-          "taskCount": 6,
+          "taskCount": 5,
           "taskTitles": [
-            "Arrange urgent post-discharge follow-up",
-            "Initiate heart-failure post-hospitalization monitoring",
-            "Order diabetes HbA1c testing",
-            "Complete diabetic kidney health screening",
-            "Schedule diabetic retinal eye exam",
-            "Perform depression symptom monitoring"
+            "Arrange overdue post-discharge follow-up visit",
+            "Order HbA1c testing for diabetes monitoring",
+            "Initiate heart-failure monitoring plan",
+            "Complete diabetic kidney disease screening/monitoring",
+            "Perform standardized depression severity assessment"
           ]
         },
         {
           "patientId": "pop-0015",
-          "taskCount": 9,
+          "taskCount": 5,
           "taskTitles": [
-            "Complete post-discharge follow-up and medication reconciliation",
-            "Order or arrange overdue HbA1c monitoring",
-            "Obtain blood pressure measurement after discharge",
-            "Complete diabetic kidney disease screening",
-            "Order lipid panel for diabetes cardiovascular risk monitoring",
-            "Schedule diabetic retinal eye exam",
-            "Address colorectal cancer screening gap",
-            "Address breast cancer screening gap",
-            "Review cervical cancer screening history before age 65"
+            "Post-discharge outreach and transition-of-care review",
+            "Order or schedule overdue HbA1c testing",
+            "Order diabetic kidney disease monitoring labs",
+            "Schedule diabetic eye and foot screening",
+            "Coordinate age-appropriate cancer screenings"
           ]
         },
         {
           "patientId": "pop-0016",
-          "taskCount": 3,
+          "taskCount": 4,
           "taskTitles": [
-            "Schedule prompt post-discharge heart-failure follow-up",
-            "Obtain or document left ventricular ejection fraction assessment",
-            "Arrange post-hospital heart-failure monitoring observations"
+            "Schedule overdue post-discharge heart-failure follow-up",
+            "Obtain heart-failure ejection fraction assessment",
+            "Order renal function and electrolyte monitoring",
+            "Document heart-failure vital signs and volume status"
           ]
         },
         {
           "patientId": "pop-0017",
           "taskCount": 3,
           "taskTitles": [
-            "Complete behavioral-health safety assessment",
-            "Schedule post-discharge psychiatric follow-up",
-            "Obtain standardized depression symptom-severity score"
+            "Complete suicide risk and safety assessment",
+            "Schedule or confirm 7-day post-discharge mental health follow-up",
+            "Administer standardized depression severity measure"
           ]
         },
         {
           "patientId": "pop-0018",
           "taskCount": 4,
           "taskTitles": [
-            "Arrange urgent post-discharge follow-up",
-            "Obtain overdue HbA1c for diabetes monitoring",
-            "Coordinate heart-failure post-discharge monitoring",
-            "Complete diabetic kidney disease screening"
+            "Arrange urgent post-discharge follow-up and readmission-prevention outreach",
+            "Obtain overdue diabetes monitoring labs",
+            "Coordinate heart failure cardiac function assessment",
+            "Schedule diabetic retinal eye exam"
           ]
         },
         {
           "patientId": "pop-0019",
           "taskCount": 5,
           "taskTitles": [
-            "Schedule urgent post-discharge follow-up",
-            "Order or coordinate HbA1c testing",
-            "Arrange diabetic kidney screening",
-            "Coordinate depression severity assessment",
-            "Order or coordinate lipid panel for diabetes cardiovascular risk management"
+            "Arrange urgent post-discharge follow-up",
+            "Order HbA1c monitoring for diabetes control",
+            "Complete diabetic kidney monitoring",
+            "Complete lipid monitoring for cardiovascular risk",
+            "Perform depression severity monitoring"
           ]
         },
         {
           "patientId": "pop-0020",
           "taskCount": 4,
           "taskTitles": [
-            "Schedule urgent heart-failure post-discharge follow-up",
-            "Obtain heart-failure monitoring data",
-            "Complete depression symptom assessment",
-            "Plan colorectal cancer screening"
+            "Arrange urgent post-discharge heart-failure follow-up",
+            "Update post-discharge heart-failure monitoring and reconciliation",
+            "Complete depression symptom severity monitoring",
+            "Initiate routine colorectal cancer screening outreach"
           ]
         }
       ]
