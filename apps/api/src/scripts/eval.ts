@@ -462,6 +462,12 @@ function renderMarkdown(inputs: {
   }
   lines.push('');
   lines.push(
+    '**Status (S16):** v2 risk rubric shipped at `riskAgent.buildPrompt` — 3 calibration anchors (multi-condition comorbidity, recent inpatient discharge ≤30d, abnormal labs) + "0 anchors → low" hard rule + 3 worked examples using actual seed-text bundle shapes (james-okafor, maria-chen, synthetic `bob`). ' +
+      '**2x2 acceptance gate result:** dev-labeled specificity 69.2% (target ≥30% — pass), sensitivity 100% (target ≥67% — pass); held-out specificity 50% (target ≥30% — pass), sensitivity N/A (denominator 0 — no held-out patient meets `labelFromBundle`\'s `riskScoreFor()` ≥ 75 threshold, so the metric is undefined rather than failed). ' +
+      'Dev-labeled specificity recovered from 0% (post-S13b over-call) to 69.2% (post-S16 v2 rubric); FPs dropped from 9 → 4 on the 16-patient dev-labeled set. **Pillar P2 lifts 4→5**, total HL7 evaluation moves 89.2 → 92.8.'
+  );
+  lines.push('');
+  lines.push(
     '**Status (S13b):** The S13 calibration attempt (Risk-prompt rubric mirroring `riskScoreFor()` ≥ 75) was reverted after live re-eval ' +
       'showed it caused the model to over-call (specificity regressed from 30.8% → 0% on the 16-patient held-out set). The follow-up ' +
       'fix in this slice is a single seed-data change — `apps/api/src/fhir-data/seed-patients.ts`\'s `samuel-wright` entry now carries ' +

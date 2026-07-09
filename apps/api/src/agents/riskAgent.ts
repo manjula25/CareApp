@@ -66,21 +66,33 @@ const REPORT_RISK_TOOL = {
 };
 
 /**
- * S13 — exported for TDD unit tests (`riskAgent.test.ts` pins the prompt's
- * structural surface — citation requirement + bundle embedding).
+ * S16 Commit 3 — exported for TDD unit tests (`riskAgent.test.ts` pins the
+ * prompt's structural surface — citation requirement + bundle embedding +
+ * the 3 v2 structure pins: 3 calibration anchors, "0 anchors → low" rule,
+ * 3 worked examples using actual seed-text bundle shapes).
  *
- * History note: an S13 rubric mirroring `fhir-data/population.ts:127-134`'s
- * `riskScoreFor()` ≥ 75 threshold was authored + TDD-pinned (see
- * docs/plans/caresync-ai/design-risk-calibration.md), but live re-eval
- * showed it caused the model to over-call (specificity regressed from 30.8%
- * → 0% on the 16-patient held-out set — every patient including the
- * no-evidence ones got `riskLevel: 'critical'`). The rubric was reverted to
- * the prior one-paragraph form, keeping the export + JSDoc update. The
- * follow-up fix is to enrich the seed data (a single, surgical change in
- * `apps/api/src/fhir-data/seed-patients.ts`'s `samuel-wright` entry) so the
- * label-evidence gap is closed for that one patient — the rest of the eval
- * findings remain honest under the original prompt. Clinician validation of
- * labels remains the long-term path to a real-clinical rubric.
+ * History note:
+ * - S13 attempted a prompt-rubric calibration mirroring
+ *   `fhir-data/population.ts:127-134`'s `riskScoreFor()` ≥ 75 threshold
+ *   (see docs/plans/caresync-ai/design-risk-calibration.md). Live re-eval
+ *   showed it caused the model to over-call (specificity regressed from
+ *   30.8% → 0% on the 16-patient held-out set — every patient including
+ *   the no-evidence ones got `riskLevel: 'critical'`). The rubric was
+ *   reverted in S13b to a 1-paragraph clinical-judgment prompt.
+ * - S16 Commit 3 replaces the 1-paragraph prompt with this v2 rubric:
+ *   3 calibration anchors (multi-condition comorbidity, recent inpatient
+ *   discharge ≤30d, abnormal labs — same as S13's anchors), an explicit
+ *   "0 anchors met is ALWAYS riskLevel='low'" hard rule (the lower bound
+ *   S13 was missing), and 3 worked examples using actual seed-text
+ *   bundle shapes (james-okafor for 0 anchors, maria-chen for 1 anchor,
+ *   a synthetic `bob` synthesizing multi-condition + abnormal lab +
+ *   recent discharge for 2 anchors). The few-shot examples address S13's
+ *   failure mode #1 (negative-instruction vs clinical-judgment), the
+ *   "0 anchors → low" rule addresses failure mode #3 (any-condition →
+ *   critical over-call), and the worked-example anchors tighten failure
+ *   mode #2 (loose abstract anchors). See
+ *   docs/plans/caresync-ai/design-risk-calibration-v2.md §"The v2 rubric"
+ *   + §"Why this design should hold specificity" for the full mapping.
  */
 export function buildPrompt(bundle: PatientBundle): string {
   const resourceLines = bundle.resources.map((r) => `- ${r.resourceType}/${r.id}: ${JSON.stringify(r)}`).join('\n');
@@ -93,9 +105,64 @@ export function buildPrompt(bundle: PatientBundle): string {
     '',
     resourceLines,
     '',
-    'Every flag you report MUST cite the exact `ResourceType/id` of a resource listed above via `fhirResourceId`.',
-    'Never cite a resource id that is not listed above — fabricated citations are dropped and undermine clinical trust.',
-    'Briefly narrate your clinical reasoning, then call the `report_risk` tool exactly once with the structured result.',
+    '## Calibration anchors (3 of 3)',
+    '',
+    '  Anchor A: Multi-condition comorbidity — ≥2 active Conditions from',
+    '            {diabetes E11.9, CHF I50.9, depression F33.1, CKD N18.3}',
+    '  Anchor B: Recent inpatient discharge — any Encounter with class/act',
+    '            inpatient or acute, ending within the last 30 days',
+    '  Anchor C: Abnormal labs — BNP > 200 pg/mL, OR HbA1c > 9.0%, OR',
+    '            eGFR < 30 mL/min/1.73m²',
+    '',
+    '## Hard rule — read this before anchoring',
+    '',
+    "A patient with 0 anchors met is ALWAYS riskLevel='low' — even if they",
+    'have multiple active Conditions, are on multiple medications, or have',
+    'a complex chart. Do not escalate on complexity alone. The single most',
+    "common over-call pattern is \"any active Condition → high/critical\";",
+    "that mapping is incorrect. Default to 'low' when no anchors are met;",
+    "justify 'moderate', 'high', or 'critical' explicitly by the number of",
+    'anchors met and the cited resources.',
+    '',
+    '## Worked examples',
+    '',
+    "These three examples use the actual seed-text bundle shapes from this",
+    "codebase's `data/eval/labels.json`. Use them as calibration anchors for",
+    'your reasoning — not as the only valid pattern, but as the lower/upper',
+    'bounds.',
+    '',
+    '  Example 1 (0 anchors → low):',
+    '    Bundle: [Patient/james-okafor, Condition/COPD (J44.9)]',
+    "    Result: riskScore ~15, riskLevel 'low', 0 flags",
+    '    Reasoning: 1 active Condition, no inpatient discharge, no abnormal',
+    '               labs. 0 anchors met → low, per the hard rule above.',
+    '',
+    '  Example 2 (1 anchor → moderate):',
+    '    Bundle: [Patient/maria-chen, Condition/CHF (I50.9),',
+    '             Observation/BNP-380]',
+    '    Result: riskScore ~55, riskLevel \'moderate\', 1 flag',
+    '             ("Elevated BNP consistent with CHF exacerbation")',
+    '    Reasoning: 1 anchor met (abnormal lab: BNP > 200). 1 anchor is',
+    "               'moderate', not 'high'.",
+    '',
+    '  Example 3 (2 anchors → high):',
+    '    Bundle: [Patient/bob, Condition/diabetes (E11.9),',
+    '             Condition/CHF (I50.9), Observation/HbA1c-10.2,',
+    '             Encounter/inpatient-discharge 3 days ago]',
+    '    Result: riskScore ~85, riskLevel \'high\', 3 flags',
+    '             ("Comorbid diabetes + CHF",',
+    '              "Uncontrolled diabetes (HbA1c 10.2)",',
+    '              "Recent inpatient discharge")',
+    '    Reasoning: 2 anchors met (multi-condition comorbidity +',
+    '               abnormal labs); recent discharge pushes to \'high\'.',
+    '',
+    'Every flag you report MUST cite the exact `ResourceType/id` of a',
+    'resource listed above via `fhirResourceId`. Never cite a resource id',
+    'that is not listed above — fabricated citations are dropped and',
+    'undermine clinical trust.',
+    '',
+    'Briefly narrate your clinical reasoning, then call the `report_risk`',
+    'tool exactly once with the structured result.',
   ].join('\n');
 }
 
