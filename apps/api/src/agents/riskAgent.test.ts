@@ -198,16 +198,12 @@ describe('buildPrompt (S13 — structural surface)', () => {
     expect(prompt).toContain('Observation/fixture-obs-1');
   });
 
-  // S16 Commit 3 — v2 rubric structure (3 new TDD pins).
-  // Source: docs/plans/caresync-ai/design-risk-calibration-v2.md §"The v2
-  // rubric" + docs/plans/caresync-ai/implementation-plan-s16.md §"Phase A".
-  // The 3 anchors + "0 anchors → low" rule + 3 worked examples are the
-  // load-bearing v2 structure. If any future edit silently drops one of
-  // these, the rubric regresses to either the S13b 1-paragraph form (no
-  // anchors, no rule, no examples) or to a partial v2 — either way, the
-  // S13 over-call failure mode returns. These three tests are the
-  // regression guards that future agents cannot accidentally regress
-  // the v2 structure.
+  // S16 Commit 3 + S17 — v3 rubric structure (updated TDD pins).
+  // The 3 anchors + Rule 1 (0 anchors → low) + Rule 2 (anchor-to-level
+  // mapping) + 5 worked examples are the load-bearing v3 structure. If
+  // any future edit silently drops one of these, the rubric regresses to
+  // either the S13b 1-paragraph form or a partial v2/v3 — either way,
+  // the S13 over-call failure mode returns.
   it('buildPrompt lists the 3 calibration anchors verbatim (S16 commit 3)', () => {
     const prompt = buildPrompt(fixtureBundle);
     expect(prompt).toContain('Anchor A: Multi-condition comorbidity');
@@ -220,21 +216,30 @@ describe('buildPrompt (S13 — structural surface)', () => {
     expect(prompt).toContain("0 anchors met is ALWAYS riskLevel='low'");
   });
 
-  it('buildPrompt includes 3 worked examples using actual seed-text bundle shapes (S16 commit 3)', () => {
+  it('buildPrompt enforces the anchor-to-level mapping Rule 2 (S17)', () => {
     const prompt = buildPrompt(fixtureBundle);
-    expect(prompt).toContain('Example 1 (0 anchors → low)');
-    expect(prompt).toContain('Example 2 (1 anchor → moderate)');
-    expect(prompt).toContain('Example 3 (2 anchors → high)');
-    // Seed-text patient IDs the v2 worked examples must reference, per
-    // design-risk-calibration-v2.md §"The v2 rubric" + seed-patients.ts:
-    // Example 1 = james-okafor (1 Condition: COPD, no Encounters, no
-    //             Observations — the canonical 0-anchor patient),
-    // Example 2 = maria-chen (CHF + elevated BNP — the canonical 1-anchor
-    //             patient; the seed has had this since S9),
-    // Example 3 = a synthetic `bob` synthesizing multi-condition + abnormal
-    //             lab + recent discharge — the canonical 2-anchor patient
-    //             shape (the name is illustrative, not an actual seed row).
+    expect(prompt).toContain("Rule 2: Anchor-to-level mapping");
+    expect(prompt).toContain("1 anchor met  → ALWAYS 'moderate'");
+    expect(prompt).toContain("2 anchors met → 'high' ONLY if Anchor C");
+    expect(prompt).toContain("3 anchors met → 'critical'");
+  });
+
+  it('buildPrompt includes 5 worked examples using actual seed-text bundle shapes (S17)', () => {
+    const prompt = buildPrompt(fixtureBundle);
+    expect(prompt).toContain('Example 1 (0 anchors, non-anchor condition');
+    expect(prompt).toContain('Example 2 (0 anchors, single anchor-set condition');
+    expect(prompt).toContain('Example 3 (1 anchor → moderate)');
+    expect(prompt).toContain('Example 4 (3 anchors → critical)');
+    expect(prompt).toContain('Example 5 (2 anchors WITHOUT abnormal labs');
+    // Seed-text patient IDs the v3 worked examples reference:
+    // Example 1 = james-okafor (COPD only, not in anchor set)
+    // Example 2 = linda-torres (CKD only, single anchor-set condition)
+    // Example 3 = maria-chen (CHF + elevated BNP, 1 anchor)
+    // Example 4 = synthetic bob (3 anchors → critical)
+    // Example 5 = pop-0004 (2 anchors without labs → moderate)
     expect(prompt).toContain('james-okafor');
+    expect(prompt).toContain('linda-torres');
     expect(prompt).toContain('maria-chen');
+    expect(prompt).toContain('pop-0004');
   });
 });

@@ -19,7 +19,8 @@ function startOfDay(date: Date): number {
 }
 
 /** Formats a due ISO date the way the mockup's `.due` span does, e.g. "Today", "Tomorrow", "Fri". */
-export function dueLabel(due: string): string {
+export function dueLabel(due: string | undefined): string {
+  if (!due) return '—';
   const target = new Date(due);
   const dayDiff = Math.round((startOfDay(target) - startOfDay(new Date())) / (24 * 60 * 60 * 1000));
   if (dayDiff === 0) return 'Today';
@@ -28,6 +29,7 @@ export function dueLabel(due: string): string {
 }
 
 /** True if the due ISO string (date OR datetime) is strictly before today's local midnight. */
-export function isOverdue(due: string): boolean {
+export function isOverdue(due: string | undefined): boolean {
+  if (!due) return false;
   return new Date(due).getTime() < startOfDay(new Date());
 }

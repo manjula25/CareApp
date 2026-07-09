@@ -68,8 +68,10 @@ const REPORT_RISK_TOOL = {
 /**
  * S16 Commit 3 — exported for TDD unit tests (`riskAgent.test.ts` pins the
  * prompt's structural surface — citation requirement + bundle embedding +
- * the 3 v2 structure pins: 3 calibration anchors, "0 anchors → low" rule,
- * 3 worked examples using actual seed-text bundle shapes).
+ * the v3 structure pins: 3 calibration anchors, explicit anchor-to-level
+ * mapping rules (Rule 1 + Rule 2), 5 worked examples covering 0-anchor
+ * (non-anchor condition + single anchor-set condition), 1-anchor, 3-anchor,
+ * and the critical 2-anchor-without-labs → moderate case).
  *
  * History note:
  * - S13 attempted a prompt-rubric calibration mirroring
@@ -79,20 +81,18 @@ const REPORT_RISK_TOOL = {
  *   30.8% → 0% on the 16-patient held-out set — every patient including
  *   the no-evidence ones got `riskLevel: 'critical'`). The rubric was
  *   reverted in S13b to a 1-paragraph clinical-judgment prompt.
- * - S16 Commit 3 replaces the 1-paragraph prompt with this v2 rubric:
- *   3 calibration anchors (multi-condition comorbidity, recent inpatient
- *   discharge ≤30d, abnormal labs — same as S13's anchors), an explicit
- *   "0 anchors met is ALWAYS riskLevel='low'" hard rule (the lower bound
- *   S13 was missing), and 3 worked examples using actual seed-text
- *   bundle shapes (james-okafor for 0 anchors, maria-chen for 1 anchor,
- *   a synthetic `bob` synthesizing multi-condition + abnormal lab +
- *   recent discharge for 2 anchors). The few-shot examples address S13's
- *   failure mode #1 (negative-instruction vs clinical-judgment), the
- *   "0 anchors → low" rule addresses failure mode #3 (any-condition →
- *   critical over-call), and the worked-example anchors tighten failure
- *   mode #2 (loose abstract anchors). See
- *   docs/plans/caresync-ai/design-risk-calibration-v2.md §"The v2 rubric"
- *   + §"Why this design should hold specificity" for the full mapping.
+ * - S16 Commit 3 replaces the 1-paragraph prompt with a v2 rubric:
+ *   3 calibration anchors, "0 anchors → low" hard rule, 3 worked examples.
+ *   Specificity improved 0%→69.2% but 4/16 dev-labeled and 5/10 held-out
+ *   FPs remained — all 2-anchor-without-labs cases the v2 rubric still
+ *   allowed as 'high'.
+ * - S17 replaces v2 with this v3 rubric: adds Rule 2 (explicit anchor-to-
+ *   level mapping where 2 anchors without Anchor C is 'moderate'), adds
+ *   Example 2 (linda-torres: 0-anchor single-condition → low), adds
+ *   Example 5 (pop-0004: 2 anchors without labs → moderate). Combined
+ *   with the deterministic `clampRiskLevel` safety net in
+ *   `confidenceScorer.ts`, this targets ~100% specificity without
+ *   reducing sensitivity.
  */
 export function buildPrompt(bundle: PatientBundle): string {
   const resourceLines = bundle.resources.map((r) => `- ${r.resourceType}/${r.id}: ${JSON.stringify(r)}`).join('\n');
@@ -114,47 +114,81 @@ export function buildPrompt(bundle: PatientBundle): string {
     '  Anchor C: Abnormal labs — BNP > 200 pg/mL, OR HbA1c > 9.0%, OR',
     '            eGFR < 30 mL/min/1.73m²',
     '',
-    '## Hard rule — read this before anchoring',
+    '## Hard rules — read before anchoring',
     '',
-    "A patient with 0 anchors met is ALWAYS riskLevel='low' — even if they",
-    'have multiple active Conditions, are on multiple medications, or have',
-    'a complex chart. Do not escalate on complexity alone. The single most',
-    "common over-call pattern is \"any active Condition → high/critical\";",
-    "that mapping is incorrect. Default to 'low' when no anchors are met;",
-    "justify 'moderate', 'high', or 'critical' explicitly by the number of",
-    'anchors met and the cited resources.',
+    "Rule 1: A patient with 0 anchors met is ALWAYS riskLevel='low' — even",
+    'if they have multiple active Conditions, are on multiple medications,',
+    'or have a complex chart. Do not escalate on complexity alone. The',
+    "single most common over-call pattern is \"any active Condition →",
+    "high/critical\"; that mapping is incorrect.",
+    '',
+    "Rule 2: Anchor-to-level mapping (follow exactly):",
+    "  0 anchors met → ALWAYS 'low'",
+    "  1 anchor met  → ALWAYS 'moderate' (never 'high')",
+    "  2 anchors met → 'high' ONLY if Anchor C (abnormal labs) is one of",
+    "                   the two met anchors; otherwise 'moderate'",
+    "  3 anchors met → 'critical'",
+    '',
+    'The most common over-call after 0-anchor is escalating 2 anchors',
+    "(comorbidity + recent discharge) to 'high' when no abnormal labs are",
+    "present — that combination is 'moderate', not 'high'. Abnormal labs",
+    "(Anchor C) are the distinguishing signal that justifies 'high'.",
     '',
     '## Worked examples',
     '',
-    "These three examples use the actual seed-text bundle shapes from this",
+    "These examples use the actual seed-text bundle shapes from this",
     "codebase's `data/eval/labels.json`. Use them as calibration anchors for",
     'your reasoning — not as the only valid pattern, but as the lower/upper',
     'bounds.',
     '',
-    '  Example 1 (0 anchors → low):',
+    '  Example 1 (0 anchors, non-anchor condition → low):',
     '    Bundle: [Patient/james-okafor, Condition/COPD (J44.9)]',
     "    Result: riskScore ~15, riskLevel 'low', 0 flags",
-    '    Reasoning: 1 active Condition, no inpatient discharge, no abnormal',
-    '               labs. 0 anchors met → low, per the hard rule above.',
+    '    Reasoning: 1 active Condition, but COPD (J44.9) is NOT in the',
+    '               anchor comorbidity set. No inpatient discharge, no',
+    '               abnormal labs. 0 anchors met → low, per Rule 1.',
     '',
-    '  Example 2 (1 anchor → moderate):',
+    '  Example 2 (0 anchors, single anchor-set condition → low):',
+    '    Bundle: [Patient/linda-torres, Condition/CKD (N18.3)]',
+    "    Result: riskScore ~20, riskLevel 'low', 0 flags",
+    '    Reasoning: 1 active Condition from the anchor set (CKD N18.3),',
+    '               but Anchor A requires ≥2. No inpatient discharge, no',
+    '               abnormal labs. 0 anchors met → low. A single serious',
+    '               Condition is NOT the same as meeting Anchor A — do',
+    '               not escalate on condition severity alone.',
+    '',
+    '  Example 3 (1 anchor → moderate):',
     '    Bundle: [Patient/maria-chen, Condition/CHF (I50.9),',
     '             Observation/BNP-380]',
     '    Result: riskScore ~55, riskLevel \'moderate\', 1 flag',
     '             ("Elevated BNP consistent with CHF exacerbation")',
-    '    Reasoning: 1 anchor met (abnormal lab: BNP > 200). 1 anchor is',
-    "               'moderate', not 'high'.",
+    '    Reasoning: 1 anchor met (abnormal lab: BNP > 200). Per Rule 2,',
+    "               1 anchor is ALWAYS 'moderate', never 'high'.",
     '',
-    '  Example 3 (2 anchors → high):',
+    '  Example 4 (3 anchors → critical):',
     '    Bundle: [Patient/bob, Condition/diabetes (E11.9),',
     '             Condition/CHF (I50.9), Observation/HbA1c-10.2,',
     '             Encounter/inpatient-discharge 3 days ago]',
-    '    Result: riskScore ~85, riskLevel \'high\', 3 flags',
+    "    Result: riskScore ~85, riskLevel 'critical', 3 flags",
     '             ("Comorbid diabetes + CHF",',
     '              "Uncontrolled diabetes (HbA1c 10.2)",',
     '              "Recent inpatient discharge")',
-    '    Reasoning: 2 anchors met (multi-condition comorbidity +',
-    '               abnormal labs); recent discharge pushes to \'high\'.',
+    '    Reasoning: 3 anchors met (multi-condition comorbidity +',
+    "               abnormal labs + recent discharge) → 'critical'",
+    '               per Rule 2.',
+    '',
+    '  Example 5 (2 anchors WITHOUT abnormal labs → moderate):',
+    '    Bundle: [Patient/pop-0004, Condition/diabetes (E11.9),',
+    '             Condition/CHF (I50.9), Encounter/inpatient-discharge',
+    '             8 days ago, NO Observations]',
+    "    Result: riskScore ~50, riskLevel 'moderate', 2 flags",
+    '             ("Comorbid diabetes + CHF",',
+    '              "Recent inpatient discharge")',
+    '    Reasoning: 2 anchors met (Anchor A + Anchor B), but Anchor C',
+    "               (abnormal labs) is NOT met. Per Rule 2, 2 anchors",
+    "               without abnormal labs is 'moderate', not 'high'.",
+    '               This is the most common over-call pattern — do not',
+    "               escalate to 'high' without abnormal labs.",
     '',
     'Every flag you report MUST cite the exact `ResourceType/id` of a',
     'resource listed above via `fhirResourceId`. Never cite a resource id',

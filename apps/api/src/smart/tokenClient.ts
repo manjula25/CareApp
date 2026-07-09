@@ -5,6 +5,12 @@ export interface SmartTokenClientOptions {
   tokenEndpoint: string;
   privateKey: string;
   scope?: string;
+  /** When true, the token endpoint is a Keycloak / external SMART AS
+   * (production mode). The request body is the same RFC 7523 shape, but
+   * the response may include additional fields (e.g. `refresh_token`,
+   * `id_token`) that this client ignores. No behavioral change — the flag
+   * is for documentation and future introspection support. */
+  external?: boolean;
 }
 
 interface CachedToken {

@@ -1,4 +1,6 @@
 import { PatientBundle } from '../fhir/client';
+import { riskScoreFor, CRITICAL_RISK_THRESHOLD } from '../fhir-data/population';
+import { RiskOutput } from './agent';
 
 /**
  * S14 Commit 3 — per-finding confidence via a deterministic, auditable
@@ -264,4 +266,65 @@ export function deriveActionPlannerTaskConfidence(
     const minConf = Math.min(...matching.map((f) => f.confidence));
     return Number.isFinite(minConf) ? minConf : 0.2;
   });
+}
+
+/** Counts Condition resources in the bundle. */
+function countConditions(bundle: PatientBundle): number {
+  if (!bundle?.resources) return 0;
+  return bundle.resources.filter((r: any) => r?.resourceType === 'Condition').length;
+}
+
+/** Returns hours since the most recent Encounter, or Infinity if none. */
+function mostRecentEncounterHours(bundle: PatientBundle): number {
+  if (!bundle?.resources) return Infinity;
+  let mostRecent = 0;
+  for (const r of bundle.resources) {
+    if (r?.resourceType !== 'Encounter') continue;
+    const end = r?.period?.end ?? r?.period?.start;
+    if (!end) continue;
+    const t = new Date(end).getTime();
+    if (Number.isFinite(t) && t > mostRecent) {
+      mostRecent = t;
+    }
+  }
+  if (mostRecent === 0) return Infinity;
+  return (Date.now() - mostRecent) / (60 * 60 * 1000);
+}
+
+/**
+ * S17 — deterministic post-hoc risk-level clamp. Downgrades LLM
+ * false-positive 'high' and 'critical' ratings to 'moderate' when the
+ * bundle doesn't have enough evidence to support them.
+ *
+ * A 'high' rating is preserved iff ANY of:
+ * - The deterministic score (riskScoreFor) ≥ CRITICAL_RISK_THRESHOLD (75),
+ *   which requires 3+ conditions + a recent encounter.
+ * - The bundle has an abnormal lab AND a recent encounter (the clinical
+ *   override — a single condition with a critically abnormal lab value
+ *   and a recent discharge genuinely warrants 'high').
+ *
+ * Otherwise the LLM's 'high' is clamped to 'moderate' — the model
+ * over-called the risk level without sufficient bundle evidence.
+ *
+ * 'low' and 'moderate' levels are never clamped. The score is preserved
+ * regardless of the level change — only the label is corrected.
+ */
+export function clampRiskLevel(bundle: PatientBundle, output: RiskOutput): RiskOutput {
+  if (output.riskLevel !== 'high' && output.riskLevel !== 'critical') {
+    return output;
+  }
+
+  const conditionCount = countConditions(bundle);
+  const recencyHours = mostRecentEncounterHours(bundle);
+  const deterministicScore = riskScoreFor(conditionCount, recencyHours);
+
+  if (deterministicScore >= CRITICAL_RISK_THRESHOLD) {
+    return output;
+  }
+
+  if (bundleHasAbnormalLab(bundle) && bundleHasRecentEncounter(bundle)) {
+    return output;
+  }
+
+  return { ...output, riskLevel: 'moderate' };
 }

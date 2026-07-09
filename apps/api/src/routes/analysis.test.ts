@@ -135,7 +135,7 @@ function cachedResultFromStub(taskId: string): AnalysisResultJson {
     risk: {
       narration: 'Reviewing chart...',
       findings: [{ text: 'CHF diagnosis drives elevated readmission risk', fhirResourceId: VALID_ID }],
-      complete: { riskScore: 87, riskLevel: 'critical', readmissionProbability: 0.7, findingCount: 1, droppedCount: 1 },
+      complete: { riskScore: 87, riskLevel: 'moderate', readmissionProbability: 0.7, findingCount: 1, droppedCount: 1 },
     },
     careGap: {
       narration: 'Checking preventive care gaps...',
@@ -256,7 +256,7 @@ describe('analysis routes (B3 — orchestrated SSE stream + citation validation 
     expect(completeEvents.map((e) => e.data.agentId).sort()).toEqual(['actionPlanner', 'careGap', 'risk', 'sdoh']);
     expect(completeEvents.find((e) => e.data.agentId === 'risk')!.data).toMatchObject({
       riskScore: 87,
-      riskLevel: 'critical',
+      riskLevel: 'moderate',
       readmissionProbability: 0.7,
       findingCount: 1,
       droppedCount: 1,
