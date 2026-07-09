@@ -1,4 +1,8 @@
 services:
+  # ── POC mode (default) ────────────────────────────────────
+  # Uses the stock hapiproject/hapi image with signature-only JWT validation.
+  # For production (Open Question 8), comment out this hapi-fhir block and
+  # use the hapi-fhir-prod + keycloak + hapi-db blocks below.
   hapi-fhir:
     image: hapiproject/hapi:v7.2.0
     ports:
@@ -35,5 +39,50 @@ services:
     # Readiness is verified host-side by the import script's retry loop against
     # GET /fhir/metadata (see apps/api/src/scripts/import-fhir.ts).
 
+  # ── Production mode (Open Question 8) ─────────────────────
+  # Uncomment the blocks below to switch to production SMART scope enforcement.
+  # Requires: hapi-fhir-jpaserver-starter cloned at ./hapi-fhir-jpaserver-starter
+  # with application.yaml configured for OAuth scope enforcement + Keycloak JWKS.
+  # See docs/plans/caresync-ai/prd-production-smart-scope.md for full setup.
+  #
+  # hapi-fhir-prod:
+  #   build:
+  #     context: ./hapi-fhir-jpaserver-starter
+  #     dockerfile: Dockerfile
+  #   ports:
+  #     - "8080:8080"
+  #   environment:
+  #     SPRING_DATASOURCE_URL: jdbc:postgresql://hapi-db:5432/hapi
+  #     SPRING_DATASOURCE_USERNAME: hapi
+  #     SPRING_DATASOURCE_PASSWORD: ${HAPI_DB_PASSWORD:-hapi}
+  #   depends_on:
+  #     - hapi-db
+  #     - keycloak
+  #   volumes:
+  #     - ./hapi-fhir-jpaserver-starter/src/main/resources/application.yaml:/app/application.yaml:ro
+  #
+  # hapi-db:
+  #   image: postgres:16-alpine
+  #   environment:
+  #     POSTGRES_DB: hapi
+  #     POSTGRES_USER: hapi
+  #     POSTGRES_PASSWORD: ${HAPI_DB_PASSWORD:-hapi}
+  #   volumes:
+  #     - hapi-db-data:/var/lib/postgresql/data
+  #
+  # keycloak:
+  #   image: quay.io/keycloak/keycloak:24.0
+  #   ports:
+  #     - "8443:8443"
+  #   environment:
+  #     KEYCLOAK_ADMIN: admin
+  #     KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+  #     KC_HOSTNAME: localhost
+  #   command: ["start-dev"]
+  #   volumes:
+  #     - keycloak-data:/opt/keycloak/data
+
 volumes:
   hapi-data:
+  # hapi-db-data:
+  # keycloak-data:

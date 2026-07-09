@@ -5,7 +5,7 @@ import { FhirReadService, PatientBundle, ScopeDeniedError, FhirNotFoundError } f
 import { orchestrate } from '../agents/orchestrator';
 import { AgentEvent, AgentId } from '../agents/agent';
 import { validateCitations, validateCitationList, applyConfidence, createNarrationBuffer, NarrationBuffer, AgentFlag } from '../agents/citationValidator';
-import { scoreRiskFlag, scoreCareGap, scoreSdohBarrier, deriveActionPlannerTaskConfidence, FindingWithConfidence } from '../agents/confidenceScorer';
+import { scoreRiskFlag, scoreCareGap, scoreSdohBarrier, deriveActionPlannerTaskConfidence, clampRiskLevel, FindingWithConfidence } from '../agents/confidenceScorer';
 import { readAnalysisCache, writeAnalysisCache, AnalysisCacheEntry, AnalysisCacheRow } from '../db/analysisCache';
 import { getMockAnalysis } from './mockAnalysis';
 import { writeAudit } from '../db/audit';
@@ -321,7 +321,8 @@ export function createAnalysisRouter(
         // (or Task) reaches the client/HAPI citing a resource absent from the
         // retrieved bundle.
         if (event.agentId === 'risk') {
-          const { valid, dropped } = validateCitations(event.output.flags, bundle.validIds);
+          const clampedOutput = clampRiskLevel(bundle, event.output);
+          const { valid, dropped } = validateCitations(clampedOutput.flags, bundle.validIds);
           // S14 Commit 3 — score each surviving flag with the bundle-evidence
           // heuristic (citation count + abnormal lab + recent encounter).
           // Dropped flags get no score (they never reach the client).
@@ -331,9 +332,9 @@ export function createAnalysisRouter(
             writeSseEvent(res, 'finding', { agentId: 'risk', ...finding });
           }
           const complete = {
-            riskScore: event.output.riskScore,
-            riskLevel: event.output.riskLevel,
-            readmissionProbability: event.output.readmissionProbability,
+            riskScore: clampedOutput.riskScore,
+            riskLevel: clampedOutput.riskLevel,
+            readmissionProbability: clampedOutput.readmissionProbability,
             findingCount: scored.length,
             droppedCount: dropped.length,
           };

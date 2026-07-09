@@ -2,20 +2,35 @@ import { NextFunction, Request, Response, Router } from 'express';
 import jwt from 'jsonwebtoken';
 import { verifyAccessToken } from '../smart/tokenServer';
 
+type GetSigningKeyCallback = (err: Error | null, key?: { getPublicKey: () => string }) => void;
+interface JwksClientLike {
+  getSigningKey(kid: string, cb: GetSigningKeyCallback): void;
+}
+
 /**
- * S14 Commit 4 — SMART-on-FHIR enforcement at the app tier (developer guard
- * that gives a structured 401/403 in front of HAPI's binary accept/reject).
+ * S14 Commit 4 + S17 (Open Question 8) — SMART-on-FHIR enforcement at the
+ * app tier (developer guard that gives a structured 401/403 in front of
+ * HAPI's binary accept/reject).
  *
- * IMPORTANT: this middleware verifies the SMART **access token**, which the
- * in-process token server in `apps/api/src/smart/tokenServer.ts` issues as
- * an HS256 JWT signed with `serverSecret` (NOT the client's RSA keypair).
- * Verification therefore uses `verifyAccessToken(token, serverSecret)` —
- * passing the client's RSA public key here would fail every legitimate
- * token the app's own token server mints. The RSA public key file at
- * `apps/api/src/smart/keys/smart-public.pem` is for HAPI's separate
- * OAuthAuthorizationServletFilter config; it does not apply to this
- * middleware. See verification-s14.md §A and the commit body for the
- * full rationale + the production handoff (point HAPI at a real SMART AS).
+ * Two verification modes:
+ *
+ * - **HS256 (POC):** `serverSecret` is set → verifies against the in-process
+ *   token server's shared secret. This is the existing S14 behavior.
+ *
+ * - **RS256 (production):** `jwksUrl` is set → fetches signing keys from the
+ *   Keycloak JWKS endpoint at runtime, verifies RS256 tokens issued by the
+ *   real SMART authorization server. Supports key rotation without restart.
+ *
+ * If both are set, RS256 takes precedence. If neither is set, the middleware
+ * throws at construction time (misconfiguration).
+ *
+ * Scope enforcement also has two levels:
+ *
+ * - **Method-level (POC):** `requiredScopesByMethod` — coarse GET/POST gate.
+ * - **Route-level (production):** `requiredScopesByRoute` — per-endpoint
+ *   scopes like `GET /api/patients/:id → ['patient/Patient.read']`.
+ *
+ * Route-level takes precedence when both are configured.
  */
 export type SmartAuthReason =
   | 'missing_token'
@@ -37,37 +52,53 @@ export interface SmartAuthClaims {
   scope?: string;
   exp?: number;
   client_id?: string;
+  iss?: string;
+  fhirUser?: string;
 }
 
 export interface SmartAuthMiddlewareOptions {
   /**
-   * HS256 secret the in-process token server signs access tokens with. The
-   * existing `tokenServer.ts` default ('caresync-dev-authz-server-secret-do-not-use-in-production')
-   * is the production value for this POC; tests should pass the same literal
-   * so the verify-side matches the sign-side exactly.
+   * HS256 secret for POC mode (in-process token server). Optional when
+   * `jwksUrl` is set (RS256 production mode). Exactly one of `serverSecret`
+   * or `jwksUrl` must be provided.
    */
-  serverSecret: string;
+  serverSecret?: string;
   /**
-   * If set, the `aud` claim on the access token must match. The token server
-   * does not currently set `aud` on its issued access tokens (only on the
-   * client_assertion it verifies), so audience enforcement is opt-in — wire
-   * it up only when the token server starts emitting `aud`.
+   * JWKS endpoint URL for RS256 production mode (e.g. Keycloak's
+   * `https://keycloak:8443/realms/caresync/protocol/openid-connect/certs`).
+   * When set, the middleware fetches signing keys at runtime via `jwks-rsa`,
+   * supporting key rotation without container restart.
+   */
+  jwksUrl?: string;
+  /**
+   * Expected token issuer (`iss` claim) for RS256 mode. When set, tokens
+   * with a mismatched `iss` are rejected with `invalid_signature`.
+   */
+  issuer?: string;
+  /**
+   * If set, the `aud` claim on the access token must match. In POC mode the
+   * token server does not set `aud` on access tokens, so this is opt-in.
+   * In production mode (Keycloak), `aud` should be the HAPI FHIR base URL.
    */
   audience?: string;
   /**
-   * Required scopes keyed by HTTP method. A method absent from the map
-   * (or a method present with an empty array) is not scope-gated. Token
-   * scope is space-delimited (RFC 6749 §3.3); every required scope must
-   * appear in the granted set as a whole-token match. Wildcards like
-   * `patient/*.read` are NOT expanded by this middleware — callers must
-   * enumerate the exact scopes the route needs.
+   * Required scopes keyed by HTTP method (POC mode). A method absent from
+   * the map is not scope-gated. Token scope is space-delimited (RFC 6749
+   * §3.3); every required scope must appear in the granted set. Wildcards
+   * like `patient/*.read` are NOT expanded — callers must enumerate exact
+   * scopes.
    */
   requiredScopesByMethod?: Record<string, string[]>;
   /**
-   * Clock tolerance (seconds) for the `exp` check (default 30). Mirrors
-   * jsonwebtoken's own option so a slightly skewed client clock doesn't
-   * trip a fresh token. The token server's own ACCESS_TOKEN_TTL is 300s,
-   * so 30s is a conservative margin.
+   * Required scopes keyed by route pattern (production mode). Patterns use
+   * Express-style params: `'GET /api/patients/:id' → ['patient/Patient.read']`.
+   * Route-level takes precedence over method-level when both are configured.
+   * The path is matched against `req.baseUrl + req.path` so it works
+   * regardless of where the middleware is mounted.
+   */
+  requiredScopesByRoute?: Record<string, string[]>;
+  /**
+   * Clock tolerance (seconds) for the `exp` check (default 30).
    */
   clockToleranceSeconds?: number;
 }
@@ -81,11 +112,53 @@ declare global {
   }
 }
 
+function scopeMatches(granted: string, required: string): boolean {
+  if (granted === required) return true;
+  const gParts = granted.split(/[/.]/);
+  const rParts = required.split(/[/.]/);
+  if (gParts.length !== 3 || rParts.length !== 3) return false;
+  return gParts.every((g, i) => g === '*' || rParts[i] === '*' || g === rParts[i]);
+}
+
 function scopeGrantsRequired(granted: string | undefined, required: string[]): boolean {
   if (required.length === 0) return true;
   if (!granted) return false;
-  const grantedSet = new Set(granted.split(/\s+/).filter(Boolean));
-  return required.every((s) => grantedSet.has(s));
+  const grantedSet = granted.split(/\s+/).filter(Boolean);
+  return required.every((req) => grantedSet.some((g) => scopeMatches(g, req)));
+}
+
+/**
+ * Compiles an Express-style route pattern (e.g. `'GET /api/patients/:id'`)
+ * into a `{ method, regex }` pair for matching incoming requests. `:param`
+ * segments become `[^/]+`, `*` becomes `.*`, and the path is anchored.
+ */
+interface CompiledRoutePattern {
+  method: string;
+  regex: RegExp;
+  scopes: string[];
+}
+
+function compileRoutePattern(pattern: string, scopes: string[]): CompiledRoutePattern {
+  const spaceIdx = pattern.indexOf(' ');
+  const method = spaceIdx > 0 ? pattern.slice(0, spaceIdx).toUpperCase() : 'GET';
+  const path = spaceIdx > 0 ? pattern.slice(spaceIdx + 1) : pattern;
+  const regexStr = path
+    .replace(/:[^/]+/g, '[^/]+')
+    .replace(/\*/g, '.*');
+  return { method, regex: new RegExp(`^${regexStr}$`), scopes };
+}
+
+function matchRouteScopes(
+  compiled: CompiledRoutePattern[],
+  method: string,
+  path: string
+): string[] | null {
+  for (const entry of compiled) {
+    if (entry.method === method && entry.regex.test(path)) {
+      return entry.scopes;
+    }
+  }
+  return null;
 }
 
 /**
@@ -99,7 +172,44 @@ function scopeGrantsRequired(granted: string | undefined, required: string[]): b
  * — the human-readable `error` string is for logs.
  */
 export function createSmartAuthMiddleware(options: SmartAuthMiddlewareOptions) {
-  const { serverSecret, audience, requiredScopesByMethod, clockToleranceSeconds = 30 } = options;
+  const {
+    serverSecret,
+    jwksUrl,
+    issuer,
+    audience,
+    requiredScopesByMethod,
+    requiredScopesByRoute,
+    clockToleranceSeconds = 30,
+  } = options;
+
+  if (!serverSecret && !jwksUrl) {
+    throw new Error('SmartAuth: either serverSecret (HS256) or jwksUrl (RS256) must be set');
+  }
+
+  // RS256 mode: create a JWKS client that caches and rate-limits key fetches.
+  // Lazy require so the ESM-only `jose` transitive dep is never loaded in
+  // HS256 POC mode (and doesn't break Jest's CommonJS transform). `jwks-rsa`
+  // is CommonJS, so a synchronous require keeps this factory non-async.
+  let jwksClient: JwksClientLike | null = null;
+  if (jwksUrl) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { JwksClient } = require('jwks-rsa') as typeof import('jwks-rsa');
+    jwksClient = new JwksClient({
+      jwksUri: jwksUrl,
+      cache: true,
+      cacheMaxEntries: 5,
+      rateLimit: true,
+      jwksRequestsPerMinute: 10,
+    });
+  }
+
+  // Pre-compile route patterns for production mode.
+  const compiledRoutes: CompiledRoutePattern[] = [];
+  if (requiredScopesByRoute) {
+    for (const [pattern, scopes] of Object.entries(requiredScopesByRoute)) {
+      compiledRoutes.push(compileRoutePattern(pattern, scopes));
+    }
+  }
 
   return function smartAuth(req: Request, _res: Response, next: NextFunction): void {
     // S14 follow-up — no double-auth: if the inner `requireAuth` (login-tier
@@ -140,7 +250,29 @@ export function createSmartAuthMiddleware(options: SmartAuthMiddlewareOptions) {
 
     let claims: jwt.JwtPayload;
     try {
-      claims = verifyAccessToken(token, serverSecret) as jwt.JwtPayload;
+      if (jwksClient) {
+        // RS256 production mode: verify against Keycloak's JWKS endpoint.
+        claims = jwt.verify(token, (header: jwt.JwtHeader, callback: jwt.SigningKeyCallback) => {
+          if (header.kid === undefined) {
+            callback(new Error('Token missing kid header'));
+            return;
+          }
+          jwksClient.getSigningKey(header.kid, (err: Error | null, key) => {
+            if (err || !key) {
+              callback(err ?? new Error('Signing key not found'));
+              return;
+            }
+            callback(null, key.getPublicKey());
+          });
+        }, {
+          algorithms: ['RS256'],
+          ...(issuer ? { issuer } : {}),
+          ...(audience ? { audience } : {}),
+        }) as unknown as jwt.JwtPayload;
+      } else {
+        // HS256 POC mode: verify against the in-process token server's secret.
+        claims = verifyAccessToken(token, serverSecret!) as jwt.JwtPayload;
+      }
     } catch (err) {
       if (err instanceof jwt.TokenExpiredError) {
         next(new SmartAuthError(401, 'token_expired'));
@@ -155,10 +287,10 @@ export function createSmartAuthMiddleware(options: SmartAuthMiddlewareOptions) {
       return;
     }
 
+    // Audience check: in RS256 mode, jwt.verify already enforces audience
+    // when the option is passed. In HS256 mode, verifyAccessToken doesn't,
+    // so do it here. Running it in both modes is harmless (belt-and-suspenders).
     if (audience !== undefined) {
-      // jwt.verify in `verifyAccessToken` doesn't enforce audience today;
-      // do the check here so a misconfigured audience surfaces as
-      // `wrong_audience` (a 401, distinct from the 403 scope gate).
       const aud = claims.aud;
       const audMatches = Array.isArray(aud) ? aud.includes(audience) : aud === audience;
       if (!audMatches) {
@@ -178,7 +310,15 @@ export function createSmartAuthMiddleware(options: SmartAuthMiddlewareOptions) {
       return;
     }
 
-    const required = requiredScopesByMethod?.[req.method] ?? [];
+    // Route-level scope check (production) takes precedence over method-level (POC).
+    const fullPath = req.baseUrl + req.path;
+    let required: string[];
+    const routeScopes = matchRouteScopes(compiledRoutes, req.method, fullPath);
+    if (routeScopes !== null) {
+      required = routeScopes;
+    } else {
+      required = requiredScopesByMethod?.[req.method] ?? [];
+    }
     if (!scopeGrantsRequired(claims.scope as string | undefined, required)) {
       next(new SmartAuthError(403, 'insufficient_scope'));
       return;
@@ -189,6 +329,8 @@ export function createSmartAuthMiddleware(options: SmartAuthMiddlewareOptions) {
       scope: claims.scope as string | undefined,
       exp: claims.exp as number | undefined,
       client_id: claims.client_id as string | undefined,
+      iss: claims.iss as string | undefined,
+      fhirUser: (claims as Record<string, unknown>).fhirUser as string | undefined,
     };
     next();
   };

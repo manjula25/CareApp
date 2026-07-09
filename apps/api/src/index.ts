@@ -62,31 +62,87 @@ if (require.main === module) {
   // not yet require/validate this token (the stock hapiproject/hapi image
   // ships no shell to configure a bearer-token interceptor into); the
   // token is minted, exchanged, cached, and attached to every HAPI call.
+  //
+  // S17 (Open Question 8): when SMART_JWKS_URL is set, the middleware
+  // switches to RS256 production mode (Keycloak JWKS). The in-process
+  // token server is still mounted for POC backward compat — production
+  // deployments point SMART_TOKEN_ENDPOINT at Keycloak instead.
   const { publicKey, privateKey } = generateKeyPair();
-  app.use('/smart', createTokenServer({ clientId: SMART_CLIENT_ID, tokenEndpoint: SMART_TOKEN_ENDPOINT, clientPublicKey: publicKey }));
-  const tokenClient = new SmartTokenClient({ clientId: SMART_CLIENT_ID, tokenEndpoint: SMART_TOKEN_ENDPOINT, privateKey });
+  app.use('/smart', createTokenServer({
+    clientId: SMART_CLIENT_ID,
+    tokenEndpoint: SMART_TOKEN_ENDPOINT,
+    clientPublicKey: publicKey,
+    audience: process.env.SMART_AUDIENCE,
+  }));
+  const tokenClient = new SmartTokenClient({
+    clientId: SMART_CLIENT_ID,
+    tokenEndpoint: SMART_TOKEN_ENDPOINT,
+    privateKey,
+    external: !!process.env.SMART_JWKS_URL,
+  });
 
-  // S14 Commit 4 (A) — SMART-on-FHIR enforcement at the app tier. Mounts on
-  // every HAPI-touching route so a missing/tampered/expired/out-of-scope
-  // bearer token surfaces a structured 401/403 here in addition to whatever
-  // HAPI does (B — docker-compose.yml + smart-public.pem bind-mount).
-  // KEEPS `requireAuth` (the login tier) on each route: the developer guard
-  // validates the SMART access-token claim shape, the login guard validates
-  // the CareSync session. Either one failing = 401/403. The error handler
-  // is mounted after the routes so it catches any `SmartAuthError` thrown
-  // out of the middleware above. NOT mounted on /api/auth, /api/health,
-  // /api/events (login shouldn't need a SMART token, health checks
-  // shouldn't auth, CDS Hooks is auth-less by spec, the events relay is
-  // the client SSE stream gated on requireAuth, and the HAPI webhook
-  // target is HAPI's own server-to-server callback).
+  // S14 Commit 4 (A) + S17 (Open Question 8) — SMART-on-FHIR enforcement at
+  // the app tier. Mounts on every HAPI-touching route so a
+  // missing/tampered/expired/out-of-scope bearer token surfaces a structured
+  // 401/403 here in addition to whatever HAPI does.
+  //
+  // Two verification modes:
+  // - POC (default): HS256 via serverSecret (in-process token server).
+  // - Production: RS256 via Keycloak JWKS (when SMART_JWKS_URL is set).
+  //
+  // Scope enforcement:
+  // - POC: method-level (coarse GET/POST gate with wildcard scopes).
+  // - Production: route-level (per-endpoint scopes like
+  //   `GET /api/patients/:id → ['patient/Patient.read']`).
+  //   Route-level takes precedence when both are configured.
+  //
+  // KEEPS `requireAuth` (the login tier) on each route. NOT mounted on
+  // /api/auth, /api/health, /api/events, /cds-services.
   const smartAuth = createSmartAuthMiddleware({
     serverSecret: process.env.SMART_SERVER_SECRET ?? 'caresync-dev-authz-server-secret-do-not-use-in-production',
+    jwksUrl: process.env.SMART_JWKS_URL,
+    issuer: process.env.SMART_ISSUER,
     audience: process.env.SMART_AUDIENCE,
     requiredScopesByMethod: {
       GET: ['system/*.read', 'patient/*.read', 'user/*.read'],
       POST: ['system/*.write', 'patient/*.write', 'user/*.write'],
       PUT: ['system/*.write', 'patient/*.write', 'user/*.write'],
+      PATCH: ['system/*.write', 'patient/*.write', 'user/*.write'],
       DELETE: ['system/*.write', 'patient/*.write', 'user/*.write'],
+    },
+    requiredScopesByRoute: {
+      // Patients
+      'GET /api/patients/assigned': ['patient/Patient.read', 'system/Patient.read'],
+      'GET /api/patients/:id': ['patient/Patient.read', 'system/Patient.read'],
+      // Analysis (reads clinical resources, writes analysis cache)
+      'POST /api/patients/:id/analysis': ['patient/Observation.read', 'patient/Condition.read', 'system/Observation.read', 'system/Condition.read'],
+      // Population (Director-only, system-wide reads)
+      'GET /api/population/scatter': ['system/*.read'],
+      'GET /api/population/summary': ['system/*.read'],
+      'GET /api/population/risk-distribution': ['system/*.read'],
+      // Governance (Director-only, system-wide reads)
+      'GET /api/governance/audit': ['system/*.read'],
+      'GET /api/governance/model': ['system/*.read'],
+      'GET /api/governance/parity': ['system/*.read'],
+      'GET /api/governance/eval': ['system/*.read'],
+      // Tasks
+      'GET /api/tasks': ['patient/Task.read', 'system/Task.read'],
+      'GET /api/tasks/:id': ['patient/Task.read', 'system/Task.read'],
+      'PATCH /api/tasks/:id/assign': ['system/Task.write'],
+      'PATCH /api/tasks/:id/status': ['patient/Task.write', 'system/Task.write'],
+      // SDOH
+      'GET /api/sdoh/resources': ['patient/*.read', 'system/*.read'],
+      'GET /api/sdoh/screening/:patientId': ['patient/Observation.read', 'system/Observation.read'],
+      'POST /api/sdoh/referrals': ['patient/*.write', 'system/*.write'],
+      // Care Plans (Director-only write)
+      'POST /api/care-plans/:patientId': ['system/CarePlan.write'],
+      // Alerts
+      'GET /api/alerts': ['patient/*.read', 'system/*.read'],
+      // Quality (Director-only)
+      'GET /api/quality/measures': ['system/*.read'],
+      'GET /api/quality/deadlines': ['system/*.read'],
+      // Team (Director-only)
+      'GET /api/team/performance': ['system/*.read'],
     },
   });
 

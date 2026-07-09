@@ -174,4 +174,148 @@ describe('createSmartAuthMiddleware', () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true });
   });
+
+  it('route-level scopes take precedence over method-level scopes', async () => {
+    // S17 (Open Question 8): route-level scope requirements override the
+    // coarse method-level gate. A token with `patient/Patient.read` passes
+    // the method-level GET gate (which accepts `patient/*.read`), but the
+    // route-level rule for `GET /api/patients/:id` requires
+    // `patient/Patient.read` specifically — which also passes. The test
+    // verifies the route-level path is matched and enforced.
+    const token = await env.mintToken('patient/Patient.read');
+    const app = env.buildApp({
+      serverSecret: DEFAULT_SERVER_SECRET,
+      requiredScopesByMethod: { GET: ['system/*.read'] },
+      requiredScopesByRoute: { 'GET /test': ['patient/Patient.read'] },
+    });
+
+    const res = await request(app).get('/test').set('Authorization', `Bearer ${token}`);
+
+    // Method-level would reject (patient/Patient.read doesn't match system/*.read
+    // as an exact string, but wildcard matching makes system/*.read NOT match
+    // patient/Patient.read — the * is in the context slot, not the resource).
+    // Route-level accepts patient/Patient.read → 200.
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+  });
+
+  it('route-level scopes reject a token that would pass method-level', async () => {
+    // Token has `system/*.read` (passes method-level GET gate), but the
+    // route-level rule requires `patient/Patient.read` specifically.
+    // `system/*.read` does NOT match `patient/Patient.read` — the context
+    // segment differs (system vs patient), and wildcards only match within
+    // the same segment position.
+    const token = await env.mintToken('system/*.read');
+    const app = env.buildApp({
+      serverSecret: DEFAULT_SERVER_SECRET,
+      requiredScopesByMethod: { GET: ['system/*.read', 'patient/*.read'] },
+      requiredScopesByRoute: { 'GET /test': ['patient/Patient.read'] },
+    });
+
+    const res = await request(app).get('/test').set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: 'smart_auth_failed', reason: 'insufficient_scope' });
+  });
+
+  it('wildcard scope matching: system/*.read grants system/Patient.read', async () => {
+    // S17: SMART wildcard scopes — `system/*.read` should match any
+    // `system/<Resource>.read` requirement. The middleware splits on `/`
+    // and `.`, then checks each segment for `*` wildcard.
+    const token = await env.mintToken('system/*.read');
+    const app = env.buildApp({
+      serverSecret: DEFAULT_SERVER_SECRET,
+      requiredScopesByRoute: { 'GET /test': ['system/Patient.read'] },
+    });
+
+    const res = await request(app).get('/test').set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+  });
+
+  it('wildcard scope matching: patient/*.read does NOT grant system/Patient.read', async () => {
+    // The wildcard only matches within its segment position — `patient/*`
+    // cannot satisfy a `system/*` requirement (different context).
+    const token = await env.mintToken('patient/*.read');
+    const app = env.buildApp({
+      serverSecret: DEFAULT_SERVER_SECRET,
+      requiredScopesByRoute: { 'GET /test': ['system/Patient.read'] },
+    });
+
+    const res = await request(app).get('/test').set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: 'smart_auth_failed', reason: 'insufficient_scope' });
+  });
+
+  it('throws at construction time if neither serverSecret nor jwksUrl is provided', () => {
+    expect(() => createSmartAuthMiddleware({} as never)).toThrow('serverSecret');
+  });
+
+  it('multi-client token server rejects unauthorized scope', async () => {
+    // S17 (Open Question 8): multi-client mode — a client registered with
+    // only `patient/*.read` should be rejected if it requests `system/*.write`.
+    const keys = generateKeyPair();
+    const app = express();
+    app.use(express.urlencoded({ extended: true }));
+    app.use(express.json());
+    const server = app.listen(0);
+    await new Promise((resolve) => server.once('listening', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const tokenEndpoint = `http://localhost:${port}/smart/token`;
+
+    app.use('/smart', createTokenServer({
+      tokenEndpoint,
+      clients: [{
+        clientId: 'caresync-social-worker',
+        publicKey: keys.publicKey,
+        allowedScopes: ['patient/Patient.read', 'patient/Observation.read', 'patient/Task.read', 'patient/Task.write'],
+      }],
+    }));
+
+    const client = new SmartTokenClient({
+      clientId: 'caresync-social-worker',
+      tokenEndpoint,
+      privateKey: keys.privateKey,
+      scope: 'system/*.write',
+    });
+
+    await expect(client.getAccessToken()).rejects.toThrow();
+
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  it('multi-client token server accepts authorized scope', async () => {
+    // The same client requesting a scope it IS registered for should succeed.
+    const keys = generateKeyPair();
+    const app = express();
+    app.use(express.urlencoded({ extended: true }));
+    app.use(express.json());
+    const server = app.listen(0);
+    await new Promise((resolve) => server.once('listening', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const tokenEndpoint = `http://localhost:${port}/smart/token`;
+
+    app.use('/smart', createTokenServer({
+      tokenEndpoint,
+      clients: [{
+        clientId: 'caresync-social-worker',
+        publicKey: keys.publicKey,
+        allowedScopes: ['patient/Patient.read', 'patient/Observation.read', 'patient/Task.read', 'patient/Task.write'],
+      }],
+    }));
+
+    const client = new SmartTokenClient({
+      clientId: 'caresync-social-worker',
+      tokenEndpoint,
+      privateKey: keys.privateKey,
+      scope: 'patient/Patient.read',
+    });
+
+    const token = await client.getAccessToken();
+    expect(verifyAccessToken(token)).toMatchObject({ scope: 'patient/Patient.read' });
+
+    await new Promise((resolve) => server.close(resolve));
+  });
 });

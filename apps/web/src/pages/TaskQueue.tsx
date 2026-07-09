@@ -65,7 +65,8 @@ const PRIORITY_ORDER: Record<TaskListEntry['priority'], number> = {
 
 const TODAY_ISO = new Date().toISOString().split('T')[0];
 
-function isOverdue(due: string): boolean {
+function isOverdue(due: string | undefined): boolean {
+  if (!due) return false;
   // `due` is an ISO datetime ("2026-07-10T05:25:48.764Z"); compare on the
   // day boundary so an 11pm-due task doesn't show as overdue at 1am the same
   // day — only the date matters for the queue list.
@@ -76,7 +77,8 @@ function isOpenStatus(status: string): boolean {
   return status !== 'Done' && status !== 'Cancelled';
 }
 
-function dueDisplay(due: string): { label: string; overdue: boolean } {
+function dueDisplay(due: string | undefined): { label: string; overdue: boolean } {
+  if (!due) return { label: '—', overdue: false };
   if (isOverdue(due)) return { label: 'Overdue', overdue: true };
   // Show the date in compact form: "Jul 10". Keep year for clarity.
   const d = new Date(due);
@@ -91,7 +93,9 @@ function sortTasks(tasks: TaskListEntry[]): TaskListEntry[] {
     const bDone = b.status === 'Done' ? 1 : 0;
     if (aDone !== bDone) return aDone - bDone;
     if (PRIORITY_ORDER[a.priority] !== PRIORITY_ORDER[b.priority]) return PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority];
-    return new Date(a.due).getTime() - new Date(b.due).getTime();
+    const aTime = a.due ? new Date(a.due).getTime() : Number.MAX_SAFE_INTEGER;
+    const bTime = b.due ? new Date(b.due).getTime() : Number.MAX_SAFE_INTEGER;
+    return aTime - bTime;
   });
 }
 
@@ -203,7 +207,7 @@ export function TaskQueue() {
 
   const filtered = sortTasks(safeTasks).filter((t) => {
     if (filter === 'critical') return t.priority === 'critical';
-    if (filter === 'today') return t.due.split('T')[0] === TODAY_ISO;
+    if (filter === 'today') return t.due?.split('T')[0] === TODAY_ISO;
     if (filter === 'in_progress') return t.status === 'In Progress';
     return true;
   });

@@ -34,6 +34,7 @@ import { FhirReadService, PatientBundle } from '../fhir/client';
 import { AuthTokenPayload } from '../auth/jwt';
 import { orchestrate } from '../agents/orchestrator';
 import { validateCitations, validateCitationList } from '../agents/citationValidator';
+import { clampRiskLevel } from '../agents/confidenceScorer';
 import { readAnalysisCache } from '../db/analysisCache';
 import { computeMetrics, LabelRow, PatientFindings, MetricsReport, CareGapFinding, SdohFinding, ActionPlannerTask } from '../eval/computeMetrics';
 import { computeErrorAnalysis, ErrorAnalysis } from '../eval/errorAnalysis';
@@ -122,8 +123,9 @@ async function runLive(bundle: PatientBundle, patientId: string): Promise<Patien
     if (event.type !== 'result') continue;
 
     if (event.agentId === 'risk') {
-      const { valid } = validateCitations(event.output.flags, bundle.validIds);
-      riskFindings = { findings: valid, complete: { riskLevel: event.output.riskLevel } };
+      const clampedOutput = clampRiskLevel(bundle, event.output);
+      const { valid } = validateCitations(clampedOutput.flags, bundle.validIds);
+      riskFindings = { findings: valid, complete: { riskLevel: clampedOutput.riskLevel } };
     } else if (event.agentId === 'careGap') {
       const { valid } = validateCitations(event.output.gaps, bundle.validIds);
       careGapFindings = { findings: valid };

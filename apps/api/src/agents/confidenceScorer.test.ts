@@ -4,7 +4,9 @@ import {
   scoreCareGap,
   scoreSdohBarrier,
   deriveActionPlannerTaskConfidence,
+  clampRiskLevel,
 } from './confidenceScorer';
+import { RiskOutput } from './agent';
 
 /**
  * S14 Commit 3 — TDD for the per-finding confidence scorer.
@@ -147,5 +149,84 @@ describe('confidenceScorer — per-finding bundle-evidence heuristic (S14 Commit
   // is regression-caught.
   it('fixture helper: resourceInBundle is false on empty bundle', () => {
     expect(resourceInBundle(emptyBundle(), 'Anything/whatever')).toBe(false);
+  });
+});
+
+describe('clampRiskLevel (S17 — deterministic post-hoc risk-level clamp)', () => {
+  const highOutput: RiskOutput = {
+    riskScore: 80,
+    riskLevel: 'high',
+    flags: [],
+    readmissionProbability: 0.7,
+  };
+
+  it('clamps 2-anchor-without-labs FP to moderate (pop-0004 pattern: diabetes+CHF, recent encounter, no Observations)', () => {
+    const bundle: PatientBundle = {
+      resources: [
+        { resourceType: 'Condition', id: 'cond-diabetes', code: { coding: [{ code: 'E11.9' }] } },
+        { resourceType: 'Condition', id: 'cond-chf', code: { coding: [{ code: 'I50.9' }] } },
+        { resourceType: 'Encounter', id: 'enc-1', period: { end: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString() } },
+      ],
+      validIds: new Set(['Condition/cond-diabetes', 'Condition/cond-chf', 'Encounter/enc-1']),
+    };
+
+    const result = clampRiskLevel(bundle, highOutput);
+    expect(result.riskLevel).toBe('moderate');
+    expect(result.riskScore).toBe(80); // score preserved
+  });
+
+  it('clamps 0-anchor FP to moderate (james-okafor pattern: COPD only, no encounter, no labs)', () => {
+    const bundle: PatientBundle = {
+      resources: [
+        { resourceType: 'Condition', id: 'cond-copd', code: { coding: [{ code: 'J44.9' }] } },
+      ],
+      validIds: new Set(['Condition/cond-copd']),
+    };
+
+    const result = clampRiskLevel(bundle, highOutput);
+    expect(result.riskLevel).toBe('moderate');
+  });
+
+  it('preserves high for abnormal-lab + recent-encounter override (samuel-wright pattern: CHF + BNP 380 + 36h discharge)', () => {
+    const bundle: PatientBundle = {
+      resources: [
+        { resourceType: 'Condition', id: 'cond-chf', code: { coding: [{ code: 'I50.9' }] } },
+        {
+          resourceType: 'Observation',
+          id: 'obs-bnp',
+          code: { coding: [{ system: 'http://loinc.org', code: '30934-4' }] },
+          valueQuantity: { value: 380, unit: 'pg/mL' },
+        },
+        { resourceType: 'Encounter', id: 'enc-1', period: { end: new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString() } },
+      ],
+      validIds: new Set(['Condition/cond-chf', 'Observation/obs-bnp', 'Encounter/enc-1']),
+    };
+
+    const result = clampRiskLevel(bundle, highOutput);
+    expect(result.riskLevel).toBe('high');
+  });
+
+  it('preserves high when deterministic score ≥ 75 (maria-chen pattern: 3 conditions + recent encounter)', () => {
+    const bundle: PatientBundle = {
+      resources: [
+        { resourceType: 'Condition', id: 'cond-diabetes', code: { coding: [{ code: 'E11.9' }] } },
+        { resourceType: 'Condition', id: 'cond-chf', code: { coding: [{ code: 'I50.9' }] } },
+        { resourceType: 'Condition', id: 'cond-depression', code: { coding: [{ code: 'F33.1' }] } },
+        { resourceType: 'Encounter', id: 'enc-1', period: { end: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString() } },
+      ],
+      validIds: new Set(['Condition/cond-diabetes', 'Condition/cond-chf', 'Condition/cond-depression', 'Encounter/enc-1']),
+    };
+
+    const result = clampRiskLevel(bundle, highOutput);
+    expect(result.riskLevel).toBe('high');
+  });
+
+  it('does not clamp low or moderate levels', () => {
+    const bundle = emptyBundle();
+    const lowOutput: RiskOutput = { ...highOutput, riskLevel: 'low' };
+    const modOutput: RiskOutput = { ...highOutput, riskLevel: 'moderate' };
+
+    expect(clampRiskLevel(bundle, lowOutput).riskLevel).toBe('low');
+    expect(clampRiskLevel(bundle, modOutput).riskLevel).toBe('moderate');
   });
 });

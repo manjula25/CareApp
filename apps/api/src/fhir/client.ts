@@ -475,7 +475,7 @@ export class FhirReadService {
 
   async getAssignedPanel(actor: AuthTokenPayload): Promise<PanelEntry[]> {
     const resource = `Group/${COORDINATOR_PANEL_GROUP_ID}`;
-    this.guard(actor, 'clinical', resource);
+    this.guard(actor, 'demographic', resource);
     const group = await this.fhirFetch<any>(`/${resource}`);
     writeAudit(this.db, { actor: actor.id, action: 'read', fhirResource: resource, outcome: 'success' });
 
