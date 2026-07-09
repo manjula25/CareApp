@@ -88,6 +88,14 @@ export type AgentEvent =
   | { type: 'result'; agentId: 'risk'; output: RiskOutput }
   | { type: 'result'; agentId: 'careGap'; output: CareGapOutput }
   | { type: 'result'; agentId: 'sdoh'; output: SdohOutput }
-  | { type: 'result'; agentId: 'actionPlanner'; output: ActionPlannerOutput };
+  | { type: 'result'; agentId: 'actionPlanner'; output: ActionPlannerOutput }
+  // S18 WSA — token-usage capture. Each `response.completed` event from the
+  // OpenAI Responses API carries a `usage` field (`{input_tokens,
+  // output_tokens, total_tokens}`); the agents yield one `usage` event per
+  // completed LLM call. The eval pipeline (scripts/eval.ts) consumes these
+  // into `docs/eval-report-cost.json` + the `## Cost per analysis` markdown
+  // section. Downstream SSE consumers (routes/analysis.ts) silently skip this
+  // variant — their switch on `event.type` only handles `token` and `result`.
+  | { type: 'usage'; agentId: AgentId; usage: { inputTokens: number; outputTokens: number; totalTokens: number } };
 
 export type Agent = (bundle: PatientBundle) => AsyncIterable<AgentEvent>;

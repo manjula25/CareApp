@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { ActionPlannerOutput, AgentEvent, CareGapOutput, RiskOutput, SdohOutput } from './agent';
 import { MOCK_ACTION_PLANNER_OUTPUT } from './mock-outputs';
+import { extractUsage } from './usage';
 
 // Re-exported for parity with the other agents — the shared Agent contract owns
 // these types (see ./agent.ts).
@@ -164,6 +165,9 @@ export async function* runActionPlannerAgent(
       yield { type: 'token', agentId: 'actionPlanner', text: event.delta };
     } else if (event.type === 'response.completed') {
       toolCall = event.response.output.find((item: any) => item.type === 'function_call' && item.name === 'plan_tasks');
+      // S18 WSA — token-usage capture (see riskAgent.ts comment).
+      const usage = extractUsage(event);
+      if (usage) yield { type: 'usage', agentId: 'actionPlanner', usage };
     }
   }
 

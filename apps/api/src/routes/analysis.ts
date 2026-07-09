@@ -310,6 +310,12 @@ export function createAnalysisRouter(
           }
           continue;
         }
+        // S18 WSA — token-usage events are cost-only (consumed by the
+        // eval pipeline; see scripts/eval.ts:runLive). The SSE/citation
+        // flow below expects a `result` event; `usage` events skip it.
+        if (event.type === 'usage') {
+          continue;
+        }
 
         const remainder = narrationFor(event.agentId).flush();
         if (remainder) {

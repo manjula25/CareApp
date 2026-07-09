@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { PatientBundle } from '../fhir/client';
 import { AgentEvent, RiskOutput } from './agent';
 import { MOCK_RISK_OUTPUT } from './mock-outputs';
+import { extractUsage } from './usage';
 
 // Re-exported for existing importers (routes/analysis.ts, tests) — the shared
 // Agent contract now owns these types (see ./agent.ts).
@@ -258,6 +259,12 @@ export async function* runRiskAgent(bundle: PatientBundle, client?: OpenAI): Asy
       yield { type: 'token', agentId: 'risk', text: event.delta };
     } else if (event.type === 'response.completed') {
       toolCall = event.response.output.find((item: any) => item.type === 'function_call' && item.name === 'report_risk');
+      // S18 WSA — yield token-usage event alongside the tool-call extraction.
+      // `extractUsage` returns null when `event.response.usage` is absent
+      // (per `never-override-real-with-fake.md`); the `if (usage)` guard
+      // skips the yield in that case.
+      const usage = extractUsage(event);
+      if (usage) yield { type: 'usage', agentId: 'risk', usage };
     }
   }
 

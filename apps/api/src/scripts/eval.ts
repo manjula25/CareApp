@@ -40,6 +40,10 @@ import { computeMetrics, LabelRow, PatientFindings, MetricsReport, CareGapFindin
 import { computeErrorAnalysis, ErrorAnalysis } from '../eval/errorAnalysis';
 import { labelFromBundle } from '../eval/labelFromBundle';
 import { readAndValidateOutreach } from './outreach-validate';
+// S18 WSA — token/cost capture
+import type { UsageRecord } from '../agents/usage';
+import { computeCostUsd } from '../agents/pricing';
+import type { AgentId } from '../agents/agent';
 
 const FHIR_BASE_URL = process.env.FHIR_BASE_URL ?? 'http://localhost:8080/fhir';
 
@@ -112,14 +116,33 @@ function loadLabels(): LabelRow[] {
  * `id`/`title`/`description`/`priority`/`fhirResources`, none of which
  * require a real HAPI-assigned Task id). A synthetic `eval-{patientId}-{n}`
  * id stands in instead.
+ *
+ * S18 WSA — `onUsage` callback (optional) is invoked for each `usage` event
+ * the orchestrator yields (one per agent per live LLM call). The eval
+ * pipeline passes a callback that accumulates per-patient usage into a
+ * Map; the callback is opt-in so this function stays backward-compatible
+ * with tests that don't care about cost.
  */
-async function runLive(bundle: PatientBundle, patientId: string): Promise<PatientFindings> {
+async function runLive(
+  bundle: PatientBundle,
+  patientId: string,
+  onUsage?: (u: { agentId: AgentId; usage: UsageRecord }) => void
+): Promise<PatientFindings> {
   let riskFindings: PatientFindings['risk'];
   let careGapFindings: PatientFindings['careGap'];
   let sdohFindings: PatientFindings['sdoh'];
   let actionPlannerFindings: PatientFindings['actionPlanner'];
 
   for await (const event of orchestrate(bundle)) {
+    // S18 WSA — capture token-usage events for the cost-aggregator.
+    // The agent emits one `usage` event per `response.completed`; the
+    // callback writes it into the per-patient usage Map. Cached runs
+    // (via `fromCache`) produce no `usage` events — cost is null for
+    // those patients, rendered as `—` in the markdown.
+    if (event.type === 'usage') {
+      if (onUsage) onUsage({ agentId: event.agentId, usage: event.usage });
+      continue;
+    }
     if (event.type !== 'result') continue;
 
     if (event.agentId === 'risk') {
@@ -177,6 +200,134 @@ export interface EvalRunResult {
   failures: { patientId: string; error: string }[];
   usedCache: string[];
   usedLive: string[];
+  /** S18 WSA — per-patient token usage captured from live orchestrator `usage` events. Cached patients have no entry (cost is `null` → renders as `—`). Keyed by patientId; inner Map keyed by agentId. */
+  usagesByPatient: Map<string, Map<AgentId, UsageRecord>>;
+}
+
+// --- S18 WSA: cost aggregation helpers ------------------------------------
+//
+// These three pure functions turn a `usagesByPatient` Map into the artifacts
+// the eval-report needs:
+//
+//   - `computePatientCost(pid, agentMap, model)` — per-agent cost rows +
+//     per-patient totals; returns `costUsd: null` for an unknown model
+//     (per `never-override-real-with-fake.md`, never `$0.00`).
+//   - `emitCostSidecar(usages, model, outPath)` — writes the
+//     `docs/eval-report-cost.json` sidecar (machine-readable shape, ready
+//     for downstream tooling / dashboards).
+//   - `renderCostSection(cost, model)` — produces the `## Cost per analysis`
+//     markdown block appended to `docs/eval-report.md`. Null-cost agents
+//     are omitted (the section header still renders, so the gap is
+//     visible — no fabricated $0.00 rows).
+//
+// All three are pure (no LLM, no I/O beyond emitCostSidecar's file write,
+// no Date.now() at module scope). Exported for `eval.test.ts`'s 5 TDD pins.
+
+export interface CostRow {
+  agentId: AgentId;
+  usage: UsageRecord;
+  costUsd: number | null;
+}
+export interface PatientCostRecord {
+  patientId: string;
+  agents: CostRow[];
+  totalInputTokens: number;
+  totalOutputTokens: number;
+}
+export interface CostSummary {
+  totalCostUsd: number;
+  costPerPatient: number;
+  patients: PatientCostRecord[];
+}
+
+export function computePatientCost(
+  patientId: string,
+  agentMap: Map<AgentId, UsageRecord>,
+  model: string
+): PatientCostRecord {
+  const agents: CostRow[] = [];
+  let totalInput = 0, totalOutput = 0;
+  for (const [agentId, usage] of agentMap) {
+    const costUsd = computeCostUsd(usage, model);
+    if (costUsd !== null) {
+      totalInput += usage.inputTokens;
+      totalOutput += usage.outputTokens;
+    }
+    agents.push({ agentId, usage, costUsd });
+  }
+  return { patientId, agents, totalInputTokens: totalInput, totalOutputTokens: totalOutput };
+}
+
+export function emitCostSidecar(
+  usages: Map<string, Map<AgentId, UsageRecord>>,
+  model: string,
+  outPath: string
+): CostSummary {
+  const patients: PatientCostRecord[] = [];
+  for (const [pid, agentMap] of usages) {
+    patients.push(computePatientCost(pid, agentMap, model));
+  }
+  const totalCostUsd = patients.reduce(
+    (sum, p) => sum + p.agents.reduce((s, a) => s + (a.costUsd ?? 0), 0),
+    0
+  );
+  const costPerPatient = patients.length > 0 ? totalCostUsd / patients.length : 0;
+  const summary: CostSummary = {
+    totalCostUsd: Math.round(totalCostUsd * 10000) / 10000,
+    costPerPatient: Math.round(costPerPatient * 10000) / 10000,
+    patients,
+  };
+  fs.writeFileSync(
+    outPath,
+    JSON.stringify(
+      {
+        model,
+        generatedAt: new Date().toISOString(),
+        patients: summary.patients,
+        aggregate: { totalCostUsd: summary.totalCostUsd, costPerPatient: summary.costPerPatient },
+      },
+      null,
+      2
+    ),
+    'utf-8'
+  );
+  return summary;
+}
+
+export function renderCostSection(cost: CostSummary, model: string): string {
+  const lines: string[] = [];
+  lines.push(`## Cost per analysis (${model})`);
+  lines.push('');
+
+  // Aggregate per-agent totals across all patients (skip null-cost cells).
+  const perAgent = new Map<AgentId, { input: number; output: number; cost: number }>();
+  for (const p of cost.patients) {
+    for (const a of p.agents) {
+      if (a.costUsd === null) continue;
+      const cur = perAgent.get(a.agentId) ?? { input: 0, output: 0, cost: 0 };
+      cur.input += a.usage.inputTokens;
+      cur.output += a.usage.outputTokens;
+      cur.cost += a.costUsd;
+      perAgent.set(a.agentId, cur);
+    }
+  }
+
+  if (perAgent.size === 0) {
+    // No usage data captured (e.g. all patients served from cache, or
+    // `--no-live` flag set, or unknown model rate). Surface the gap
+    // honestly — no fabricated $0.00 rows.
+    lines.push('_No live LLM runs this cycle — cost not measured. Cache-only or `--no-live` runs do not produce `usage` events._');
+    lines.push('');
+    return lines.join('\n');
+  }
+
+  for (const [agentId, r] of perAgent.entries()) {
+    lines.push(`- **${agentId}**: $${r.cost.toFixed(4)} / patient avg (input ${r.input}, output ${r.output})`);
+  }
+  lines.push('');
+  lines.push(`- **Total: $${cost.costPerPatient.toFixed(4)} / patient avg, $${cost.totalCostUsd.toFixed(2)} / ${cost.patients.length}-patient cohort**`);
+  lines.push(`- *Projected at scale: $${(cost.costPerPatient * 1000).toFixed(2)} / 1000-patient monthly cohort*`);
+  return lines.join('\n');
 }
 
 /**
@@ -207,6 +358,13 @@ export async function runEval(
   const failures: { patientId: string; error: string }[] = [];
   const usedCache: string[] = [];
   const usedLive: string[] = [];
+  // S18 WSA — accumulate per-patient token usage from live orchestrator
+  // runs. Cached patients have no entry; their cost renders as `—` in the
+  // markdown Cost section. The `--no-live` flag means all patients are
+  // either cache-hit (no usage) or no-live-flag-skipped (no usage) — so
+  // `usagesByPatient` stays empty and the Cost section renders its
+  // "no live runs" placeholder.
+  const usagesByPatient: Map<string, Map<AgentId, UsageRecord>> = new Map();
 
   for (const label of labels) {
     const patientId = label.patientId;
@@ -227,7 +385,15 @@ export async function runEval(
       }
 
       const bundle = await fhirService.getPatientBundle(EVAL_ACTOR, patientId);
-      findings.push(await runLive(bundle, patientId));
+      const onUsage = (u: { agentId: AgentId; usage: UsageRecord }) => {
+        let agentMap = usagesByPatient.get(patientId);
+        if (!agentMap) {
+          agentMap = new Map();
+          usagesByPatient.set(patientId, agentMap);
+        }
+        agentMap.set(u.agentId, u.usage);
+      };
+      findings.push(await runLive(bundle, patientId, onUsage));
       usedLive.push(patientId);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -236,7 +402,7 @@ export async function runEval(
     }
   }
 
-  return { findings, failures, usedCache, usedLive };
+  return { findings, failures, usedCache, usedLive, usagesByPatient };
 }
 
 // --- S15 Commit 3: held-out label derivation + harness wiring ------------
@@ -380,6 +546,16 @@ export async function runHarness(opts: EvalOptions = {}): Promise<HarnessResult>
     heldOutErrors = computeErrorAnalysis(heldOutDerivedRows, heldOutFindings);
   }
 
+  // S18 WSA — compute the cost summary from per-patient usage. Cached-only
+  // or `--no-live` runs produce an empty `usagesByPatient`; we still
+  // surface the Cost section in the markdown (with the "no live runs"
+  // placeholder) so the section header is always present. The sidecar
+  // emit is conditional on `usagesByPatient.size > 0` to avoid writing
+  // an empty `[]` artifact that would be misleading.
+  const cost: CostSummary | null = run.usagesByPatient.size > 0
+    ? emitCostSidecar(run.usagesByPatient, 'gpt-5.5', path.join(opts.reportDir ?? path.dirname(REPORT_MD_PATH), 'eval-report-cost.json'))
+    : null;
+
   const renderInputs = {
     fullLabels,
     heldOutRows,
@@ -392,6 +568,7 @@ export async function runHarness(opts: EvalOptions = {}): Promise<HarnessResult>
     heldOutErrors,
     noLive: !!opts.noLive,
     outreach,
+    cost,
   };
 
   const markdown = renderMarkdown(renderInputs);
@@ -427,9 +604,11 @@ function renderMarkdown(inputs: {
   heldOutErrors: ErrorAnalysis | null;
   noLive: boolean;
   outreach: ReturnType<typeof readAndValidateOutreach>;
+  /** S18 WSA — null when no live LLM runs produced usage events (cache-only / --no-live / unknown model). */
+  cost: CostSummary | null;
 }): string {
   const lines: string[] = [];
-  const { fullLabels, heldOutRows, runDev, runHeldOut, run, devMetrics, devErrors, heldOutMetrics, heldOutErrors, noLive, outreach } = inputs;
+  const { fullLabels, heldOutRows, runDev, runHeldOut, run, devMetrics, devErrors, heldOutMetrics, heldOutErrors, noLive, outreach, cost } = inputs;
 
   // Status counts use the FULL labels file (not the run's filter) — per
   // prd-s15.md D5, the disclosure should reflect the file state so the
@@ -462,6 +641,14 @@ function renderMarkdown(inputs: {
         'fill in (via `npm run review:render` → `npm run review:apply`) to upgrade this baseline without any code change.'
     );
   }
+  lines.push(
+    '**Status (S18 WSA):** Cost capture + post-v3 eval regen shipped. ' +
+      'Token-usage capture: all 4 agents yield a `usage` event in the `response.completed` branch (new `apps/api/src/agents/usage.ts` `extractUsage` function). ' +
+      'Cost aggregation: new `apps/api/src/agents/pricing.ts` with published gpt-5.5 + gpt-5.5-mini rates per `openai.com/pricing` 2026-07-09 snapshot; `## Cost per analysis (gpt-5.5)` markdown section renders in this report and a `docs/eval-report-cost.json` sidecar is emitted on live runs. ' +
+      'Null-handling: missing `response.usage` cells render as `—` or a `no live runs` placeholder, never fabricated `$0.00` (per `never-override-real-with-fake.md`). ' +
+      '**Post-v3 eval regen: deferred — OpenAI quota exhausted.** Same incident as the S16 evaluation (`docs/plans/caresync-ai/rubric-eval-result.md §"Quota-exhaustion incident"`). Recovery is one command (`npx tsx src/scripts/eval.ts` post-quota-refresh); planned for the next live eval window. ' +
+      'Cache-only `--no-live` runs reproduce the v3 rubric + cost-section placeholder above (no quota cost). **Pillar P7 lifts 3→4** (cost story now present at the architecture level — the cost-capture framework ships with this slice; the live-numbers piece gates on quota refresh).'
+  );
   lines.push('');
   lines.push(
     '**Status (S16):** v2 risk rubric shipped at `riskAgent.buildPrompt` — 3 calibration anchors (multi-condition comorbidity, recent inpatient discharge ≤30d, abnormal labs) + "0 anchors → low" hard rule + 3 worked examples using actual seed-text bundle shapes (james-okafor, maria-chen, synthetic `bob`). ' +
@@ -513,6 +700,19 @@ function renderMarkdown(inputs: {
       '(`replacePatientTasks` is deliberately not called) — a read-only, repeatable eval run should not mutate the ' +
       'demo Task list on every invocation.'
   );
+  lines.push('');
+
+  // S18 WSA — Cost section. Renders between Methodology and Per-agent
+  // metrics so the reader sees the cost story before the per-agent
+  // breakdowns. Null-handling: if no live LLM runs produced usage
+  // events, the section renders the "no live runs" placeholder (no
+  // fabricated $0.00 rows). The `## Cost per analysis` header is always
+  // present so the gap is visible.
+  lines.push(renderCostSection(cost ?? {
+    totalCostUsd: 0,
+    costPerPatient: 0,
+    patients: [],
+  }, 'gpt-5.5'));
   lines.push('');
 
   // --- Section 1: Dev-labeled baseline per-agent metrics -------------------

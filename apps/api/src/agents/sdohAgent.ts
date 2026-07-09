@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { PatientBundle } from '../fhir/client';
 import { AgentEvent, SdohOutput } from './agent';
 import { MOCK_SDOH_OUTPUT } from './mock-outputs';
+import { extractUsage } from './usage';
 
 // Re-exported for parity with the other agents — the shared Agent contract owns
 // these types (see ./agent.ts).
@@ -136,6 +137,9 @@ export async function* runSdohAgent(bundle: PatientBundle, client?: OpenAI): Asy
       yield { type: 'token', agentId: 'sdoh', text: event.delta };
     } else if (event.type === 'response.completed') {
       toolCall = event.response.output.find((item: any) => item.type === 'function_call' && item.name === 'report_sdoh');
+      // S18 WSA — token-usage capture (see riskAgent.ts comment).
+      const usage = extractUsage(event);
+      if (usage) yield { type: 'usage', agentId: 'sdoh', usage };
     }
   }
 

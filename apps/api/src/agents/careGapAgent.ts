@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { PatientBundle } from '../fhir/client';
 import { AgentEvent, CareGapOutput } from './agent';
 import { MOCK_CARE_GAP_OUTPUT } from './mock-outputs';
+import { extractUsage } from './usage';
 
 // Re-exported for parity with riskAgent — the shared Agent contract owns these
 // types (see ./agent.ts).
@@ -132,6 +133,9 @@ export async function* runCareGapAgent(bundle: PatientBundle, client?: OpenAI): 
       toolCall = event.response.output.find(
         (item: any) => item.type === 'function_call' && item.name === 'report_care_gaps'
       );
+      // S18 WSA — token-usage capture (see riskAgent.ts comment).
+      const usage = extractUsage(event);
+      if (usage) yield { type: 'usage', agentId: 'careGap', usage };
     }
   }
 
