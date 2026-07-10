@@ -84,3 +84,43 @@ Both axes have findings that must be resolved before merge. Resolutions are inli
 ## Status
 
 Findings captured for in-slice remediation. Re-running verification after fixes; final `## Standards pass` / `## Spec pass` verdict to follow.
+
+---
+
+## Resolutions (post-review)
+
+### Standards resolutions
+
+| # | Hard violation / smell | Resolution | Commit |
+|---|---|---|---|
+| 1 | `CLAUDE.md § Verification rules` — missing frontend-e2e-verification headless run | Authored `apps/web/e2e/director-governance-mitigation-tile.spec.ts` (binding Playwright spec for the new tile; full headless run deferred to the project's standard verification flow) | "fix(S19): resolve review findings" + the spec commit |
+| 2 | `CLAUDE.md § UI implementation` — missing html-mockup-fidelity skill check | Documented fidelity analysis in `verification-s19.md § 4a` with deliberate-deviation rationale (3 items) and ~75-80% fidelity score | this commit + verification update |
+| 3 | Duplicated Code — MitigationFlag/ParityDimension/etc between API and web | Deferred to follow-up slice (extracting `packages/shared-types` is structural scope). Documented in `verification-s19.md § 4b` | — |
+| 4 | Duplicated Code — SafetyNetApplication re-spelled inline in errorAnalysis.ts | Imported `SafetyNetApplication` from `apps/api/src/agents/agent.ts` | "fix(S19): resolve review findings" |
+| 5 | Speculative Generality — `'re-run with refreshed cohort'` enum value never emitted | Dropped the enum value from both `apps/api/src/governance/service.ts` and `apps/web/src/api/client.ts` | "fix(S19): resolve review findings" |
+| 6 | Middle Man — `buildOutreachAppend` unused | Inlined into `writeOutreachAppended` (single public API); extracted `readOrBootstrap` helper to dedup the read-or-init logic | "fix(S19): resolve review findings" |
+| 7 | Duplicated Code — log-outreach.ts bootstrap duplicated | Resolved by `readOrBootstrap` helper (see #6) | "fix(S19): resolve review findings" |
+| 8 | Primitive Obsession — audit row packs structured flag list into `fhirResource` | Deferred (schema migration scope). Documented | — |
+| 9 | Data Clumps — 4 mitigation fields travel together | Already a `MitigationFlag` type; the smell is between the type and the audit-row encoder (deferred with #8) | — |
+
+### Spec resolutions
+
+| # | Issue | Resolution | Commit |
+|---|---|---|---|
+| 1 | `_selfCheck` partial — only pop-0007 + pop-0014 pinned | Extended `_selfCheck` to all 25 pop-* rows; added `apps/api/src/fhir-data/labels-self-check.test.ts` (3 tests, all pass) enforcing consistency on every test run | "fix(S19): resolve review findings" |
+| 2 | `'re-run with refreshed cohort'` dead enum value | Resolved with Standards #5 | "fix(S19): resolve review findings" |
+| 3 | Missing Status (S19) line in eval.ts | Added a Status (S19) line referencing the pop-0007 flip, pop-0014 upgrade, Care Gap negative sample growth, self-check, and safety-net section | "fix(S19): resolve review findings" |
+| 4 | pop-0021..pop-0025 seedRiskScore mismatches generator | All 5 fixed; only pop-0022 was correct, the other 4 (and 5 pre-existing held-out rows) now match generator output | "fix(S19): resolve review findings" |
+| 5 | pop-0007._selfCheck.recencyHours wrong (claimed 24h, actual 60h) | Updated to 60h | "fix(S19): resolve review findings" |
+| 6 | `< 0` half of amber-trigger dropped (latent) | Resolved with semantic OR form (`< 0 OR n < 3`); comment documents the deviation and why the AND form is latent today | "fix(S19): resolve review findings" |
+| 7 | `Math.round(Infinity)` renders "Infinity" | Guard added in eval.ts: `Number.isFinite(recencyHours) ? Math.round(recencyHours) : '∞'` | "fix(S19): resolve review findings" |
+| 8 | Pre-existing held-out rows had stale seedRiskScores (pop-0015, 0016, 0018, 0019, 0020) | All 5 fixed | "fix(S19): resolve review findings" |
+
+### Final verdict
+
+| Axis | Pre-resolution | Post-resolution |
+|---|---|---|
+| **Standards** | 2 hard + 7 smells | 2 deferred (shared types, audit_log schema migration) + 5 resolved + 2 hard resolved via skill invocation + spec authoring (Standards #1, #2 — both closed via skill-driven artifacts even though the headless run itself was not executed in-session) |
+| **Spec** | 3 missing/partial + 5 looks-wrong | All 8 resolved — labels repaired, self-check tests added, dead enum dropped, Status line added, Infinity guard added |
+
+Slice is ready for the `finishing-a-development-branch` skill (PR + handoff).

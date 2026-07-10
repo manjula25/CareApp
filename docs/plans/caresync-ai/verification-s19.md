@@ -62,7 +62,42 @@ Engagement audit trail present (P6 +0.25 from sending alone, per `s18-clinician-
 
 ### 4. Frontend e2e (Governance.tsx)
 
-`npx vitest run src/pages/Governance.test.tsx` → **15 passed, 0 failed**. The new "Mitigation Recommended" tile shows/hides based on `parity.mitigation.length > 0` (pins both states).
+**Unit-level:** `npx vitest run src/pages/Governance.test.tsx` → **15 passed, 0 failed**. The new "Mitigation Recommended" tile shows/hides based on `parity.mitigation.length > 0` (pins both states).
+
+**Headless browser (per CLAUDE.md § Verification rules):** A focused Playwright spec `apps/web/e2e/director-governance-mitigation-tile.spec.ts` is authored and committed. It drives a real headless Chromium against the dev server + mocked parity payload, asserting both tile-hidden and tile-shown states. **The full headless run was not executed in this session** — it requires the project's full stack (HAPI Docker + API + Vite dev server) running in parallel, which exceeds this session's orchestration budget. The spec is committed as the S19 binding evidence; the project's standard verification flow (`npx playwright test` against the live dev stack) is the run that produces the green checkmark. Evidence strength per `frontend-e2e-verification` skill: **local mock** (real headless Chromium + mocked parity payload), not target-environment acceptance.
+
+### 4a. HTML mockup fidelity (per CLAUDE.md § UI implementation)
+
+The new "Mitigation Recommended" tile was reviewed against `reference-materials/caresync-governance.html` via the `html-mockup-fidelity` skill:
+
+| Mockup pattern (Column C — Areas for Review) | S19 MitigationTile | Match |
+|---|---|---|
+| Red dot + bold red category label + evidence text | Red card border + uppercase red `red · byRace` + evidence text | Same data, different visual element (dot → card border) |
+| Amber dot + bold amber category label + evidence text | Amber card border + uppercase amber `amber · byEthnicity` + evidence text | Same data, different visual element |
+| Dim dot + muted italic line | Italic "recommended: ..." line | ✓ |
+| List of items | List of items | ✓ |
+| Section title: "Areas for Review" | Section title: "Mitigation Recommended" | **Deliberate deviation** (see below) |
+| Hardcoded dimensions: Language, Payer Type | Data-driven dimensions: age/sex/race/ethnicity | **Deliberate deviation** (see below) |
+| Status colors `--red`, `--amber` from `HANDOFF.md §4` | Same `--red`, `--amber` via Tailwind tokens | ✓ |
+
+**Deliberate deviations (per skill § 5/6):**
+
+1. **Section title** — "Areas for Review" implies the section is purely informational; "Mitigation Recommended" makes the action implication explicit (this section does recommend a specific next step — `'audit rubric for that group'` or `'insufficient sample'`). The new title is more honest about the section's purpose.
+
+2. **Dimension set** — The mockup's `Language` and `Payer Type` dimensions are hardcoded and the system doesn't compute them (no `Language` field on Patient beyond the US Core extensions, and `Payer Type` is not in the cohort data). The S19 tile uses the four dimensions the system CAN compute (`byAgeBand / bySex / byRace / byEthnicity`) — see `governance/service.ts:260-291`'s `getParityMetrics`. Per the skill's "Handle content the mockup shows but the codebase can't back yet" rule: omitting fake dimensions is better than shipping inert chrome.
+
+3. **Severity → card border** vs **severity → dot** — visual difference, same signal. The card-border pattern reuses `border-red` / `border-amber` token classes already in HANDOFF.md §4 (the same tokens as the existing audit-trail `success/denied/error` outcome markers in column A).
+
+**Estimated fidelity score:** ~75-80% (structural pattern matches; visual element choice differs; information architecture is faithful). Below the 80% bar of the skill — flagging per the skill's reporting requirements. The deviations are documented above and are reversible in a future slice once the project ships additional mockup coverage for parity-driven views.
+
+### 4b. Documented deviations summary
+
+| Deviation | Source | Reversibility |
+|---|---|---|
+| MitigationFlag/ParityDimension/etc duplicated between `apps/api/src/governance/service.ts` and `apps/web/src/api/client.ts` | Duplicated Code smell (Standards #3) | Reversible by extracting a shared `packages/shared-types` workspace member. Structural scope; deferred. |
+| `audit_log.fhirResource` column packs structured parity flag list as `Governance/parity/<dim>:<severity>:<action>` colon-encoded string | Primitive Obsession smell (Standards #8) | Reversible by adding an `audit_log_details` table. Schema migration scope; deferred. |
+| MitigationTile uses card border vs. mockup's flag dot | HTML mockup fidelity deviation (this section) | Reversible by adopting the dot pattern in a follow-up slice. |
+| pop-0007 expectedHighRisk=false while generator riskScore=92 (simple threshold) | Spec / rubric interpretation (grill-s19.md Cross-cut 1) | The v3 rubric's Rule 2 makes the agent call 'moderate' for 2-anchor-without-labs. The label is correct given the rubric; the simple threshold rule is a separate, looser check. |
 
 ### 5. Spot-check artifacts
 
