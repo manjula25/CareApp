@@ -76,6 +76,30 @@ export interface RiskOutput {
   riskLevel: 'low' | 'moderate' | 'high' | 'critical';
   flags: RiskFlag[];
   readmissionProbability: number;
+  // S19 Thread D — when the deterministic `clampRiskLevel` safety net
+  // downgrades an LLM-emitted 'high' or 'critical' to 'moderate', the
+  // output carries an `_safetyNetApplied` sentinel describing the
+  // intervention. Optional (only present on downgrade). The leading
+  // underscore is the codebase's tool-internal-fields convention
+  // (`_meta`, `_selfCheck`); consumer code can ignore the field by
+  // structural typing. The eval harness reads this field to surface
+  // `## Safety-net activity` in `docs/eval-report.md`.
+  _safetyNetApplied?: SafetyNetApplication;
+}
+
+// S19 Thread D — structured shape of a single clamp intervention.
+// Pure-data; mirrors the deterministic scoring the clamp uses internally
+// (conditionCount, recencyHours, deterministicScore) plus the from/to
+// riskLevel transition. Stored verbatim in `RiskOutput._safetyNetApplied`
+// so the eval-report's `## Safety-net activity` section can render
+// per-patient (from, to, deterministicScore) without re-running the clamp.
+export interface SafetyNetApplication {
+  kind: 'risk-level-clamped';
+  from: 'high' | 'critical';
+  to: 'moderate';
+  deterministicScore: number;
+  conditionCount: number;
+  recencyHours: number;
 }
 
 /**

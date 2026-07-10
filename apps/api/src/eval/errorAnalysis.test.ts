@@ -168,4 +168,114 @@ describe('computeErrorAnalysis (S9 B1 — pure extraction, TDD)', () => {
     ].some((entry) => entry.patientId === 'p6');
     expect(mentionsP6).toBe(false);
   });
+
+  // S19 Thread D — safety-net activity extraction. Pin behavior when
+  // findings carry `risk.complete.safetyNetApplied` (the clamp sentinel).
+  describe('safetyNetActivity (S19 Thread D)', () => {
+    it('extracts a clamp intervention from risk.complete.safetyNetApplied', () => {
+      // Build a fresh finding for p3 (which has expectedHighRisk: true) with
+      // a safetyNetApplied sentinel attached, mimicking a pop-0007-style
+      // clamp-downgrade scenario.
+      const findingsWithClamp = [
+        ...findings,
+        {
+          patientId: 'p3',
+          risk: {
+            findings: [],
+            complete: {
+              riskLevel: 'moderate',
+              safetyNetApplied: {
+                kind: 'risk-level-clamped',
+                from: 'high',
+                to: 'moderate',
+                deterministicScore: 72,
+                conditionCount: 3,
+                recencyHours: 800,
+              },
+            },
+          },
+        },
+      ];
+      const result = computeErrorAnalysis(labels, findingsWithClamp);
+      expect(result.safetyNetActivity).toHaveLength(1);
+      expect(result.safetyNetActivity[0]).toMatchObject({
+        patientId: 'p3',
+        kind: 'risk-level-clamped',
+        from: 'high',
+        to: 'moderate',
+        deterministicScore: 72,
+        conditionCount: 3,
+        recencyHours: 800,
+      });
+    });
+
+    it('does NOT extract when risk.complete lacks the safetyNetApplied sentinel', () => {
+      // Default findings have no sentinel; safetyNetActivity should be empty.
+      const result = computeErrorAnalysis(labels, findings);
+      expect(result.safetyNetActivity).toEqual([]);
+    });
+
+    it('does NOT extract when safetyNetApplied.kind is not risk-level-clamped', () => {
+      const findingsWithOtherKind = [
+        ...findings,
+        {
+          patientId: 'p3',
+          risk: {
+            findings: [],
+            complete: {
+              riskLevel: 'moderate',
+              // intentionally wrong kind — future slices may add more
+              // safety-net kinds; only the documented one is captured.
+              safetyNetApplied: {
+                kind: 'some-future-kind',
+                from: 'high',
+                to: 'moderate',
+                deterministicScore: 72,
+                conditionCount: 3,
+                recencyHours: 800,
+              },
+            },
+          },
+        },
+      ];
+      const result = computeErrorAnalysis(labels, findingsWithOtherKind);
+      expect(result.safetyNetActivity).toEqual([]);
+    });
+
+    it('extracts one entry per patient that triggered the clamp (no dedup)', () => {
+      // Two clamp events on different patients → two entries.
+      const findingsWithMultipleClamps = [
+        ...findings,
+        {
+          patientId: 'p3',
+          risk: {
+            findings: [],
+            complete: {
+              riskLevel: 'moderate',
+              safetyNetApplied: {
+                kind: 'risk-level-clamped', from: 'high', to: 'moderate',
+                deterministicScore: 72, conditionCount: 3, recencyHours: 800,
+              },
+            },
+          },
+        },
+        {
+          patientId: 'p4',
+          risk: {
+            findings: [],
+            complete: {
+              riskLevel: 'moderate',
+              safetyNetApplied: {
+                kind: 'risk-level-clamped', from: 'critical', to: 'moderate',
+                deterministicScore: 50, conditionCount: 2, recencyHours: 192,
+              },
+            },
+          },
+        },
+      ];
+      const result = computeErrorAnalysis(labels, findingsWithMultipleClamps);
+      expect(result.safetyNetActivity).toHaveLength(2);
+      expect(result.safetyNetActivity.map((e) => e.patientId).sort()).toEqual(['p3', 'p4']);
+    });
+  });
 });

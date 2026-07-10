@@ -337,12 +337,18 @@ export function createAnalysisRouter(
             agentFindings.push({ fhirResourceId: finding.fhirResourceId, confidence: finding.confidence });
             writeSseEvent(res, 'finding', { agentId: 'risk', ...finding });
           }
+          // S19 Thread D — surface the `_safetyNetApplied` sentinel into the
+          // persisted `complete` shape so the eval harness can render
+          // `## Safety-net activity` in `docs/eval-report.md`. The field
+          // is omitted when the clamp was a no-op (preserves high/critical
+          // or is non-applicable to low/moderate inputs).
           const complete = {
             riskScore: clampedOutput.riskScore,
             riskLevel: clampedOutput.riskLevel,
             readmissionProbability: clampedOutput.readmissionProbability,
             findingCount: scored.length,
             droppedCount: dropped.length,
+            ...(clampedOutput._safetyNetApplied ? { safetyNetApplied: clampedOutput._safetyNetApplied } : {}),
           };
           writeSseEvent(res, 'complete', { agentId: 'risk', ...complete });
           resultJson.risk = { narration: narrationText.get('risk') ?? '', findings: scored, complete };

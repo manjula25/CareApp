@@ -1,6 +1,6 @@
 import { PatientBundle } from '../fhir/client';
 import { riskScoreFor, CRITICAL_RISK_THRESHOLD } from '../fhir-data/population';
-import { RiskOutput } from './agent';
+import { RiskOutput, SafetyNetApplication } from './agent';
 
 /**
  * S14 Commit 3 — per-finding confidence via a deterministic, auditable
@@ -308,6 +308,13 @@ function mostRecentEncounterHours(bundle: PatientBundle): number {
  *
  * 'low' and 'moderate' levels are never clamped. The score is preserved
  * regardless of the level change — only the label is corrected.
+ *
+ * S19 Thread D — on downgrade, the returned object carries an
+ * `_safetyNetApplied` sentinel describing the intervention. The eval
+ * harness reads this field to render `## Safety-net activity` in
+ * `docs/eval-report.md`. When the LLM's rating is preserved (no
+ * intervention), no sentinel is attached — the absence is itself a
+ * signal that the clamp was a no-op for that bundle.
  */
 export function clampRiskLevel(bundle: PatientBundle, output: RiskOutput): RiskOutput {
   if (output.riskLevel !== 'high' && output.riskLevel !== 'critical') {
@@ -326,5 +333,16 @@ export function clampRiskLevel(bundle: PatientBundle, output: RiskOutput): RiskO
     return output;
   }
 
-  return { ...output, riskLevel: 'moderate' };
+  // Downgrade path. Attach the sentinel so downstream consumers can
+  // observe the clamp's behavior. The shape mirrors the inputs the
+  // clamp computed internally — no re-derivation needed at read time.
+  const sentinel: SafetyNetApplication = {
+    kind: 'risk-level-clamped',
+    from: output.riskLevel,
+    to: 'moderate',
+    deterministicScore,
+    conditionCount,
+    recencyHours,
+  };
+  return { ...output, riskLevel: 'moderate', _safetyNetApplied: sentinel };
 }

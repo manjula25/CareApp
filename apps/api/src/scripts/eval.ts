@@ -830,6 +830,29 @@ function renderMarkdown(inputs: {
   }
   lines.push('');
 
+  // --- Section 7: Safety-net activity (S19 Thread D) ----------------------
+  // Renders one row per clamp intervention. The clamp
+  // (`apps/api/src/agents/confidenceScorer.ts:clampRiskLevel`) attaches a
+  // `_safetyNetApplied` sentinel to the Risk output when it downgrades
+  // an LLM-emitted 'high'/'critical' to 'moderate' on insufficient
+  // bundle evidence. This section makes that behavior visible to a
+  // reviewer so the clamp's interventions are auditable.
+  lines.push('## Safety-net activity');
+  lines.push('');
+  const safetyNetEntries: { patientId: string; from: 'high' | 'critical'; to: 'moderate'; deterministicScore: number; conditionCount: number; recencyHours: number }[] = [];
+  if (runDev && devErrors) safetyNetEntries.push(...devErrors.safetyNetActivity);
+  if (runHeldOut && heldOutErrors) safetyNetEntries.push(...heldOutErrors.safetyNetActivity);
+  if (safetyNetEntries.length === 0) {
+    lines.push('No clamp interventions recorded this run.');
+  } else {
+    lines.push('| Patient | From → To | Deterministic Score | Conditions | Recency (h) |');
+    lines.push('| --- | --- | --- | --- | --- |');
+    for (const e of safetyNetEntries) {
+      lines.push(`| ${e.patientId} | ${e.from} → ${e.to} | ${e.deterministicScore} | ${e.conditionCount} | ${Math.round(e.recencyHours)} |`);
+    }
+  }
+  lines.push('');
+
   return lines.join('\n');
 }
 

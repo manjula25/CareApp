@@ -230,3 +230,121 @@ describe('clampRiskLevel (S17 — deterministic post-hoc risk-level clamp)', () 
     expect(clampRiskLevel(bundle, modOutput).riskLevel).toBe('moderate');
   });
 });
+
+// S19 Thread D — safety-net transparency. The clamp's behavior is
+// unchanged from S17 (logic preserved exactly). The change is the
+// `_safetyNetApplied` sentinel on the returned object: when the clamp
+// downgrades, the sentinel describes the intervention. When the clamp
+// is a no-op (preserves or is non-applicable), no sentinel is attached.
+describe('clampRiskLevel — _safetyNetApplied sentinel (S19 Thread D)', () => {
+  const highOutput: RiskOutput = {
+    riskScore: 80,
+    riskLevel: 'high',
+    flags: [],
+    readmissionProbability: 0.7,
+  };
+
+  it('attaches _safetyNetApplied when downgrading high → moderate on a 2-anchor-without-labs bundle', () => {
+    const bundle: PatientBundle = {
+      resources: [
+        { resourceType: 'Condition', id: 'cond-diabetes', code: { coding: [{ code: 'E11.9' }] } },
+        { resourceType: 'Condition', id: 'cond-chf', code: { coding: [{ code: 'I50.9' }] } },
+        { resourceType: 'Encounter', id: 'enc-1', period: { end: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString() } },
+      ],
+      validIds: new Set(['Condition/cond-diabetes', 'Condition/cond-chf', 'Encounter/enc-1']),
+    };
+
+    const result = clampRiskLevel(bundle, highOutput);
+    expect(result.riskLevel).toBe('moderate');
+    expect(result._safetyNetApplied).toBeDefined();
+    expect(result._safetyNetApplied!.kind).toBe('risk-level-clamped');
+    expect(result._safetyNetApplied!.from).toBe('high');
+    expect(result._safetyNetApplied!.to).toBe('moderate');
+    expect(result._safetyNetApplied!.conditionCount).toBe(2);
+    // Recency: 8 days ≈ 192h. riskScoreFor(2, 192): 168 < 192 ≤ 720 →
+    // recency bonus = 0.04. 0.10 + 0.36 + 0.04 + 0 (no 3-condition
+    // bonus for 2-condition mix) = 0.50 → 50.
+    expect(result._safetyNetApplied!.recencyHours).toBeCloseTo(192, -1);
+    expect(result._safetyNetApplied!.deterministicScore).toBe(50);
+  });
+
+  it('attaches _safetyNetApplied when downgrading critical → moderate (pop-0007 fixture pattern)', () => {
+    // pop-0007-style bundle: 3-condition comorbidity, 24h recent
+    // discharge, NO Observations. Per the v3 rubric Rule 2, the agent's
+    // call would be 'high' or 'critical' based on Anchor A + B; the
+    // clamp downgrades because deterministicScore depends on the recency
+    // (here: 24h → bonus +0.20 → 0.10+0.54+0.20+0.08 = 0.92 → 92). At
+    // 92, deterministicScore >= 75 → FIRST preservation fires → output
+    // preserved. So pop-0007 (i=6) with recency=24h actually does NOT
+    // trigger the clamp. The realistic pop-0007-clamp scenario is when
+    // the recency is past the 720h bonus but the LLM still called
+    // 'high'. Build that bundle here.
+    const bundle: PatientBundle = {
+      resources: [
+        { resourceType: 'Condition', id: 'cond-1', code: { coding: [{ code: 'E11.9' }] } },
+        { resourceType: 'Condition', id: 'cond-2', code: { coding: [{ code: 'I50.9' }] } },
+        { resourceType: 'Condition', id: 'cond-3', code: { coding: [{ code: 'F33.1' }] } },
+        // Encounter 800h ago (~33 days ago) — past the 720h bonus,
+        // recency bonus = 0. deterministicScore = 0.10+0.54+0+0.08 = 0.72 → 72 < 75.
+        { resourceType: 'Encounter', id: 'enc-1', period: { end: new Date(Date.now() - 800 * 60 * 60 * 1000).toISOString() } },
+      ],
+      validIds: new Set(['Condition/cond-1', 'Condition/cond-2', 'Condition/cond-3', 'Encounter/enc-1']),
+    };
+    const criticalOutput: RiskOutput = { ...highOutput, riskLevel: 'critical' };
+
+    const result = clampRiskLevel(bundle, criticalOutput);
+    expect(result.riskLevel).toBe('moderate');
+    expect(result._safetyNetApplied).toBeDefined();
+    expect(result._safetyNetApplied!.kind).toBe('risk-level-clamped');
+    expect(result._safetyNetApplied!.from).toBe('critical');
+    expect(result._safetyNetApplied!.to).toBe('moderate');
+    expect(result._safetyNetApplied!.conditionCount).toBe(3);
+    expect(result._safetyNetApplied!.deterministicScore).toBe(72);
+  });
+
+  it('does NOT attach _safetyNetApplied when the clamp is a no-op (preserves high on samuel-wright pattern)', () => {
+    const bundle: PatientBundle = {
+      resources: [
+        { resourceType: 'Condition', id: 'cond-chf', code: { coding: [{ code: 'I50.9' }] } },
+        {
+          resourceType: 'Observation',
+          id: 'obs-bnp',
+          code: { coding: [{ system: 'http://loinc.org', code: '30934-4' }] },
+          valueQuantity: { value: 380, unit: 'pg/mL' },
+        },
+        { resourceType: 'Encounter', id: 'enc-1', period: { end: new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString() } },
+      ],
+      validIds: new Set(['Condition/cond-chf', 'Observation/obs-bnp', 'Encounter/enc-1']),
+    };
+
+    const result = clampRiskLevel(bundle, highOutput);
+    expect(result.riskLevel).toBe('high');
+    expect(result._safetyNetApplied).toBeUndefined();
+  });
+
+  it('does NOT attach _safetyNetApplied for low or moderate inputs (clamp is non-applicable)', () => {
+    const bundle = emptyBundle();
+    const lowOutput: RiskOutput = { ...highOutput, riskLevel: 'low' };
+    const modOutput: RiskOutput = { ...highOutput, riskLevel: 'moderate' };
+
+    expect(clampRiskLevel(bundle, lowOutput)._safetyNetApplied).toBeUndefined();
+    expect(clampRiskLevel(bundle, modOutput)._safetyNetApplied).toBeUndefined();
+  });
+
+  it('preserves riskScore through the clamp (only riskLevel changes)', () => {
+    // The clamp's design rule (S17 §3): "The score is preserved regardless
+    // of the level change — only the label is corrected." The sentinel
+    // records the deterministic score separately; the original output's
+    // riskScore is unchanged.
+    const bundle: PatientBundle = {
+      resources: [
+        { resourceType: 'Condition', id: 'cond-copd', code: { coding: [{ code: 'J44.9' }] } },
+      ],
+      validIds: new Set(['Condition/cond-copd']),
+    };
+    const result = clampRiskLevel(bundle, { ...highOutput, riskScore: 88 });
+    expect(result.riskScore).toBe(88); // preserved
+    expect(result.riskLevel).toBe('moderate'); // downgraded
+    expect(result._safetyNetApplied).toBeDefined();
+  });
+});

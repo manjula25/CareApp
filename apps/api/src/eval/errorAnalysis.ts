@@ -45,11 +45,27 @@ export interface DataGapEntry {
   reason: string;
 }
 
+// S19 Thread D — extracted from `RiskOutput._safetyNetApplied` (when the
+// clamp downgraded an LLM-emitted 'high'/'critical' to 'moderate'). The
+// eval-report's `## Safety-net activity` section renders one row per
+// entry so a reviewer can audit how often the clamp intervened and on
+// what bundle evidence.
+export interface SafetyNetEntry {
+  patientId: string;
+  kind: 'risk-level-clamped';
+  from: 'high' | 'critical';
+  to: 'moderate';
+  deterministicScore: number;
+  conditionCount: number;
+  recencyHours: number;
+}
+
 export interface ErrorAnalysis {
   careGap: { falseNegatives: CareGapErrorEntry[]; falsePositives: CareGapErrorEntry[] };
   risk: { falseNegatives: RiskErrorEntry[]; falsePositives: RiskErrorEntry[] };
   sdoh: { disagreements: SdohDisagreementEntry[] };
   dataGaps: DataGapEntry[];
+  safetyNetActivity: SafetyNetEntry[];
 }
 
 /**
@@ -65,6 +81,7 @@ export function computeErrorAnalysis(labels: LabelRow[], findings: PatientFindin
   const riskFalsePositives: RiskErrorEntry[] = [];
   const sdohDisagreements: SdohDisagreementEntry[] = [];
   const dataGaps: DataGapEntry[] = [];
+  const safetyNetActivity: SafetyNetEntry[] = [];
 
   for (const label of labels) {
     const patientFindings = findingsByPatientId.get(label.patientId);
@@ -75,6 +92,27 @@ export function computeErrorAnalysis(labels: LabelRow[], findings: PatientFindin
           'No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped.',
       });
       continue;
+    }
+
+    // S19 Thread D — read `risk.complete.safetyNetApplied` if present.
+    // The shape is `{kind, from, to, deterministicScore, conditionCount,
+    // recencyHours}` per `SafetyNetApplication` (apps/api/src/agents/agent.ts).
+    // The field is omitted when the clamp was a no-op; reading defensively
+    // here keeps the extractor robust to that absence.
+    const riskComplete = patientFindings.risk?.complete as
+      | { safetyNetApplied?: { kind: string; from: 'high' | 'critical'; to: 'moderate'; deterministicScore: number; conditionCount: number; recencyHours: number } }
+      | undefined;
+    const safetyNet = riskComplete?.safetyNetApplied;
+    if (safetyNet && safetyNet.kind === 'risk-level-clamped') {
+      safetyNetActivity.push({
+        patientId: label.patientId,
+        kind: 'risk-level-clamped',
+        from: safetyNet.from,
+        to: safetyNet.to,
+        deterministicScore: safetyNet.deterministicScore,
+        conditionCount: safetyNet.conditionCount,
+        recencyHours: safetyNet.recencyHours,
+      });
     }
 
     if (label.careGap.expectedHasGap !== null && patientFindings.careGap) {
@@ -112,5 +150,6 @@ export function computeErrorAnalysis(labels: LabelRow[], findings: PatientFindin
     risk: { falseNegatives: riskFalseNegatives, falsePositives: riskFalsePositives },
     sdoh: { disagreements: sdohDisagreements },
     dataGaps,
+    safetyNetActivity,
   };
 }
