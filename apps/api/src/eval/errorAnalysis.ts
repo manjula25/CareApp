@@ -1,4 +1,5 @@
 import { LabelRow, PatientFindings, HIGH_RISK_LEVELS } from './computeMetrics';
+import { SafetyNetApplication } from '../agents/agent';
 
 /**
  * S9 B1 — pure extraction of the specific misses (false negatives) and false
@@ -95,12 +96,11 @@ export function computeErrorAnalysis(labels: LabelRow[], findings: PatientFindin
     }
 
     // S19 Thread D — read `risk.complete.safetyNetApplied` if present.
-    // The shape is `{kind, from, to, deterministicScore, conditionCount,
-    // recencyHours}` per `SafetyNetApplication` (apps/api/src/agents/agent.ts).
-    // The field is omitted when the clamp was a no-op; reading defensively
-    // here keeps the extractor robust to that absence.
+    // The shape is `SafetyNetApplication` (apps/api/src/agents/agent.ts);
+    // imported above. The field is omitted when the clamp was a no-op;
+    // reading defensively here keeps the extractor robust to that absence.
     const riskComplete = patientFindings.risk?.complete as
-      | { safetyNetApplied?: { kind: string; from: 'high' | 'critical'; to: 'moderate'; deterministicScore: number; conditionCount: number; recencyHours: number } }
+      | { safetyNetApplied?: SafetyNetApplication }
       | undefined;
     const safetyNet = riskComplete?.safetyNetApplied;
     if (safetyNet && safetyNet.kind === 'risk-level-clamped') {

@@ -43,12 +43,196 @@
         "module": "apps/api/src/fhir-data/population.ts",
         "PRNG": "mulberry32",
         "seed": "0xc0ffee",
-        "RECENCY_HOURS_OPTIONS": [24, 60, 100, 200, 400, 800, 1500, 3000],
-        "forceRecencyForIndex": { "13": 24 },
+        "RECENCY_HOURS_OPTIONS": [
+          24,
+          60,
+          100,
+          200,
+          400,
+          800,
+          1500,
+          3000
+        ],
+        "forceRecencyForIndex": {
+          "13": 24
+        },
         "ABNORMAL_VALUES_INDEX": 13
       },
-      "pop-0007": { "i": 6, "recencyHours": 24, "conditionCount": 3, "generatorRiskScore": 92, "rubricAnchors": { "A": true, "B": true, "C": false }, "expectedRiskLevel": "moderate", "expectedHighRisk": false },
-      "pop-0014": { "i": 13, "recencyHours": 24, "conditionCount": 3, "generatorRiskScore": 92, "rubricAnchors": { "A": true, "B": true, "C": true }, "expectedRiskLevel": "critical", "expectedHighRisk": true }
+      "pop-0007": {
+        "i": 6,
+        "recencyHours": 60,
+        "conditionCount": 3,
+        "expectedRiskScore": 92,
+        "expectedHighRisk": false
+      },
+      "pop-0014": {
+        "i": 13,
+        "recencyHours": 24,
+        "conditionCount": 3,
+        "expectedRiskScore": 92,
+        "expectedHighRisk": true
+      },
+      "pop-0001": {
+        "i": 0,
+        "recencyHours": 100,
+        "conditionCount": 1,
+        "expectedRiskScore": 38,
+        "expectedHighRisk": false
+      },
+      "pop-0002": {
+        "i": 1,
+        "recencyHours": 100,
+        "conditionCount": 1,
+        "expectedRiskScore": 38,
+        "expectedHighRisk": false
+      },
+      "pop-0003": {
+        "i": 2,
+        "recencyHours": 400,
+        "conditionCount": 1,
+        "expectedRiskScore": 32,
+        "expectedHighRisk": false
+      },
+      "pop-0004": {
+        "i": 3,
+        "recencyHours": 60,
+        "conditionCount": 2,
+        "expectedRiskScore": 66,
+        "expectedHighRisk": false
+      },
+      "pop-0005": {
+        "i": 4,
+        "recencyHours": 400,
+        "conditionCount": 2,
+        "expectedRiskScore": 50,
+        "expectedHighRisk": false
+      },
+      "pop-0006": {
+        "i": 5,
+        "recencyHours": 800,
+        "conditionCount": 2,
+        "expectedRiskScore": 46,
+        "expectedHighRisk": false
+      },
+      "pop-0008": {
+        "i": 7,
+        "recencyHours": 400,
+        "conditionCount": 1,
+        "expectedRiskScore": 32,
+        "expectedHighRisk": false
+      },
+      "pop-0009": {
+        "i": 8,
+        "recencyHours": 60,
+        "conditionCount": 1,
+        "expectedRiskScore": 48,
+        "expectedHighRisk": false
+      },
+      "pop-0010": {
+        "i": 9,
+        "recencyHours": 3000,
+        "conditionCount": 1,
+        "expectedRiskScore": 28,
+        "expectedHighRisk": false
+      },
+      "pop-0011": {
+        "i": 10,
+        "recencyHours": 3000,
+        "conditionCount": 2,
+        "expectedRiskScore": 46,
+        "expectedHighRisk": false
+      },
+      "pop-0012": {
+        "i": 11,
+        "recencyHours": 60,
+        "conditionCount": 2,
+        "expectedRiskScore": 66,
+        "expectedHighRisk": false
+      },
+      "pop-0013": {
+        "i": 12,
+        "recencyHours": 100,
+        "conditionCount": 2,
+        "expectedRiskScore": 56,
+        "expectedHighRisk": false
+      },
+      "pop-0015": {
+        "i": 14,
+        "recencyHours": 24,
+        "conditionCount": 1,
+        "expectedRiskScore": 48,
+        "expectedHighRisk": false
+      },
+      "pop-0016": {
+        "i": 15,
+        "recencyHours": 24,
+        "conditionCount": 1,
+        "expectedRiskScore": 48,
+        "expectedHighRisk": false
+      },
+      "pop-0017": {
+        "i": 16,
+        "recencyHours": 60,
+        "conditionCount": 1,
+        "expectedRiskScore": 48,
+        "expectedHighRisk": false
+      },
+      "pop-0022": {
+        "i": 21,
+        "recencyHours": 1500,
+        "conditionCount": 1,
+        "expectedRiskScore": 28,
+        "expectedHighRisk": false
+      },
+      "pop-0018": {
+        "i": 17,
+        "recencyHours": 800,
+        "conditionCount": 2,
+        "expectedRiskScore": 46,
+        "expectedHighRisk": false
+      },
+      "pop-0019": {
+        "i": 18,
+        "recencyHours": 60,
+        "conditionCount": 2,
+        "expectedRiskScore": 66,
+        "expectedHighRisk": false
+      },
+      "pop-0020": {
+        "i": 19,
+        "recencyHours": 400,
+        "conditionCount": 2,
+        "expectedRiskScore": 50,
+        "expectedHighRisk": false
+      },
+      "pop-0021": {
+        "i": 20,
+        "recencyHours": 800,
+        "conditionCount": 3,
+        "expectedRiskScore": 72,
+        "expectedHighRisk": false
+      },
+      "pop-0023": {
+        "i": 22,
+        "recencyHours": 24,
+        "conditionCount": 1,
+        "expectedRiskScore": 48,
+        "expectedHighRisk": false
+      },
+      "pop-0024": {
+        "i": 23,
+        "recencyHours": 800,
+        "conditionCount": 1,
+        "expectedRiskScore": 28,
+        "expectedHighRisk": false
+      },
+      "pop-0025": {
+        "i": 24,
+        "recencyHours": 200,
+        "conditionCount": 2,
+        "expectedRiskScore": 50,
+        "expectedHighRisk": false
+      }
     }
   },
   "patients": [
@@ -67,7 +251,10 @@
       },
       "sdoh": {
         "expectedHasBarrier": true,
-        "expectedDomains": ["housing", "food"],
+        "expectedDomains": [
+          "housing",
+          "food"
+        ],
         "notes": "Observation/maria-chen-sdoh: AHC-HRSN screening positive for housing instability and food insecurity."
       },
       "actionPlanner": {
@@ -89,7 +276,10 @@
       },
       "sdoh": {
         "expectedHasBarrier": true,
-        "expectedDomains": ["transportation", "financial"],
+        "expectedDomains": [
+          "transportation",
+          "financial"
+        ],
         "notes": "Seed AHC-HRSN screening Observation/james-okafor-sdoh added 2026-07-08 — positive for transportation and financial barriers (dev interpretation; profile: COPD + recent inpatient supports post-discharge access barriers)."
       },
       "actionPlanner": {
@@ -153,7 +343,10 @@
       },
       "sdoh": {
         "expectedHasBarrier": true,
-        "expectedDomains": ["mental-health", "social-isolation"],
+        "expectedDomains": [
+          "mental-health",
+          "social-isolation"
+        ],
         "notes": "Seed AHC-HRSN screening Observation/angela-diaz-sdoh added 2026-07-08 — positive for mental-health-access and social-isolation barriers (dev interpretation; profile: HTN + depression with zero Observations signals access gaps)."
       },
       "actionPlanner": {
@@ -385,7 +578,10 @@
       },
       "sdoh": {
         "expectedHasBarrier": true,
-        "expectedDomains": ["social-isolation", "financial"],
+        "expectedDomains": [
+          "social-isolation",
+          "financial"
+        ],
         "notes": "Seed AHC-HRSN screening Observation/pop-0010-sdoh added 2026-07-08 — positive for social-isolation and financial barriers (dev interpretation of procedural profile: depression with no Observations and demographics consistent with limited resources)."
       },
       "actionPlanner": {
@@ -486,8 +682,8 @@
       },
       "risk": {
         "expectedHighRisk": false,
-        "seedRiskScore": 38,
-        "notes": "Held-out set patient; risk label derived from `_meta.labelingRules.risk` (riskScoreFor ≥ 75) — generator riskScore 38 < 75."
+        "seedRiskScore": 48,
+        "notes": "Held-out set patient; risk label derived from _meta.labelingRules.risk (riskScoreFor ≥ 75) — generator riskScore 48 < 75."
       },
       "sdoh": {
         "expectedHasBarrier": null,
@@ -507,8 +703,8 @@
       },
       "risk": {
         "expectedHighRisk": false,
-        "seedRiskScore": 28,
-        "notes": "Held-out set patient; risk label derived from `_meta.labelingRules.risk` (riskScoreFor ≥ 75) — generator riskScore 28 < 75."
+        "seedRiskScore": 48,
+        "notes": "Held-out set patient; risk label derived from _meta.labelingRules.risk (riskScoreFor ≥ 75) — generator riskScore 48 < 75."
       },
       "sdoh": {
         "expectedHasBarrier": null,
@@ -549,8 +745,8 @@
       },
       "risk": {
         "expectedHighRisk": false,
-        "seedRiskScore": 66,
-        "notes": "Held-out set patient; risk label derived from `_meta.labelingRules.risk` (riskScoreFor ≥ 75) — generator riskScore 66 < 75."
+        "seedRiskScore": 46,
+        "notes": "Held-out set patient; risk label derived from _meta.labelingRules.risk (riskScoreFor ≥ 75) — generator riskScore 46 < 75."
       },
       "sdoh": {
         "expectedHasBarrier": null,
@@ -570,8 +766,8 @@
       },
       "risk": {
         "expectedHighRisk": false,
-        "seedRiskScore": 56,
-        "notes": "Held-out set patient; risk label derived from `_meta.labelingRules.risk` (riskScoreFor ≥ 75) — generator riskScore 56 < 75."
+        "seedRiskScore": 66,
+        "notes": "Held-out set patient; risk label derived from _meta.labelingRules.risk (riskScoreFor ≥ 75) — generator riskScore 66 < 75."
       },
       "sdoh": {
         "expectedHasBarrier": null,
@@ -591,8 +787,8 @@
       },
       "risk": {
         "expectedHighRisk": false,
-        "seedRiskScore": 66,
-        "notes": "Held-out set patient; risk label derived from `_meta.labelingRules.risk` (riskScoreFor ≥ 75) — generator riskScore 66 < 75."
+        "seedRiskScore": 50,
+        "notes": "Held-out set patient; risk label derived from _meta.labelingRules.risk (riskScoreFor ≥ 75) — generator riskScore 50 < 75."
       },
       "sdoh": {
         "expectedHasBarrier": null,
@@ -612,8 +808,8 @@
       },
       "risk": {
         "expectedHighRisk": false,
-        "seedRiskScore": 32,
-        "notes": "Procedural patient (i=20); riskScoreFor(3, recency from RNG) — the recency is past the 720h bonus threshold for this index, so riskScore stays under 75."
+        "seedRiskScore": 72,
+        "notes": "S19 C1: 3-condition procedural patient (i=20, mix[6]); recency 800h. buildObservationsForIndex(20, conditions) seeds HbA1c (LOINC 4548-4) + BNP (LOINC 30934-4) on file. Generator riskScore 72 < 75."
       },
       "sdoh": {
         "expectedHasBarrier": false,
@@ -654,8 +850,8 @@
       },
       "risk": {
         "expectedHighRisk": false,
-        "seedRiskScore": 38,
-        "notes": "Procedural patient (i=22); riskScoreFor(1, recency from RNG) — single-condition mix, no comorbidity bonus."
+        "seedRiskScore": 48,
+        "notes": "S19 C1: 1-condition procedural patient (CHF; i=22, mix[1]); recency 24h. buildObservationsForIndex(22, conditions) does NOT fire (i=22%7=1 ≠ 6), so no BNP on file. Generator riskScore 48 < 75."
       },
       "sdoh": {
         "expectedHasBarrier": false,
@@ -675,8 +871,8 @@
       },
       "risk": {
         "expectedHighRisk": false,
-        "seedRiskScore": 22,
-        "notes": "Procedural patient (i=23); riskScoreFor(1, recency from RNG) — single-condition mix (depression), no comorbidity bonus."
+        "seedRiskScore": 28,
+        "notes": "Procedural patient (depression; i=23, mix[2]); recency 800h. Generator riskScore 28 < 75."
       },
       "sdoh": {
         "expectedHasBarrier": false,
@@ -696,8 +892,8 @@
       },
       "risk": {
         "expectedHighRisk": false,
-        "seedRiskScore": 66,
-        "notes": "Procedural patient (i=24); riskScoreFor(2, recency from RNG) — 2-condition mix without 3-condition comorbidity bonus."
+        "seedRiskScore": 50,
+        "notes": "S19 C1: 2-condition procedural patient (diabetes + CHF; i=24, mix[3]); recency 200h. buildObservationsForIndex(24, conditions) does NOT fire (i=24%7=3 ≠ 6), so no HbA1c and no BNP on file. Generator riskScore 50 < 75."
       },
       "sdoh": {
         "expectedHasBarrier": false,

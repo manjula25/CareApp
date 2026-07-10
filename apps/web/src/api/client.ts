@@ -201,7 +201,6 @@ export interface ParityGroupStat {
 export type ParityDimension = 'byAgeBand' | 'bySex' | 'byRace' | 'byEthnicity';
 export type ParitySeverity = 'amber' | 'red';
 export type ParityRecommendedAction =
-  | 're-run with refreshed cohort'
   | 'audit rubric for that group'
   | 'insufficient sample';
 

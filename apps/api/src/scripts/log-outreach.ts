@@ -54,30 +54,29 @@ const BOOTSTRAP_META = {
     'By adding a `reviewer` entry, the committer affirms the reviewer has consented to their name being recorded in this public eval artifact.',
 };
 
-/**
- * Pure: read, validate-current, append, validate-new, return. Caller
- * (`main()`) is the only place that writes the file.
- */
-export function buildOutreachAppend(args: AddArgs): AddResult {
-  // --- Read existing (or initialize empty) ------------------------------
-  let current: unknown = { _meta: BOOTSTRAP_META, invitations: [] };
-  if (fs.existsSync(OUTREACH_PATH)) {
-    try {
-      current = JSON.parse(fs.readFileSync(OUTREACH_PATH, 'utf-8'));
-    } catch (err) {
-      return {
-        ok: false,
-        errors: [`failed to parse existing JSON: ${err instanceof Error ? err.message : String(err)}`],
-      };
-    }
+/** Read the existing JSON file or return a known-valid bootstrap baseline.
+ *  Pure: no I/O outside the file system call. */
+function readOrBootstrap(): { current: unknown; exists: boolean } {
+  if (!fs.existsSync(OUTREACH_PATH)) {
+    return { current: { _meta: BOOTSTRAP_META, invitations: [] }, exists: false };
   }
-
+  let current: unknown;
+  try {
+    current = JSON.parse(fs.readFileSync(OUTREACH_PATH, 'utf-8'));
+  } catch (err) {
+    throw new Error(`failed to parse existing JSON: ${err instanceof Error ? err.message : String(err)}`);
+  }
   // Defensive: if the existing file is missing the expected shape, start
   // from a known-empty baseline rather than failing silently.
   if (!current || typeof current !== 'object' || !Array.isArray((current as { invitations?: unknown }).invitations)) {
-    current = { _meta: BOOTSTRAP_META, invitations: [] };
+    return { current: { _meta: BOOTSTRAP_META, invitations: [] }, exists: true };
   }
+  return { current, exists: true };
+}
 
+/** Atomic write: build the JSON string, then write in one shot. */
+export function writeOutreachAppended(args: AddArgs): AddResult {
+  const { current } = readOrBootstrap();
   const entry = {
     reviewer: args.reviewer,
     sentAt: args.sentAt,
@@ -90,32 +89,11 @@ export function buildOutreachAppend(args: AddArgs): AddResult {
     invitations: [...((current as { invitations: unknown[] }).invitations), entry],
   };
 
+  // Validate before writing — the schema is the source of truth.
   const verdict = validateOutreach(next);
   if (!verdict.ok) {
     return { ok: false, errors: verdict.errors };
   }
-  return { ok: true, entry, errors: [] };
-}
-
-/** Atomic write: build the JSON string, then write in one shot. */
-export function writeOutreachAppended(args: AddArgs): AddResult {
-  const built = buildOutreachAppend(args);
-  if (!built.ok) return built;
-  // Re-read for the atomic-write (re-reads in case two log-outreach runs
-  // happen at the same wall-clock second — would be lost without this;
-  // PID uniqueness is the larger guard).
-  let current: unknown = { _meta: BOOTSTRAP_META, invitations: [] };
-  if (fs.existsSync(OUTREACH_PATH)) {
-    current = JSON.parse(fs.readFileSync(OUTREACH_PATH, 'utf-8'));
-  }
-  if (!current || typeof current !== 'object' || !Array.isArray((current as { invitations?: unknown }).invitations)) {
-    current = { _meta: BOOTSTRAP_META, invitations: [] };
-  }
-  const entry = built.entry!;
-  const next = {
-    ...(current as Record<string, unknown>),
-    invitations: [...((current as { invitations: unknown[] }).invitations), entry],
-  };
   fs.writeFileSync(OUTREACH_PATH, JSON.stringify(next, null, 2), 'utf-8');
   return { ok: true, entry, errors: [] };
 }

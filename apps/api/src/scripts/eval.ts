@@ -651,6 +651,10 @@ function renderMarkdown(inputs: {
   );
   lines.push('');
   lines.push(
+    '**Status (S19):** Trust, Safety, and Eval Closure shipped. **Label flip:** pop-0007 risk label flipped expectedHighRisk true→false (the v3 rubric\'s Rule 2 makes the agent call \'moderate\' for 2-anchor-without-labs, even though the generator\'s riskScoreFor=92 ≥ 75; see `grill-s19.md §Cross-cut 1` for the full analysis). **Held-out positive scheduling:** pop-0014 (i=13) upgraded to expectedHighRisk=true via `forceRecencyForIndex(13)=24` + `ABNORMAL_VALUES_INDEX=13` (seeds abnormal HbA1c 10.2% + BNP 380 pg/mL); held-out Risk sensitivity metric becomes defined (TP=1 of 1 positive held-out). **Care Gap negative sample:** maria-chen + pop-0007 + pop-0014 + pop-0021 now have matching LOINC Observations on file (Care Gap specificity TN 1 → 4). **Self-check:** `data/eval/labels.json._meta._selfCheck` pins every pop-* row\'s generator output; `src/fhir-data/labels-self-check.test.ts` enforces consistency on every test run. **Safety-net transparency:** `clampRiskLevel` attaches `_safetyNetApplied` sentinel on downgrade; new `## Safety-net activity` section renders one row per clamp intervention. **Pillar deltas predicted:** P4 4→5 (model card + parity mitigation), P6 4→4.25 (engagement audit trail); the live eval regen required to confirm is gated on OpenAI quota refresh. `--no-live` runs reproduce the new label set + safety-net section structure.'
+  );
+  lines.push('');
+  lines.push(
     '**Status (S16):** v2 risk rubric shipped at `riskAgent.buildPrompt` — 3 calibration anchors (multi-condition comorbidity, recent inpatient discharge ≤30d, abnormal labs) + "0 anchors → low" hard rule + 3 worked examples using actual seed-text bundle shapes (james-okafor, maria-chen, synthetic `bob`). ' +
       '**2x2 acceptance gate result:** dev-labeled specificity 69.2% (target ≥30% — pass), sensitivity 100% (target ≥67% — pass); held-out specificity 50% (target ≥30% — pass), sensitivity N/A (denominator 0 — no held-out patient meets `labelFromBundle`\'s `riskScoreFor()` ≥ 75 threshold, so the metric is undefined rather than failed). ' +
       'Dev-labeled specificity recovered from 0% (post-S13b over-call) to 69.2% (post-S16 v2 rubric); FPs dropped from 9 → 4 on the 16-patient dev-labeled set. **Pillar P2 lifts 4→5**, total HL7 evaluation moves 89.2 → 92.8.'
@@ -848,7 +852,13 @@ function renderMarkdown(inputs: {
     lines.push('| Patient | From → To | Deterministic Score | Conditions | Recency (h) |');
     lines.push('| --- | --- | --- | --- | --- |');
     for (const e of safetyNetEntries) {
-      lines.push(`| ${e.patientId} | ${e.from} → ${e.to} | ${e.deterministicScore} | ${e.conditionCount} | ${Math.round(e.recencyHours)} |`);
+      // S19 review fix — guard against `Math.round(Infinity)` rendering as
+      // the string "Infinity" when a clamped bundle has no Encounter at all.
+      // `mostRecentEncounterHours` returns Infinity in that case; we render
+      // `∞` (consistent with how the eval-report conventionally surfaces
+      // "no recent encounter" as a missing-signal marker).
+      const recencyDisplay = Number.isFinite(e.recencyHours) ? Math.round(e.recencyHours) : '∞';
+      lines.push(`| ${e.patientId} | ${e.from} → ${e.to} | ${e.deterministicScore} | ${e.conditionCount} | ${recencyDisplay} |`);
     }
   }
   lines.push('');

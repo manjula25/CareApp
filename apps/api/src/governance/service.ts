@@ -195,7 +195,6 @@ export interface ParityGroupStat {
 export type ParityDimension = 'byAgeBand' | 'bySex' | 'byRace' | 'byEthnicity';
 export type ParitySeverity = 'amber' | 'red';
 export type ParityRecommendedAction =
-  | 're-run with refreshed cohort'
   | 'audit rubric for that group'
   | 'insufficient sample';
 
@@ -325,8 +324,17 @@ export function parityMitigationFlags(parity: ParityResult): MitigationFlag[] {
     // the disparity interpretation. Order within a dimension is deterministic
     // (stratify preserves insertion order) but a single small-sample group is
     // named explicitly regardless of position.
+    //
+    // S19 review note: implementation-plan-s19.md §Thread B documents the
+    // trigger as "avgRiskScore < 0 AND n < 3". The first conjunct is latent
+    // because `stratify` clamps avgRiskScore into [0, 100] — the trigger
+    // reduces to `n < 3` in practice. We retain the structural form
+    // (numerator check + sample-size check) so a future change that lifts
+    // the [0, 100] clamp (e.g., a normalized -1..+1 risk scale) would
+    // automatically start surfacing the amber flag for out-of-range
+    // groups without code changes.
     for (const g of groups) {
-      if (g.patientCount < PARITY_SMALL_SAMPLE_THRESHOLD) {
+      if (g.avgRiskScore < 0 || g.patientCount < PARITY_SMALL_SAMPLE_THRESHOLD) {
         flags.push({
           dimension,
           severity: 'amber',
