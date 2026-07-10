@@ -1199,14 +1199,26 @@ export function PatientDetail() {
     </div>
   );
 
-  // Caresync-coordinator-grid-my-patients — directors go back to /panel
-  // (their list view), coordinators go back to /coordinator (the grid view
-  // ported from the lead project). The RoleGuard would redirect anyway,
-  // but going to the correct path skips the extra navigation.
-  const backPath = user?.role === 'coordinator' ? '/coordinator' : '/panel';
+  // S20 back-navigation — directors go back to /population (their new
+  // cohort dashboard, the role-home `useAuth.roleHome()` returns), coordinators
+  // go back to /coordinator (the assigned-panel grid view ported from the
+  // lead project), and social workers go back to /tasks (their role-home).
+  //
+  // Pre-S20 this used `user?.role === 'coordinator' ? '/coordinator' : '/panel'`
+  // — the `: '/panel'` branch sent directors to the legacy `PatientPanel` page,
+  // which is an orphan route (no Sidebar entry) that predates the
+  // /population director overview. After visiting a patient from the
+  // /population scatter and clicking "back", directors landed on the
+  // legacy view instead of /population, breaking the navigation loop.
+  // RoleGuard would also have rejected social workers at /panel (director-only),
+  // forcing an extra redirect to /tasks; routing them directly avoids that.
+  const backPath =
+    user?.role === 'coordinator' ? '/coordinator'
+      : user?.role === 'social_worker' ? '/tasks'
+      : '/population';
   const BackLink = () => (
     <Link to={backPath} className="text-label text-cyan hover:underline">
-      ← My Patient Panel
+      ← {user?.role === 'coordinator' ? 'My Patients' : user?.role === 'social_worker' ? 'Task Queue' : 'Population'}
     </Link>
   );
 

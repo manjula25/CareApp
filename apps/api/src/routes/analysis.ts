@@ -207,12 +207,14 @@ export function createAnalysisRouter(
         });
         try {
           replayCachedAnalysis(res, cached.resultJson as AnalysisResultJson);
-        } catch {
-          // Same error-boundary convention the live path uses below: headers
-          // are already sent by this point, so an SSE `error` event is the
-          // only way left to signal failure (e.g. a malformed/legacy cached
-          // shape) — no `done` fires on this path either.
-          writeSseEvent(res, 'error', { message: 'Analysis failed' });
+        } catch (err) {
+          // Headers are already sent by this point, so an SSE `error` event
+          // is the only way left to signal failure to the client — no `done`
+          // fires on this path either. Include the actual `err.message` so
+          // the user sees the real reason (e.g. "OpenAI quota exceeded"),
+          // not a hard-coded string that hides what's broken.
+          console.error('[analysis] replay threw:', err);
+          writeSseEvent(res, 'error', { message: (err as Error)?.message ?? 'Analysis failed' });
         }
         res.end();
         return;
@@ -439,12 +441,16 @@ export function createAnalysisRouter(
         console.error('analysis cache write failed (run still succeeded):', err);
       }
       writeSseEvent(res, 'done', {});
-    } catch {
+    } catch (err) {
       // The connection is already open (res.writeHead ran above) — an SSE
       // error event is the only way left to tell the client the run failed;
       // headers can't change to a 5xx status at this point. No `done` fires
       // on this path — its absence is itself part of the failure signal.
-      writeSseEvent(res, 'error', { message: 'Analysis failed' });
+      // Include the actual `err.message` so the user sees the real reason
+      // (e.g. "OpenAI quota exceeded"), not a hard-coded string that hides
+      // what's broken. Server-side log keeps the full stack for debugging.
+      console.error('[analysis] live run threw:', err);
+      writeSseEvent(res, 'error', { message: (err as Error)?.message ?? 'Analysis failed' });
     }
 
     res.end();

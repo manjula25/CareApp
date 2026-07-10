@@ -1,5 +1,12 @@
 import OpenAI from 'openai';
-import { ActionPlannerOutput, AgentEvent, CareGapOutput, RiskOutput, SdohOutput } from './agent';
+import {
+  ActionPlannerOutput,
+  ActionPlannerTaskFinding,
+  AgentEvent,
+  CareGapOutput,
+  RiskOutput,
+  SdohOutput,
+} from './agent';
 import { MOCK_ACTION_PLANNER_OUTPUT } from './mock-outputs';
 import { extractUsage } from './usage';
 
@@ -123,6 +130,19 @@ function buildPrompt(inputs: { risk: RiskOutput; careGap: CareGapOutput; sdoh: S
  * inject a fake and avoid any live network/API call (and avoid ever
  * constructing the real client at all).
  */
+/**
+ * S20 — demo fallback. The action planner's live path is downstream of the
+ * other three agents and never reads the FHIR bundle directly — its LLM
+ * prompt is built from the Risk/CareGap/SDOH structured outputs only
+ * (analysis.ts:80-83, `unionOfCitedIds`).
+ *
+ * The same provenance chain applies here in fallback: each task's
+ * `fhirResources` cites the first upstream flag/gap/barrier the three
+ * `streamMock*` agents emitted (which now themselves cite real bundle IDs,
+ * so these transitively pass the citation gate). If all three upstream
+ * arrays are empty, this fallback produces zero tasks — the same honest-
+ * empty shape the other agents have.
+ */
 async function* streamMockActionPlanner(
   inputs: { risk: RiskOutput; careGap: CareGapOutput; sdoh: SdohOutput }
 ): AsyncIterable<AgentEvent> {
@@ -133,8 +153,54 @@ async function* streamMockActionPlanner(
       '[demo fallback — OPENAI_API_KEY is unset] Synthesizing the three upstream findings into a prioritized worklist. ' +
       'Tasks are flagged with their care-domain (clinical/sdoh) and assignee.',
   };
-  yield { type: 'result', agentId: 'actionPlanner', output: MOCK_ACTION_PLANNER_OUTPUT };
-  void inputs;
+
+  const tasks: ActionPlannerTaskFinding[] = [];
+
+  const riskFirst = inputs.risk.flags[0];
+  if (riskFirst) {
+    tasks.push({
+      title: 'Review risk-flagged condition',
+      description: `Risk agent flagged a finding tied to ${riskFirst.fhirResourceId}; coordinate clinical follow-up.`,
+      priority: 'high',
+      domain: 'clinical',
+      assignTo: 'coordinator',
+      dueInDays: 7,
+      fhirResources: [riskFirst.fhirResourceId],
+      confidence: 0.5,
+    });
+  }
+
+  const careGapFirst = inputs.careGap.gaps[0];
+  if (careGapFirst) {
+    tasks.push({
+      title: 'Close overdue care gap',
+      description: `Care Gap agent identified an overdue item tied to ${careGapFirst.fhirResourceId}; schedule the recommended activity.`,
+      priority: 'medium',
+      domain: 'clinical',
+      assignTo: 'coordinator',
+      dueInDays: 14,
+      fhirResources: [careGapFirst.fhirResourceId],
+      confidence: 0.5,
+    });
+  }
+
+  const sdohFirst = inputs.sdoh.barriers[0];
+  if (sdohFirst) {
+    tasks.push({
+      title: 'Address SDOH barrier',
+      description: `SDOH agent flagged a barrier tied to ${sdohFirst.fhirResourceId}; engage social worker.`,
+      priority: 'medium',
+      domain: 'sdoh',
+      assignTo: 'social_worker',
+      dueInDays: 7,
+      fhirResources: [sdohFirst.fhirResourceId],
+      confidence: 0.5,
+    });
+  }
+
+  void MOCK_ACTION_PLANNER_OUTPUT;
+  const output: ActionPlannerOutput = { tasks };
+  yield { type: 'result', agentId: 'actionPlanner', output };
 }
 
 export async function* runActionPlannerAgent(

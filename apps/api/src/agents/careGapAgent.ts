@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { PatientBundle } from '../fhir/client';
-import { AgentEvent, CareGapOutput } from './agent';
+import { AgentEvent, CareGapFinding, CareGapOutput } from './agent';
 import { MOCK_CARE_GAP_OUTPUT } from './mock-outputs';
 import { extractUsage } from './usage';
 
@@ -94,6 +94,13 @@ function buildPrompt(bundle: PatientBundle): string {
  * a fake and avoid any live network/API call (and avoid ever constructing the
  * real client at all).
  */
+/**
+ * S20 — demo fallback. Mirrors `streamMockRisk`: the citation gates run in
+ * `routes/analysis.ts:358`, so every `gaps[].fhirResourceId` MUST exist in
+ * `bundle.validIds` or the whole gap gets dropped. Picking real Conditions
+ * (cap 2) and emitting one chronic-care-monitoring gap per condition makes
+ * the demo show findings; empty bundle produces an honest empty `gaps`.
+ */
 async function* streamMockCareGap(bundle: PatientBundle): AsyncIterable<AgentEvent> {
   yield {
     type: 'token',
@@ -102,8 +109,21 @@ async function* streamMockCareGap(bundle: PatientBundle): AsyncIterable<AgentEve
       '[demo fallback — OPENAI_API_KEY is unset] Reviewing preventive and chronic-care items. ' +
       'Identifying overdue screenings and missing monitoring items.',
   };
-  yield { type: 'result', agentId: 'careGap', output: MOCK_CARE_GAP_OUTPUT };
-  void bundle;
+
+  const gaps: CareGapFinding[] = [];
+  for (const c of bundle.resources.filter((r) => r?.resourceType === 'Condition').slice(0, 2)) {
+    const code = c?.code?.coding?.[0]?.display ?? c?.code?.text ?? c?.id;
+    gaps.push({
+      gapType: 'Chronic-condition follow-up',
+      description: `Active ${code} condition — chronic-care monitoring recommended.`,
+      urgency: 'medium',
+      fhirResourceId: `Condition/${c.id}`,
+      confidence: 0.5,
+    });
+  }
+
+  const output: CareGapOutput = { gaps };
+  yield { type: 'result', agentId: 'careGap', output };
 }
 
 export async function* runCareGapAgent(bundle: PatientBundle, client?: OpenAI): AsyncIterable<AgentEvent> {

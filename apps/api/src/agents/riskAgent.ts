@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { PatientBundle } from '../fhir/client';
-import { AgentEvent, RiskOutput } from './agent';
+import { AgentEvent, RiskFlag, RiskOutput } from './agent';
 import { MOCK_RISK_OUTPUT } from './mock-outputs';
 import { extractUsage } from './usage';
 
@@ -202,12 +202,23 @@ export function buildPrompt(bundle: PatientBundle): string {
 }
 
 /**
- * S12 B.1 — demo fallback. When `OPENAI_API_KEY` is unset, the real path
- * can't run (lazy `getOpenAiClient()` would throw). Yields one narrated
- * token + the deterministic `MOCK_RISK_OUTPUT` so the SSE stream still
- * emits the right shape. Citations are likely to be dropped downstream
- * (mock ids aren't in any real bundle) — acceptable for a demo where the
- * point is "show the pipeline", not "show validated citations".
+ * S20 — demo fallback. When `OPENAI_API_KEY` is unset (or quota is exhausted),
+ * the real path can't run (lazy `getOpenAiClient()` would throw or 429).
+ * Yields one narrated token + a result whose `riskScore`/`riskLevel`/
+ * `readmissionProbability` posture still comes from `MOCK_RISK_OUTPUT` (the
+ * panel keeps showing "critical risk · score 87" so the demo narrative is
+ * stable), but whose `flags` are now derived from real bundle resources.
+ *
+ * This makes the fallback citation-valid: every emitted `fhirResourceId`
+ * matches a `ResourceType/id` already in `bundle.validIds`, so the downstream
+ * `validateCitations` gate (analysis.ts:333) keeps them instead of dropping
+ * the lot — the demo now produces visible findings, not just a streaming
+ * pipeline that lands 0/N.
+ *
+ * Cap: up to 2 Conditions + 1 Observation, so a high-shape bundle doesn't
+ * flood the canvas. Empty bundle → empty flags (honest "nothing to flag").
+ * S13/S17 prompt calibration does NOT apply here — this is an offline
+ * placeholder, not a calibrated LLM call.
  */
 async function* streamMockRisk(bundle: PatientBundle): AsyncIterable<AgentEvent> {
   yield {
@@ -217,8 +228,33 @@ async function* streamMockRisk(bundle: PatientBundle): AsyncIterable<AgentEvent>
       '[demo fallback — OPENAI_API_KEY is unset] Synthesizing risk assessment from the patient FHIR bundle. ' +
       'Lab values, active conditions, and care-continuity signals indicate critical readmission risk.',
   };
-  yield { type: 'result', agentId: 'risk', output: MOCK_RISK_OUTPUT };
-  void bundle;
+
+  const flags: RiskFlag[] = [];
+
+  for (const c of bundle.resources.filter((r) => r?.resourceType === 'Condition').slice(0, 2)) {
+    const code = c?.code?.coding?.[0]?.display ?? c?.code?.text ?? c?.id;
+    flags.push({
+      text: `Active condition: ${code}`,
+      fhirResourceId: `Condition/${c.id}`,
+      confidence: 0.5,
+    });
+  }
+  for (const o of bundle.resources.filter((r) => r?.resourceType === 'Observation').slice(0, 1)) {
+    const code = o?.code?.coding?.[0]?.display ?? o?.code?.text ?? o?.id;
+    flags.push({
+      text: `Lab/imaging result informs risk assessment: ${code}`,
+      fhirResourceId: `Observation/${o.id}`,
+      confidence: 0.5,
+    });
+  }
+
+  const output: RiskOutput = {
+    riskScore: MOCK_RISK_OUTPUT.riskScore,
+    riskLevel: MOCK_RISK_OUTPUT.riskLevel,
+    readmissionProbability: MOCK_RISK_OUTPUT.readmissionProbability,
+    flags,
+  };
+  yield { type: 'result', agentId: 'risk', output };
 }
 
 /**

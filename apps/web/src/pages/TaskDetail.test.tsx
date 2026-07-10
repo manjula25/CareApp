@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TaskDetail } from './TaskDetail';
 import * as client from '../api/client';
 import type { AssignedTaskEvent, TaskStatusTransition } from '../api/client';
-import { MOCK_TASK, MOCK_TASK_NO_PHONE } from './TaskDetail.fixtures';
+import { MOCK_TASK, MOCK_TASK_NO_PHONE, MOCK_TASK_DONE, MOCK_TASK_CANCELLED } from './TaskDetail.fixtures';
 
 vi.mock('../api/client', async () => {
   const actual = await vi.importActual<typeof import('../api/client')>('../api/client');
@@ -238,5 +238,112 @@ describe('TaskDetail — Phase 3 lead-port: cross-surface event subscription', (
       status: 'pending',
     });
     expect(invalidateSpy).not.toHaveBeenCalled();
+  });
+});
+
+// S20 — terminal-status gating. When the API returns 'Done' or 'Cancelled'
+// (the display strings for FHIR 'completed'/'cancelled' via displayStatus()),
+// Complete/Defer/Escalate must be disabled. Without this, clicking Complete
+// on an already-completed task fires the API, succeeds silently, refetches
+// the same data, and the user sees "nothing happened" — which is what was
+// being reported. With this, the buttons clearly disable and a hint explains
+// why.
+describe('TaskDetail — S20: terminal-status gating', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(client.subscribeToEvents).mockReturnValue(() => {});
+    vi.mocked(client.transitionTask).mockResolvedValue({ id: MOCK_TASK.id, status: 'completed' });
+  });
+
+  it('disables Complete/Defer/Escalate when status is "Done" (FHIR completed)', async () => {
+    vi.mocked(client.getTaskDetail).mockResolvedValue(MOCK_TASK_DONE);
+    renderTaskDetail(`/tasks/${MOCK_TASK_DONE.id}`);
+    await waitFor(() => expect(screen.getByTestId('task-title').textContent).toBe(MOCK_TASK.title));
+    expect(screen.getByTestId('btn-complete')).toBeDisabled();
+    expect(screen.getByTestId('btn-defer')).toBeDisabled();
+    expect(screen.getByTestId('btn-escalate')).toBeDisabled();
+    // And clicking them cannot fire the API even if a user forces it.
+    fireEvent.click(screen.getByTestId('btn-complete'));
+    expect(client.transitionTask).not.toHaveBeenCalled();
+  });
+
+  it('disables Complete/Defer/Escalate when status is "Cancelled" (FHIR cancelled)', async () => {
+    vi.mocked(client.getTaskDetail).mockResolvedValue(MOCK_TASK_CANCELLED);
+    renderTaskDetail(`/tasks/${MOCK_TASK_CANCELLED.id}`);
+    await waitFor(() => expect(screen.getByTestId('task-title').textContent).toBe(MOCK_TASK.title));
+    expect(screen.getByTestId('btn-complete')).toBeDisabled();
+    expect(screen.getByTestId('btn-defer')).toBeDisabled();
+    expect(screen.getByTestId('btn-escalate')).toBeDisabled();
+  });
+
+  it('renders the terminal-hint copy when status is Done/Cancelled', async () => {
+    vi.mocked(client.getTaskDetail).mockResolvedValue(MOCK_TASK_DONE);
+    renderTaskDetail(`/tasks/${MOCK_TASK_DONE.id}`);
+    await waitFor(() => expect(screen.getByTestId('task-terminal-hint')).toBeInTheDocument());
+    expect(screen.getByTestId('task-terminal-hint').textContent).toContain('done');
+  });
+
+  it('does NOT render the terminal-hint when status is non-terminal', async () => {
+    vi.mocked(client.getTaskDetail).mockResolvedValue(MOCK_TASK);
+    renderTaskDetail();
+    await settleOnRealData();
+    expect(screen.queryByTestId('task-terminal-hint')).not.toBeInTheDocument();
+  });
+
+  it('keeps the action bar enabled when status is non-terminal (regression guard)', async () => {
+    vi.mocked(client.getTaskDetail).mockResolvedValue(MOCK_TASK);
+    renderTaskDetail();
+    await settleOnRealData();
+    expect(screen.getByTestId('btn-complete')).not.toBeDisabled();
+    expect(screen.getByTestId('btn-defer')).not.toBeDisabled();
+    expect(screen.getByTestId('btn-escalate')).not.toBeDisabled();
+  });
+});
+
+// S20 — mutation error surface. If transitionTask rejects (e.g. social_worker
+// acting on a clinical-domain task → 403 ScopeDeniedError, or any other 4xx),
+// the user previously saw nothing — the API call failed silently, no cache
+// invalidate, no message. Now an inline error renders with the server's
+// message, and a subsequent successful call clears it.
+describe('TaskDetail — S20: transition mutation error surface', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(client.subscribeToEvents).mockReturnValue(() => {});
+  });
+
+  it("surfaces the server's error message when transitionTask rejects", async () => {
+    vi.mocked(client.getTaskDetail).mockResolvedValue(MOCK_TASK);
+    vi.mocked(client.transitionTask).mockRejectedValueOnce(
+      new Error("Role 'social_worker' does not have 'clinical' scope")
+    );
+    renderTaskDetail();
+    await settleOnRealData();
+    fireEvent.click(screen.getByTestId('btn-complete'));
+    await waitFor(() => expect(screen.getByTestId('transition-error')).toBeInTheDocument());
+    expect(screen.getByTestId('transition-error').textContent).toContain('clinical');
+    expect(screen.getByTestId('transition-error').getAttribute('role')).toBe('alert');
+  });
+
+  it('does not render the error banner on a successful transition', async () => {
+    vi.mocked(client.getTaskDetail).mockResolvedValue(MOCK_TASK);
+    vi.mocked(client.transitionTask).mockResolvedValue({ id: MOCK_TASK.id, status: 'completed' });
+    renderTaskDetail();
+    await settleOnRealData();
+    fireEvent.click(screen.getByTestId('btn-complete'));
+    await waitFor(() => expect(client.transitionTask).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId('transition-error')).not.toBeInTheDocument();
+  });
+
+  it('clears a previously-shown error on the next successful transition', async () => {
+    vi.mocked(client.getTaskDetail).mockResolvedValue(MOCK_TASK);
+    vi.mocked(client.transitionTask)
+      .mockRejectedValueOnce(new Error("Role 'social_worker' does not have 'clinical' scope"))
+      .mockResolvedValueOnce({ id: MOCK_TASK.id, status: 'completed' });
+    renderTaskDetail();
+    await settleOnRealData();
+    fireEvent.click(screen.getByTestId('btn-complete'));
+    await waitFor(() => expect(screen.getByTestId('transition-error')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('btn-complete'));
+    await waitFor(() => expect(screen.queryByTestId('transition-error')).not.toBeInTheDocument());
   });
 });
