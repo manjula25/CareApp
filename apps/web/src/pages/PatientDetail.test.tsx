@@ -159,4 +159,23 @@ describe('PatientDetail — backend-branch core SSE flow', () => {
     expect(await screen.findByText('Cardiology follow-up')).toBeInTheDocument();
     expect(screen.getByText('Task/new-task-1')).toBeInTheDocument();
   });
+
+  it('surfaces the real SSE `error` event message in the inline error pill — not "Analysis failed"', async () => {
+    // Mirrors what the server-side `routes/analysis.ts` catch boundary emits
+    // when the orchestrator throws (e.g. an OpenAI quota error). After my
+    // client.ts fix, `streamAnalysis` itself throws on `event: error`, which
+    // PatientDetail's catch turns into the inline `analysisError` pill.
+    // Before the fix, the SSE error event was silently dropped — the UI
+    // stayed in "No action plan yet" with no feedback that the run failed.
+    vi.mocked(client.streamAnalysis).mockRejectedValueOnce(
+      new Error('You exceeded your current quota, please check your plan and billing details.')
+    );
+
+    renderPatientDetail();
+    await waitFor(() => expect(screen.getAllByText('Maria Chen').length).toBeGreaterThanOrEqual(1));
+    fireEvent.click(screen.getByRole('button', { name: /run analysis/i }));
+
+    const errorPill = await screen.findByTestId('analysis-error');
+    expect(errorPill.textContent).toMatch(/exceeded your current quota/);
+  });
 });

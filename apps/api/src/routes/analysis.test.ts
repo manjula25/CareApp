@@ -348,6 +348,14 @@ describe('analysis routes (B3 — orchestrated SSE stream + citation validation 
     expect(events.find((e) => e.event === 'error')).toBeDefined();
     expect(events.find((e) => e.event === 'complete')).toBeUndefined();
     expect(events.find((e) => e.event === 'done')).toBeUndefined();
+    // Regression guard: the SSE error event must carry the actual error
+    // message (e.g. "OpenAI request failed"), NOT a hard-coded "Analysis
+    // failed" string. The PatientDetail UI reads this message to populate
+    // its inline error pill — silently dropping the real reason has, in
+    // practice, masked an exhausted OpenAI quota behind a "no action plan
+    // yet" empty state. See streamAnalysis's `error` dispatch in client.ts.
+    const errorEvent = events.find((e) => e.event === 'error')!;
+    expect(errorEvent.data.message).toBe('OpenAI request failed');
   });
 
   it('redacts a fabricated citation in one agent’s narration without touching another agent’s valid citation (per-agent buffer isolation)', async () => {
@@ -505,10 +513,15 @@ describe('analysis routes — cache-aware live/replay (S4 A2)', () => {
     expect(orchestratorSpy).not.toHaveBeenCalled();
 
     const events = parseSse(res.text);
-    expect(events.find((e) => e.event === 'error')).toBeDefined();
+    const errorEvent = events.find((e) => e.event === 'error')!;
+    expect(errorEvent).toBeDefined();
     // Same convention the live path's error boundary already establishes:
     // no `done` fires on a failed run — its absence is itself the signal.
     expect(events.find((e) => e.event === 'done')).toBeUndefined();
+    // Regression guard: surface the real reason (a TypeError from reading
+    // `.findings` on undefined), not a hard-coded "Analysis failed" that
+    // hides the failure behind an empty UI.
+    expect(errorEvent.data.message).toMatch(/findings|undefined|TypeError/);
   });
 
   it('(b) ?live=1 always invokes the orchestrator and overwrites the cache row, even when one already exists', async () => {

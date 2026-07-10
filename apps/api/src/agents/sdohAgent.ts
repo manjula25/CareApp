@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { PatientBundle } from '../fhir/client';
-import { AgentEvent, SdohOutput } from './agent';
+import { AgentEvent, SdohBarrierFinding, SdohOutput } from './agent';
 import { MOCK_SDOH_OUTPUT } from './mock-outputs';
 import { extractUsage } from './usage';
 
@@ -100,6 +100,15 @@ function buildPrompt(bundle: PatientBundle): string {
  * a fake and avoid any live network/API call (and avoid ever constructing the
  * real client at all).
  */
+/**
+ * S20 — demo fallback. Builds barriers only from real QuestionnaireResponse
+ * resources in the bundle (the AHC-HRSN screening seed for SDOH-domain
+ * agents — see the live `buildPrompt`'s note). If the bundle has no QR, the
+ * fallback emits zero barriers: fabricating social-needs findings on a
+ * patient who has no screening in record would be dishonest demo behavior.
+ * `referralsNeeded` is empty here too — recommendations should follow from
+ * real findings, not from `MOCK_SDOH_OUTPUT`'s hard-coded strings.
+ */
 async function* streamMockSdoh(bundle: PatientBundle): AsyncIterable<AgentEvent> {
   yield {
     type: 'token',
@@ -108,8 +117,20 @@ async function* streamMockSdoh(bundle: PatientBundle): AsyncIterable<AgentEvent>
       '[demo fallback — OPENAI_API_KEY is unset] Reviewing AHC-HRSN screening, demographics, and observations ' +
       'for social barriers to health.',
   };
-  yield { type: 'result', agentId: 'sdoh', output: MOCK_SDOH_OUTPUT };
-  void bundle;
+
+  const barriers: SdohBarrierFinding[] = [];
+  for (const qr of bundle.resources.filter((r) => r?.resourceType === 'QuestionnaireResponse').slice(0, 1)) {
+    barriers.push({
+      domain: 'social_needs',
+      finding: 'AHC-HRSN screening response present in record — review for social barriers.',
+      severity: 'moderate',
+      fhirResourceId: `QuestionnaireResponse/${qr.id}`,
+      confidence: 0.5,
+    });
+  }
+
+  const output: SdohOutput = { barriers, referralsNeeded: [] };
+  yield { type: 'result', agentId: 'sdoh', output };
 }
 
 export async function* runSdohAgent(bundle: PatientBundle, client?: OpenAI): AsyncIterable<AgentEvent> {

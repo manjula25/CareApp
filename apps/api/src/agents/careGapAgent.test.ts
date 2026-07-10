@@ -98,3 +98,70 @@ describe('runCareGapAgent (mocked OpenAI client, no live call)', () => {
     }).rejects.toThrow();
   });
 });
+
+// S20 — fallback path. Mirrors the S20 risk-agent test: the citation gate
+// (routes/analysis.ts:358) requires every `gaps[].fhirResourceId` to be in
+// `bundle.validIds`, so the demo fallback must derive gaps from real bundle
+// Conditions instead of MOCK_CARE_GAP_OUTPUT's hard-coded ids.
+describe('runCareGapAgent (S20 — fallback, OPENAI_API_KEY unset)', () => {
+  const originalKey = process.env.OPENAI_API_KEY;
+
+  afterEach(() => {
+    if (originalKey === undefined) {
+      delete process.env.OPENAI_API_KEY;
+    } else {
+      process.env.OPENAI_API_KEY = originalKey;
+    }
+  });
+
+  it('S20 — fallback gaps cite real bundle Condition ids', async () => {
+    delete process.env.OPENAI_API_KEY;
+    let freshRunCareGapAgent!: typeof runCareGapAgent;
+    await jest.isolateModulesAsync(async () => {
+      const fresh = await import('./careGapAgent');
+      freshRunCareGapAgent = fresh.runCareGapAgent;
+    });
+
+    const testBundle = {
+      resources: [
+        { resourceType: 'Condition', id: 'maria-chen-chf', code: { text: 'Heart failure, unspecified' } },
+        { resourceType: 'Condition', id: 'maria-chen-t2dm', code: { text: 'Type 2 diabetes mellitus' } },
+      ],
+      validIds: new Set(['Condition/maria-chen-chf', 'Condition/maria-chen-t2dm']),
+    };
+
+    const events: AgentEvent[] = [];
+    for await (const event of freshRunCareGapAgent(testBundle)) {
+      events.push(event);
+    }
+
+    const result = events.find((e) => e.type === 'result') as Extract<
+      AgentEvent,
+      { type: 'result'; agentId: 'careGap' }
+    >;
+    expect(result.output.gaps.length).toBeGreaterThan(0);
+    for (const gap of result.output.gaps) {
+      expect(testBundle.validIds.has(gap.fhirResourceId)).toBe(true);
+    }
+  });
+
+  it('S20 — fallback with empty bundle emits zero gaps (honest demo)', async () => {
+    delete process.env.OPENAI_API_KEY;
+    let freshRunCareGapAgent!: typeof runCareGapAgent;
+    await jest.isolateModulesAsync(async () => {
+      const fresh = await import('./careGapAgent');
+      freshRunCareGapAgent = fresh.runCareGapAgent;
+    });
+
+    const events: AgentEvent[] = [];
+    for await (const event of freshRunCareGapAgent({ resources: [], validIds: new Set<string>() })) {
+      events.push(event);
+    }
+
+    const result = events.find((e) => e.type === 'result') as Extract<
+      AgentEvent,
+      { type: 'result'; agentId: 'careGap' }
+    >;
+    expect(result.output.gaps).toEqual([]);
+  });
+});

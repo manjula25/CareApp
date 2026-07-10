@@ -128,3 +128,114 @@ describe('runActionPlannerAgent (mocked OpenAI client, no live call)', () => {
     }).rejects.toThrow();
   });
 });
+
+// S20 — fallback path. Action Planner is downstream of the other three; it
+// doesn't read the FHIR bundle directly. In fallback, the citation chain is
+// transitive: tasks should cite the upstream agents' first flag, which the
+// new `streamMock*` agents now derive from real bundle resources, so tasks
+// pass the citation validator transitively.
+describe('runActionPlannerAgent (S20 — fallback, OPENAI_API_KEY unset)', () => {
+  const originalKey = process.env.OPENAI_API_KEY;
+
+  afterEach(() => {
+    if (originalKey === undefined) {
+      delete process.env.OPENAI_API_KEY;
+    } else {
+      process.env.OPENAI_API_KEY = originalKey;
+    }
+  });
+
+  it('S20 — fallback tasks cite first upstream finding from each of risk/careGap/sdoh (transitive real citations)', async () => {
+    delete process.env.OPENAI_API_KEY;
+    let freshRunActionPlannerAgent!: typeof runActionPlannerAgent;
+    await jest.isolateModulesAsync(async () => {
+      const fresh = await import('./actionPlannerAgent');
+      freshRunActionPlannerAgent = fresh.runActionPlannerAgent;
+    });
+
+    // Bundle ids that the upstream streamMock* agents would now cite.
+    const bundleValidIds = new Set([
+      'Condition/chf-1',
+      'Observation/a1c-1',
+      'QuestionnaireResponse/ahc-hrsn-1',
+    ]);
+
+    const fallInputs = {
+      risk: {
+        riskScore: 82,
+        riskLevel: 'high' as const,
+        flags: [{ text: 'Recent CHF exacerbation', fhirResourceId: 'Condition/chf-1', confidence: 0.5 }],
+        readmissionProbability: 0.4,
+      },
+      careGap: {
+        gaps: [
+          {
+            gapType: 'screening',
+            description: 'Overdue A1c check',
+            urgency: 'high',
+            fhirResourceId: 'Observation/a1c-1',
+            confidence: 0.5,
+          },
+        ],
+      },
+      sdoh: {
+        barriers: [
+          {
+            domain: 'housing',
+            finding: 'Housing instability',
+            severity: 'high' as const,
+            fhirResourceId: 'QuestionnaireResponse/ahc-hrsn-1',
+            confidence: 0.5,
+          },
+        ],
+        referralsNeeded: [],
+      },
+    };
+
+    const events: AgentEvent[] = [];
+    for await (const event of freshRunActionPlannerAgent(fallInputs)) {
+      events.push(event);
+    }
+
+    const result = events.find((e) => e.type === 'result') as Extract<
+      AgentEvent,
+      { type: 'result'; agentId: 'actionPlanner' }
+    >;
+    expect(result.output.tasks.length).toBeGreaterThan(0);
+    const allCited = result.output.tasks.flatMap((t) => t.fhirResources);
+    for (const id of allCited) {
+      expect(bundleValidIds.has(id)).toBe(true);
+    }
+    // Domain tagging preserves the risk=clinical / careGap=clinical /
+    // sdoh=sdoh split the live model emits.
+    const domains = new Set(result.output.tasks.map((t) => t.domain));
+    expect(domains.has('clinical')).toBe(true);
+    expect(domains.has('sdoh')).toBe(true);
+  });
+
+  it('S20 — fallback with all empty upstream inputs emits zero tasks (honest demo)', async () => {
+    delete process.env.OPENAI_API_KEY;
+    let freshRunActionPlannerAgent!: typeof runActionPlannerAgent;
+    await jest.isolateModulesAsync(async () => {
+      const fresh = await import('./actionPlannerAgent');
+      freshRunActionPlannerAgent = fresh.runActionPlannerAgent;
+    });
+
+    const emptyInputs = {
+      risk: { riskScore: 0, riskLevel: 'low' as const, flags: [], readmissionProbability: 0 },
+      careGap: { gaps: [] },
+      sdoh: { barriers: [], referralsNeeded: [] },
+    };
+
+    const events: AgentEvent[] = [];
+    for await (const event of freshRunActionPlannerAgent(emptyInputs)) {
+      events.push(event);
+    }
+
+    const result = events.find((e) => e.type === 'result') as Extract<
+      AgentEvent,
+      { type: 'result'; agentId: 'actionPlanner' }
+    >;
+    expect(result.output.tasks).toEqual([]);
+  });
+});

@@ -55,6 +55,24 @@ export const MOCK_TASK_NO_PHONE: TaskDetail = {
   patientPhone: undefined,
 };
 
+// S20 — terminal-status fixtures. `status` here is the display string the API
+// returns via `displayStatus()` (apps/api/src/fhir/client.ts:246), which maps
+// FHIR `status='completed'` → 'Done' and `status='cancelled'` → 'Cancelled'.
+// The TaskDetail page uses these exact strings to gate the action bar
+// (`isTerminalStatus` in TaskDetail.tsx) — if `displayStatus()` ever changes
+// its mapping, these fixtures must move with it.
+export const MOCK_TASK_DONE: TaskDetail = {
+  ...MOCK_TASK,
+  id: 't-d3',
+  status: 'Done',
+};
+
+export const MOCK_TASK_CANCELLED: TaskDetail = {
+  ...MOCK_TASK,
+  id: 't-d4',
+  status: 'Cancelled',
+};
+
 /** Returns "YYYY-MM-DD" for an ISO date (or an ISO datetime) — local-tz-stable
  *  so test outputs match regardless of when the suite runs. */
 export function isoDay(iso: string | Date): string {

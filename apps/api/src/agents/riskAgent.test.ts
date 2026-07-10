@@ -21,10 +21,10 @@ describe('OpenAI client construction is lazy (boot-time safety)', () => {
   });
 
   // S12 B.1 — when OPENAI_API_KEY is unset AND no client is injected, the
-  // agent falls back to `MOCK_RISK_OUTPUT` rather than throwing. Demo-resilience
-  // contract: the SSE stream must emit the right event shape regardless of
-  // whether the OpenAI key is available.
-  it('falls back to MOCK_RISK_OUTPUT when OPENAI_API_KEY is unset (no client injected)', async () => {
+  // agent falls back to a deterministic offline `RiskOutput` rather than
+  // throwing. Demo-resilience contract: the SSE stream must emit the right
+  // event shape regardless of whether the OpenAI key is available.
+  it('falls back to a deterministic RiskOutput when OPENAI_API_KEY is unset (no client injected)', async () => {
     delete process.env.OPENAI_API_KEY;
     let freshRunRiskAgent!: typeof runRiskAgent;
     await jest.isolateModulesAsync(async () => {
@@ -48,6 +48,68 @@ describe('OpenAI client construction is lazy (boot-time safety)', () => {
       flags: expect.any(Array),
       readmissionProbability: expect.any(Number),
     });
+  });
+
+  // S20 — fallback emits flags citing real bundle resources so the citation
+  // gate (routes/analysis.ts:333) keeps them. With an empty bundle there is
+  // nothing to cite, so flags must be honest-empty (not the old MOCK list
+  // with fabricated ids that all get dropped).
+  it('S20 — fallback flags cite real bundle Condition/Observation ids (no fabricated citations)', async () => {
+    delete process.env.OPENAI_API_KEY;
+    let freshRunRiskAgent!: typeof runRiskAgent;
+    await jest.isolateModulesAsync(async () => {
+      const fresh = await import('./riskAgent');
+      freshRunRiskAgent = fresh.runRiskAgent;
+    });
+
+    const bundle = {
+      resources: [
+        { resourceType: 'Condition', id: 'maria-chen-chf', code: { text: 'Heart failure, unspecified' } },
+        { resourceType: 'Observation', id: 'maria-chen-bnp', code: { text: 'BNP' } },
+        { resourceType: 'Patient', id: 'maria-chen' },
+      ],
+      validIds: new Set(['Condition/maria-chen-chf', 'Observation/maria-chen-bnp', 'Patient/maria-chen']),
+    };
+
+    const events: AgentEvent[] = [];
+    for await (const event of freshRunRiskAgent(bundle)) {
+      events.push(event);
+    }
+
+    const result = events.find((e) => e.type === 'result') as Extract<
+      AgentEvent,
+      { type: 'result'; agentId: 'risk' }
+    >;
+    const flags = result.output.flags;
+    expect(flags.length).toBeGreaterThan(0);
+    for (const flag of flags) {
+      expect(bundle.validIds.has(flag.fhirResourceId)).toBe(true);
+    }
+    // Posture fields still come from MOCK_RISK_OUTPUT — demo narrative stable.
+    expect(result.output.riskScore).toBeGreaterThan(0);
+    expect(['low', 'moderate', 'high', 'critical']).toContain(result.output.riskLevel);
+  });
+
+  // S20 — empty bundle → honest empty flags (not fabricated ones).
+  it('S20 — fallback with empty bundle emits zero flags (honest demo, not fabricated citations)', async () => {
+    delete process.env.OPENAI_API_KEY;
+    let freshRunRiskAgent!: typeof runRiskAgent;
+    await jest.isolateModulesAsync(async () => {
+      const fresh = await import('./riskAgent');
+      freshRunRiskAgent = fresh.runRiskAgent;
+    });
+
+    const bundle = { resources: [], validIds: new Set<string>() };
+    const events: AgentEvent[] = [];
+    for await (const event of freshRunRiskAgent(bundle)) {
+      events.push(event);
+    }
+
+    const result = events.find((e) => e.type === 'result') as Extract<
+      AgentEvent,
+      { type: 'result'; agentId: 'risk' }
+    >;
+    expect(result.output.flags).toEqual([]);
   });
 });
 

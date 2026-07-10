@@ -77,6 +77,14 @@ export function TaskDetail() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['task', id] });
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      setTransitionError(null);
+    },
+    // S20 — surface mutation failures (e.g. social_worker acting on a
+    // clinical-domain task → 403 ScopeDeniedError, or any other 4xx/5xx) so
+    // the user sees WHY the click "did nothing" instead of staring at an
+    // unchanged page. `transitionError` is also cleared in onSuccess above.
+    onError: (err: Error) => {
+      setTransitionError(err.message ?? 'Could not update this task');
     },
   });
 
@@ -104,6 +112,10 @@ export function TaskDetail() {
     return isoDay(d);
   });
   const [escalateConfirming, setEscalateConfirming] = useState(false);
+  // S20 — surface any 4xx/5xx from `transitionTask` so failures (e.g. a
+  // social_worker acting on a clinical-domain task → 403 ScopeDeniedError)
+  // don't appear as a silent "nothing happened" click.
+  const [transitionError, setTransitionError] = useState<string | null>(null);
 
   function handleComplete() {
     transitionMutation.mutate('complete');
@@ -129,7 +141,16 @@ export function TaskDetail() {
   }
 
   const overdue = data ? isOverdue(data.due) : false;
-  const disableActions = transitionMutation.isPending;
+  // S20 — gate the action bar on the task's FHIR status, not just the
+  // mutation's in-flight flag. A 'completed' or 'cancelled' task has no
+  // useful transition: 'complete' is a no-op (refetches the same status),
+  // and 'defer' would silently un-complete the task (status → 'on-hold'),
+  // and 'escalate' would bump priority on something that's already done.
+  // `data.status` is the display string from `displayStatus()`
+  // (`fhir/client.ts:246`) — 'Done' / 'Cancelled' for completed/cancelled
+  // FHIR statuses, plus any businessStatus.text the server set.
+  const isTerminalStatus = data?.status === 'Done' || data?.status === 'Cancelled';
+  const disableActions = transitionMutation.isPending || isTerminalStatus;
 
   return (
     <div className="max-w-2xl px-6 py-6">
@@ -273,6 +294,30 @@ export function TaskDetail() {
               className="text-xs text-red mt-2"
             >
               This will notify the Director. Tap Escalate again to confirm.
+            </p>
+          )}
+
+          {/* S20 — inline error surface for transition failures (4xx/5xx). Renders
+              below the action row so a 403 (e.g. social_worker acting on a
+              clinical-domain task) or any other failure isn't invisible. */}
+          {transitionError && (
+            <p
+              data-testid="transition-error"
+              role="alert"
+              className="text-xs text-red mt-2"
+            >
+              {transitionError}
+            </p>
+          )}
+
+          {/* S20 — terminal-status hint. Replaces "click does nothing" with
+              "you already finished this" so the disabled buttons make sense. */}
+          {isTerminalStatus && (
+            <p
+              data-testid="task-terminal-hint"
+              className="text-xs text-text-muted mt-2"
+            >
+              This task is {data.status.toLowerCase()} — no further transitions are available.
             </p>
           )}
         </div>

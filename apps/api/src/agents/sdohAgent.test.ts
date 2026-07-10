@@ -98,3 +98,71 @@ describe('runSdohAgent (mocked OpenAI client, no live call)', () => {
     }).rejects.toThrow();
   });
 });
+
+// S20 — fallback path. Mirrors the S20 risk-agent test: barriers must cite
+// real QuestionnaireResponse ids (the AHC-HRSN screening the SDOH agent's
+// prompt is built around). Empty bundle → honest zero barriers.
+describe('runSdohAgent (S20 — fallback, OPENAI_API_KEY unset)', () => {
+  const originalKey = process.env.OPENAI_API_KEY;
+
+  afterEach(() => {
+    if (originalKey === undefined) {
+      delete process.env.OPENAI_API_KEY;
+    } else {
+      process.env.OPENAI_API_KEY = originalKey;
+    }
+  });
+
+  it('S20 — fallback barriers cite real bundle QuestionnaireResponse ids', async () => {
+    delete process.env.OPENAI_API_KEY;
+    let freshRunSdohAgent!: typeof runSdohAgent;
+    await jest.isolateModulesAsync(async () => {
+      const fresh = await import('./sdohAgent');
+      freshRunSdohAgent = fresh.runSdohAgent;
+    });
+
+    const testBundle = {
+      resources: [
+        { resourceType: 'QuestionnaireResponse', id: 'maria-chen-ahc-hrsn' },
+        { resourceType: 'Patient', id: 'maria-chen' },
+      ],
+      validIds: new Set(['QuestionnaireResponse/maria-chen-ahc-hrsn', 'Patient/maria-chen']),
+    };
+
+    const events: AgentEvent[] = [];
+    for await (const event of freshRunSdohAgent(testBundle)) {
+      events.push(event);
+    }
+
+    const result = events.find((e) => e.type === 'result') as Extract<
+      AgentEvent,
+      { type: 'result'; agentId: 'sdoh' }
+    >;
+    expect(result.output.barriers.length).toBeGreaterThan(0);
+    for (const barrier of result.output.barriers) {
+      expect(testBundle.validIds.has(barrier.fhirResourceId)).toBe(true);
+    }
+    expect(result.output.referralsNeeded).toEqual([]);
+  });
+
+  it('S20 — fallback with empty bundle emits zero barriers (honest demo, no fabricated social needs)', async () => {
+    delete process.env.OPENAI_API_KEY;
+    let freshRunSdohAgent!: typeof runSdohAgent;
+    await jest.isolateModulesAsync(async () => {
+      const fresh = await import('./sdohAgent');
+      freshRunSdohAgent = fresh.runSdohAgent;
+    });
+
+    const events: AgentEvent[] = [];
+    for await (const event of freshRunSdohAgent({ resources: [], validIds: new Set<string>() })) {
+      events.push(event);
+    }
+
+    const result = events.find((e) => e.type === 'result') as Extract<
+      AgentEvent,
+      { type: 'result'; agentId: 'sdoh' }
+    >;
+    expect(result.output.barriers).toEqual([]);
+    expect(result.output.referralsNeeded).toEqual([]);
+  });
+});

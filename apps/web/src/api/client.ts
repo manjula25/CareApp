@@ -370,6 +370,14 @@ export interface AnalysisHandlers {
   onComplete?: (summary: AnalysisSummary) => void;
   onTask?: (task: AnalysisTask) => void;
   onDone?: () => void;
+  /**
+   * Called for an `event: error` SSE frame (orchestrator or replay failure,
+   * headers already sent — can't 5xx at this point). Receives the
+   * `message` payload from the server so the caller can render the actual
+   * reason (e.g. "OpenAI quota exceeded") instead of a hard-coded "Analysis
+   * failed" string. The stream is terminated after this event.
+   */
+  onError?: (message: string) => void;
 }
 
 /**
@@ -412,6 +420,14 @@ export async function streamAnalysis(
     else if (event === 'complete') handlers.onComplete?.(payload);
     else if (event === 'task') handlers.onTask?.(payload);
     else if (event === 'done') handlers.onDone?.();
+    else if (event === 'error') {
+      // Throw so the caller's await rejects — PatientDetail.tsx's catch sets
+      // `analysisError` and the inline error pill surfaces the real reason
+      // (e.g. an OpenAI quota error), instead of the UI going silently idle.
+      const message = payload.message ?? 'Analysis failed';
+      handlers.onError?.(message);
+      throw new Error(message);
+    }
   };
 
   for (;;) {
