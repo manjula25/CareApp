@@ -1,76 +1,48 @@
 {
-  "generatedAt": "2026-07-10T09:51:34.618Z",
+  "generatedAt": "2026-07-10T11:12:21.004Z",
   "clinicianStatus": "DEV-LABELED BASELINE, NOT CLINICIAN-VALIDATED (GD8)",
-  "headline": "Eval run over 31 labeled patients (27 failed): 21 dev-labeled (4 disagreement(s)), 10 held-out (0 disagreement(s)). Care Gap sensitivity 100.0%, Risk sensitivity 100.0%, SDOH agreement 75.0%.",
+  "headline": "Eval run over 31 labeled patients (0 failed): 21 dev-labeled (3 disagreement(s)), 10 held-out (0 disagreement(s)). Care Gap sensitivity 100.0%, Risk sensitivity 100.0%, SDOH agreement 100.0%.",
   "patientCount": 31,
   "clinicianCount": 0,
   "devLabeledCount": 21,
   "heldOutCount": 10,
-  "usedCacheCount": 4,
-  "usedLiveCount": 0,
-  "failedPatientIds": [
-    "robert-kim",
-    "angela-diaz",
-    "samuel-wright",
-    "pop-0002",
-    "pop-0003",
-    "pop-0004",
-    "pop-0005",
-    "pop-0006",
-    "pop-0007",
-    "pop-0008",
-    "pop-0009",
-    "pop-0010",
-    "pop-0021",
-    "pop-0022",
-    "pop-0023",
-    "pop-0024",
-    "pop-0025",
-    "pop-0011",
-    "pop-0012",
-    "pop-0013",
-    "pop-0014",
-    "pop-0015",
-    "pop-0016",
-    "pop-0017",
-    "pop-0018",
-    "pop-0019",
-    "pop-0020"
-  ],
+  "usedCacheCount": 0,
+  "usedLiveCount": 21,
+  "failedPatientIds": [],
   "devLabeled": {
     "careGap": {
       "sensitivity": 1,
       "specificity": 0,
-      "ppv": 0.6666666666666666,
+      "ppv": 0.8,
       "matrix": {
-        "truePositive": 2,
+        "truePositive": 12,
         "trueNegative": 0,
-        "falsePositive": 1,
+        "falsePositive": 3,
         "falseNegative": 0
       },
-      "labeledCount": 3
+      "labeledCount": 15
     },
     "risk": {
       "sensitivity": 1,
-      "specificity": 0.3333333333333333,
-      "ppv": 0.3333333333333333,
+      "specificity": 1,
+      "ppv": 1,
       "matrix": {
-        "truePositive": 1,
-        "trueNegative": 1,
-        "falsePositive": 2,
+        "truePositive": 2,
+        "trueNegative": 19,
+        "falsePositive": 0,
         "falseNegative": 0
       },
-      "labeledCount": 4
+      "labeledCount": 21
     },
     "sdoh": {
-      "agreementRate": 0.75,
-      "agreements": 3,
-      "total": 4,
+      "agreementRate": 1,
+      "agreements": 21,
+      "total": 21,
       "matrix": {
-        "truePositive": 1,
-        "trueNegative": 2,
+        "truePositive": 4,
+        "trueNegative": 17,
         "falsePositive": 0,
-        "falseNegative": 1
+        "falseNegative": 0
       }
     },
     "actionPlanner": {
@@ -79,49 +51,237 @@
           "patientId": "maria-chen",
           "taskCount": 8,
           "taskTitles": [
-            "Schedule urgent heart-failure post-discharge follow-up",
-            "Perform post-discharge heart-failure safety outreach",
-            "Connect patient to housing stabilization support",
-            "Address food insecurity with benefits and nutrition resources",
-            "Complete depression symptom monitoring",
-            "Close diabetes monitoring gaps",
-            "Plan age-appropriate cancer screenings",
-            "Arrange osteoporosis screening"
+            "Complete urgent CHF post-discharge transition-of-care outreach",
+            "Arrange expedited CHF follow-up and medication reconciliation",
+            "Initiate housing instability referral and safe-recovery planning",
+            "Initiate food insecurity support for CHF and diabetes diet needs",
+            "Order diabetes kidney screening with urine albumin-to-creatinine ratio",
+            "Schedule diabetic retinal eye exam",
+            "Complete diabetic foot exam",
+            "Complete depression symptom monitoring"
           ]
         },
         {
           "patientId": "james-okafor",
-          "taskCount": 4,
+          "taskCount": 6,
           "taskTitles": [
-            "Expedite urgent pulmonology follow-up",
-            "Arrange COPD-focused post-discharge/primary care follow-up",
-            "Order or coordinate spirometry/PFT monitoring",
-            "Address routine colorectal cancer screening gap"
+            "Arrange transportation support for COPD follow-up",
+            "Address COPD medication affordability barriers",
+            "Schedule COPD clinical review with spirometry or pulmonary function testing",
+            "Complete COPD symptom, exacerbation, and respiratory-status assessment",
+            "Obtain oxygen saturation or hypoxemia assessment",
+            "Document tobacco-use status and offer cessation support if needed"
           ]
         },
         {
           "patientId": "linda-torres",
-          "taskCount": 6,
+          "taskCount": 5,
           "taskTitles": [
-            "Complete pending BMP and review renal/metabolic stability",
-            "Schedule early post-discharge CKD/readmission-risk follow-up",
-            "Address CKD monitoring gaps: urine albumin/proteinuria and blood pressure",
-            "Arrange colorectal cancer screening",
-            "Arrange breast cancer screening",
-            "Arrange cervical cancer screening review"
+            "Complete CKD kidney function and electrolyte monitoring",
+            "Order urine albumin-to-creatinine ratio for CKD surveillance",
+            "Schedule colorectal cancer screening",
+            "Schedule screening mammogram",
+            "Schedule cervical cancer screening"
+          ]
+        },
+        {
+          "patientId": "robert-kim",
+          "taskCount": 3,
+          "taskTitles": [
+            "Initiate post-hip-fracture osteoporosis evaluation and treatment planning",
+            "Complete fall-risk assessment and prevention plan",
+            "Schedule post-fracture orthopedic and rehabilitation follow-up"
+          ]
+        },
+        {
+          "patientId": "angela-diaz",
+          "taskCount": 4,
+          "taskTitles": [
+            "Address mental-health access barrier with behavioral health navigation",
+            "Follow up on social isolation with community support referral",
+            "Obtain current depression symptom severity assessment",
+            "Obtain blood pressure measurement for hypertension monitoring"
+          ]
+        },
+        {
+          "patientId": "samuel-wright",
+          "taskCount": 5,
+          "taskTitles": [
+            "Complete immediate post-discharge heart-failure outreach and triage",
+            "Schedule heart-failure follow-up visit within 7 days of discharge",
+            "Set up daily weight monitoring plan",
+            "Obtain renal function labs for heart-failure medication safety",
+            "Address colorectal cancer screening after acute transition needs"
           ]
         },
         {
           "patientId": "pop-0001",
+          "taskCount": 4,
+          "taskTitles": [
+            "Arrange timely post-discharge follow-up",
+            "Order or coordinate overdue HbA1c testing",
+            "Order or coordinate diabetic kidney disease screening",
+            "Order or coordinate diabetes lipid monitoring"
+          ]
+        },
+        {
+          "patientId": "pop-0002",
+          "taskCount": 5,
+          "taskTitles": [
+            "Schedule urgent heart-failure post-discharge follow-up",
+            "Order or confirm renal function and electrolyte monitoring",
+            "Initiate heart-failure volume-status monitoring",
+            "Arrange left ventricular ejection fraction assessment or retrieve prior result",
+            "Address colorectal cancer screening gap"
+          ]
+        },
+        {
+          "patientId": "pop-0003",
+          "taskCount": 6,
+          "taskTitles": [
+            "Arrange urgent post-discharge mental health follow-up",
+            "Complete depression symptom severity monitoring",
+            "Perform post-discharge safety and care-transition outreach",
+            "Initiate colorectal cancer screening",
+            "Initiate cervical cancer screening",
+            "Initiate breast cancer screening"
+          ]
+        },
+        {
+          "patientId": "pop-0004",
+          "taskCount": 4,
+          "taskTitles": [
+            "Schedule post-discharge follow-up within 7 days",
+            "Complete heart failure status check and monitoring",
+            "Order or confirm HbA1c testing",
+            "Order or confirm diabetes kidney health evaluation"
+          ]
+        },
+        {
+          "patientId": "pop-0005",
+          "taskCount": 9,
+          "taskTitles": [
+            "Arrange urgent post-discharge follow-up visit",
+            "Complete overdue HbA1c testing and diabetes control review",
+            "Assess depression severity and safety using PHQ-9 or equivalent",
+            "Order diabetic kidney disease screening",
+            "Complete diabetic foot exam",
+            "Refer for diabetic retinal eye exam",
+            "Address colorectal cancer screening gap",
+            "Address breast cancer screening gap",
+            "Arrange osteoporosis screening"
+          ]
+        },
+        {
+          "patientId": "pop-0006",
+          "taskCount": 3,
+          "taskTitles": [
+            "Arrange overdue heart-failure post-discharge follow-up",
+            "Reconcile and obtain heart-failure objective monitoring",
+            "Initiate standardized depression symptom monitoring"
+          ]
+        },
+        {
+          "patientId": "pop-0007",
           "taskCount": 7,
           "taskTitles": [
-            "Complete post-discharge diabetes follow-up and readmission-risk check",
-            "Obtain HbA1c for diabetes control assessment",
-            "Order diabetic kidney screening and renal function labs",
-            "Order lipid panel for cardiovascular risk management in diabetes",
+            "Complete post-discharge transition-of-care outreach",
+            "Arrange heart failure cardiac function assessment",
+            "Order diabetic kidney disease screening",
             "Schedule diabetic retinal eye exam",
-            "Perform diabetic foot exam at next clinical visit",
+            "Complete diabetic foot exam or neuropathy screening",
+            "Obtain lipid panel for diabetes cardiovascular risk management",
+            "Perform standardized depression symptom monitoring"
+          ]
+        },
+        {
+          "patientId": "pop-0008",
+          "taskCount": 4,
+          "taskTitles": [
+            "Arrange overdue post-discharge follow-up",
+            "Order HbA1c testing for diabetes monitoring",
+            "Order diabetic kidney disease screening",
+            "Coordinate diabetic retinal eye exam"
+          ]
+        },
+        {
+          "patientId": "pop-0009",
+          "taskCount": 6,
+          "taskTitles": [
+            "Arrange 7-day post-discharge heart-failure follow-up",
+            "Obtain renal function and electrolyte monitoring for heart-failure medication safety",
+            "Document left-ventricular function assessment",
+            "Close breast cancer screening gap",
+            "Close colorectal cancer screening gap",
+            "Close cervical cancer screening gap"
+          ]
+        },
+        {
+          "patientId": "pop-0010",
+          "taskCount": 6,
+          "taskTitles": [
+            "Arrange overdue post-hospital behavioral-health follow-up",
+            "Complete depression symptom monitoring",
+            "Follow up positive SDOH screen with resource navigation",
+            "Connect patient to social-support resources",
+            "Refer for financial assistance and benefits counseling",
+            "Initiate colorectal cancer screening outreach"
+          ]
+        },
+        {
+          "patientId": "pop-0021",
+          "taskCount": 7,
+          "taskTitles": [
+            "Arrange heart failure cardiac function assessment",
+            "Coordinate multi-condition clinical follow-up",
+            "Order diabetes kidney monitoring",
+            "Schedule diabetic retinal eye exam",
+            "Complete diabetic foot exam",
+            "Perform depression symptom monitoring",
             "Arrange osteoporosis screening"
+          ]
+        },
+        {
+          "patientId": "pop-0022",
+          "taskCount": 5,
+          "taskTitles": [
+            "Order/complete HbA1c monitoring",
+            "Order/complete diabetes kidney health monitoring",
+            "Schedule overdue post-discharge diabetes follow-up",
+            "Arrange diabetic retinal eye exam",
+            "Arrange annual comprehensive diabetic foot exam"
+          ]
+        },
+        {
+          "patientId": "pop-0023",
+          "taskCount": 6,
+          "taskTitles": [
+            "Arrange urgent post-discharge heart-failure follow-up",
+            "Obtain/document heart-failure ejection fraction assessment",
+            "Order post-HF-discharge renal function and electrolyte monitoring",
+            "Address colorectal cancer screening gap",
+            "Address cervical cancer screening gap",
+            "Address breast cancer screening gap"
+          ]
+        },
+        {
+          "patientId": "pop-0024",
+          "taskCount": 2,
+          "taskTitles": [
+            "Arrange overdue post-discharge mental-health follow-up",
+            "Complete validated depression symptom monitoring"
+          ]
+        },
+        {
+          "patientId": "pop-0025",
+          "taskCount": 6,
+          "taskTitles": [
+            "Complete overdue post-discharge follow-up",
+            "Order diabetes monitoring labs, including HbA1c and kidney screening",
+            "Assess heart-failure status and medication-safety monitoring",
+            "Coordinate breast cancer screening",
+            "Coordinate colorectal cancer screening",
+            "Coordinate cervical cancer screening status review"
           ]
         }
       ]
@@ -135,152 +295,20 @@
             "expected": false,
             "predicted": true,
             "labelNotes": "Diabetes (E11.9) has Observation/maria-chen-hba1c on file; CHF (I50.9) has Observation/maria-chen-bnp on file — both the conditions this dataset's Observation coding actually covers are monitored. Her depression (F33.1) has no corresponding Observation type established anywhere in this codebase, so that dimension is intentionally left out of this boolean rather than guessed at."
-          }
-        ]
-      },
-      "risk": {
-        "falseNegatives": [],
-        "falsePositives": [
-          {
-            "patientId": "james-okafor",
-            "expected": false,
-            "predictedRiskLevel": "high",
-            "labelNotes": "Seed riskScore 62 < 75."
           },
           {
-            "patientId": "linda-torres",
+            "patientId": "pop-0007",
             "expected": false,
-            "predictedRiskLevel": "high",
-            "labelNotes": "Seed riskScore 71 < 75 (just under threshold)."
-          }
-        ]
-      },
-      "sdoh": {
-        "disagreements": [
+            "predicted": true,
+            "labelNotes": "Procedural patient, condition mix ['diabetes','chf','depression']; buildObservationsForIndex(6, conditions) seeds HbA1c (LOINC 4548-4) and BNP (LOINC 30934-4) on file (depression has no monitoring convention). Per `_meta.labelingRules.careGap`, this is a 'no gap' patient."
+          },
           {
-            "patientId": "james-okafor",
-            "expected": true,
-            "predicted": false,
-            "labelNotes": "Seed AHC-HRSN screening Observation/james-okafor-sdoh added 2026-07-08 — positive for transportation and financial barriers (dev interpretation; profile: COPD + recent inpatient supports post-discharge access barriers)."
+            "patientId": "pop-0021",
+            "expected": false,
+            "predicted": true,
+            "labelNotes": "S19 C1: 3-condition procedural patient (diabetes + CHF + depression; i=20, mix[6]); buildObservationsForIndex(20, conditions) seeds HbA1c (LOINC 4548-4) + BNP (LOINC 30934-4) + eGFR (LOINC 62238-1) on file with normal-range values. Care Gap agent's correct call is 'no gap' for each classifiable dimension."
           }
         ]
-      },
-      "dataGaps": [
-        {
-          "patientId": "robert-kim",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        },
-        {
-          "patientId": "angela-diaz",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        },
-        {
-          "patientId": "samuel-wright",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        },
-        {
-          "patientId": "pop-0002",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        },
-        {
-          "patientId": "pop-0003",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        },
-        {
-          "patientId": "pop-0004",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        },
-        {
-          "patientId": "pop-0005",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        },
-        {
-          "patientId": "pop-0006",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        },
-        {
-          "patientId": "pop-0007",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        },
-        {
-          "patientId": "pop-0008",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        },
-        {
-          "patientId": "pop-0009",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        },
-        {
-          "patientId": "pop-0010",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        },
-        {
-          "patientId": "pop-0021",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        },
-        {
-          "patientId": "pop-0022",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        },
-        {
-          "patientId": "pop-0023",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        },
-        {
-          "patientId": "pop-0024",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        },
-        {
-          "patientId": "pop-0025",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        }
-      ],
-      "safetyNetActivity": []
-    }
-  },
-  "heldOut": {
-    "careGap": {
-      "sensitivity": null,
-      "specificity": null,
-      "ppv": null,
-      "matrix": {
-        "truePositive": 0,
-        "trueNegative": 0,
-        "falsePositive": 0,
-        "falseNegative": 0
-      },
-      "labeledCount": 0
-    },
-    "risk": {
-      "sensitivity": null,
-      "specificity": null,
-      "ppv": null,
-      "matrix": {
-        "truePositive": 0,
-        "trueNegative": 0,
-        "falsePositive": 0,
-        "falseNegative": 0
-      },
-      "labeledCount": 0
-    },
-    "sdoh": {
-      "agreementRate": null,
-      "agreements": 0,
-      "total": 0,
-      "matrix": {
-        "truePositive": 0,
-        "trueNegative": 0,
-        "falsePositive": 0,
-        "falseNegative": 0
-      }
-    },
-    "actionPlanner": {
-      "notes": []
-    },
-    "errorAnalysis": {
-      "careGap": {
-        "falseNegatives": [],
-        "falsePositives": []
       },
       "risk": {
         "falseNegatives": [],
@@ -289,50 +317,12 @@
       "sdoh": {
         "disagreements": []
       },
-      "dataGaps": [
-        {
-          "patientId": "pop-0011",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        },
-        {
-          "patientId": "pop-0012",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        },
-        {
-          "patientId": "pop-0013",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        },
-        {
-          "patientId": "pop-0014",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        },
-        {
-          "patientId": "pop-0015",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        },
-        {
-          "patientId": "pop-0016",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        },
-        {
-          "patientId": "pop-0017",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        },
-        {
-          "patientId": "pop-0018",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        },
-        {
-          "patientId": "pop-0019",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        },
-        {
-          "patientId": "pop-0020",
-          "reason": "No findings produced for this patient in this eval run (HAPI read failure, or a live-agent-run failure with no cache fallback) — excluded from every metric dimension, not silently dropped."
-        }
-      ],
+      "dataGaps": [],
       "safetyNetActivity": []
     }
+  },
+  "heldOut": {
+    "skipped": "--dev-only"
   },
   "outreach": {
     "fileExists": true,
